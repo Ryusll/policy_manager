@@ -1,0 +1,486 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  editor
+  viewer
+}
+
+enum VersionStatus {
+  draft
+  review
+  published
+  archived
+}
+
+enum PlanTier {
+  starter
+  pro
+  enterprise
+}
+
+enum PlatformRole {
+  none
+  global_admin
+}
+
+enum BillingStatus {
+  active
+  trial
+  past_due
+  canceled
+}
+
+enum PaymentStatus {
+  succeeded
+  failed
+  refunded
+}
+
+enum SubscriptionStatus {
+  active
+  trial
+  canceled
+  expired
+}
+
+// 규정 본문 외 부칙·별표·서식 (국가법령정보 UI 구조에 맞춘 확장)
+enum PolicyAppendixKind {
+  supplementary
+  annex
+  form
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  plan      PlanTier @default(starter)
+  planExpiresAt DateTime? @map("plan_expires_at")
+  billingStatus BillingStatus @default(active) @map("billing_status")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users      User[]
+  policies   Policy[]
+  variables  Variable[]
+  auditLogs  AuditLog[]
+  exportJobs ExportJob[]
+  comments   ArticleComment[]
+  templates  PolicyTemplate[]
+  importLogs PolicyImportLog[]
+  regulationParseSessions RegulationParseSession[]
+  notificationGroups    NotificationGroup[]
+  userNotifications     UserNotification[]
+  billingCustomer BillingCustomer?
+  subscriptions BillingSubscription[]
+  payments BillingPayment[]
+
+  @@map("tenants")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  email         String
+  passwordHash  String?  @map("password_hash")
+  name          String
+  role          Role     @default(viewer)
+  platformRole  PlatformRole @default(none) @map("platform_role")
+  oauthProvider String?  @map("oauth_provider")
+  oauthSub      String?  @map("oauth_sub")
+  refreshToken  String?  @map("refresh_token")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  auditLogs AuditLog[]
+  comments  ArticleComment[]
+  importLogs PolicyImportLog[]
+  regulationParseSessions RegulationParseSession[]
+  notificationGroupMembers NotificationGroupMember[]
+  userNotifications        UserNotification[]
+
+  @@unique([tenantId, email])
+  @@unique([oauthProvider, oauthSub])
+  @@map("users")
+}
+
+model Policy {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  code        String
+  title       String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  metadata       Json?
+  revisionDate   DateTime? @map("revision_date") @db.Date
+  effectiveDate  DateTime? @map("effective_date") @db.Date
+  templateId     String?   @map("template_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  template PolicyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  chapters   Chapter[]
+  appendices PolicyAppendix[]
+  importLogs PolicyImportLog[]
+  committedParseSessions RegulationParseSession[] @relation("CommittedParsePolicy")
+
+  @@unique([tenantId, code])
+  @@map("policies")
+}
+
+// PDF 파싱 세션: 추출 텍스트·트리 미리보기·수정 후 규정(Policy)으로 커밋
+model RegulationParseSession {
+  id                String   @id @default(uuid())
+  tenantId          String   @map("tenant_id")
+  userId            String?  @map("user_id")
+  fileName          String   @map("file_name")
+  mimeType          String?  @map("mime_type")
+  status            String   @default("pending")
+  extractedText     String?  @map("extracted_text") @db.Text
+  extractMeta       Json?    @map("extract_meta")
+  parseTree         Json?    @map("parse_tree")
+  errorMessage      String?  @map("error_message")
+  committedPolicyId String?  @map("committed_policy_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user            User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  committedPolicy Policy? @relation("CommittedParsePolicy", fields: [committedPolicyId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@map("regulation_parse_sessions")
+}
+
+/** SaaS 운영사 표기(푸터·로그인 등). 고객사(tenant)와 무관한 단일 행 */
+model PlatformBranding {
+  id               String   @id
+  legalName        String   @default("") @map("legal_name") @db.VarChar(200)
+  registrationNo   String?  @map("registration_no") @db.VarChar(80)
+  productLabel     String   @default("Policy Manager") @map("product_label") @db.VarChar(160)
+  logoDataUrl      String?  @map("logo_data_url") @db.Text
+  lockupImageSrc   String   @default("/branding/lockup-astrum-veda.png") @map("lockup_image_src") @db.VarChar(512)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_branding")
+}
+
+model PolicyAppendix {
+  id        String             @id @default(uuid())
+  policyId  String             @map("policy_id")
+  kind      PolicyAppendixKind
+  title     String
+  body      String             @db.Text
+  sortOrder Int                @default(0) @map("sort_order")
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([policyId, kind])
+  @@index([policyId, sortOrder])
+  @@map("policy_appendices")
+}
+
+model PolicyTemplate {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  name        String
+  description String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  isActive    Boolean  @default(true) @map("is_active")
+  layoutJson  Json     @map("layout_json")
+  cssText     String   @default("") @map("css_text")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  policies Policy[]
+
+  @@index([tenantId, isDefault])
+  @@unique([tenantId, name])
+  @@map("policy_templates")
+}
+
+model Chapter {
+  id             String   @id @default(uuid())
+  policyId       String   @map("policy_id")
+  number         Int
+  title          String
+  suppressHeader Boolean  @default(false) @map("suppress_header")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  policy   Policy    @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  articles Article[]
+
+  @@map("chapters")
+}
+
+model Article {
+  id        String   @id @default(uuid())
+  chapterId String   @map("chapter_id")
+  number    Int
+  clauseNumber Int?  @map("clause_number")
+  itemNumber Int?    @map("item_number")
+  title     String
+  hasPrecedent Boolean @default(false) @map("has_precedent")
+  hasRelatedLaw Boolean @default(false) @map("has_related_law")
+  hasRelatedRule Boolean @default(false) @map("has_related_rule")
+  relatedPrecedentNote String? @map("related_precedent_note") @db.Text
+  relatedLawNote       String? @map("related_law_note") @db.Text
+  relatedRuleNote      String? @map("related_rule_note") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  chapter  Chapter          @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  versions ArticleVersion[]
+  comments ArticleComment[]
+
+  @@map("articles")
+}
+
+model ArticleComment {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  articleId String   @map("article_id")
+  userId    String   @map("user_id")
+  content   String
+  isResolved Boolean @default(false) @map("is_resolved")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, articleId])
+  @@map("article_comments")
+}
+
+model ArticleVersion {
+  id          String        @id @default(uuid())
+  articleId   String        @map("article_id")
+  versionNum  Int           @map("version_num")
+  content     String
+  status      VersionStatus @default(draft)
+  changeNote  String?       @map("change_note")
+  approvedBy  String?       @map("approved_by")
+  approvedAt  DateTime?     @map("approved_at")
+  createdBy   String?       @map("created_by")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  article        Article          @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  variableUsages VariableUsage[]
+
+  @@map("article_versions")
+}
+
+model Variable {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  key          String
+  label        String
+  defaultValue String?  @map("default_value")
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  usages VariableUsage[]
+
+  @@unique([tenantId, key])
+  @@map("variables")
+}
+
+model VariableUsage {
+  id        String @id @default(uuid())
+  versionId String @map("version_id")
+  variableId String @map("variable_id")
+
+  version  ArticleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  variable Variable       @relation(fields: [variableId], references: [id], onDelete: Cascade)
+
+  @@unique([versionId, variableId])
+  @@map("variable_usages")
+}
+
+/** 알림 수신 팀(예: 정보보안팀) — 테넌트별, 구성원은 User와 N:M */
+model NotificationGroup {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members NotificationGroupMember[]
+
+  @@unique([tenantId, name])
+  @@map("notification_groups")
+}
+
+model NotificationGroupMember {
+  groupId String @map("group_id")
+  userId  String @map("user_id")
+
+  group NotificationGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@map("notification_group_members")
+}
+
+/** 규정 개정·시행 승인 등 사용자별 인앱 알림 */
+model UserNotification {
+  id        String    @id @default(uuid())
+  tenantId  String    @map("tenant_id")
+  userId    String    @map("user_id")
+  kind      String    @default("policy_revision")
+  title     String
+  body      String    @db.Text
+  policyId  String?   @map("policy_id")
+  articleId String?   @map("article_id")
+  versionId String?   @map("version_id")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("user_notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  userId     String?  @map("user_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  details    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model ExportJob {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  status     String   @default("pending")
+  fileUrl    String?  @map("file_url")
+  createdAt  DateTime @default(now()) @map("created_at")
+  finishedAt DateTime? @map("finished_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("export_jobs")
+}
+
+model PolicyImportLog {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  userId        String?  @map("user_id")
+  policyId      String?  @map("policy_id")
+  sourceName    String?  @map("source_name")
+  parseProfile  String?  @map("parse_profile")
+  chapterCount  Int      @default(0) @map("chapter_count")
+  articleCount  Int      @default(0) @map("article_count")
+  cleanupOptions Json?   @map("cleanup_options")
+  status        String   @default("success")
+  message       String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  policy Policy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@map("policy_import_logs")
+}
+
+model BillingCustomer {
+  id                 String   @id @default(uuid())
+  tenantId           String   @unique @map("tenant_id")
+  provider           String   @default("mock")
+  providerCustomerId String?  @map("provider_customer_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriptions  BillingSubscription[]
+  payments       BillingPayment[]
+
+  @@index([provider, providerCustomerId])
+  @@map("billing_customers")
+}
+
+model BillingSubscription {
+  id                     String             @id @default(uuid())
+  tenantId               String             @map("tenant_id")
+  billingCustomerId      String?            @map("billing_customer_id")
+  provider               String             @default("mock")
+  providerSubscriptionId String?            @map("provider_subscription_id")
+  plan                   PlanTier
+  status                 SubscriptionStatus @default(active)
+  startedAt              DateTime           @default(now()) @map("started_at")
+  currentPeriodStart     DateTime?          @map("current_period_start")
+  currentPeriodEnd       DateTime?          @map("current_period_end")
+  canceledAt             DateTime?          @map("canceled_at")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  billingCustomer BillingCustomer?  @relation(fields: [billingCustomerId], references: [id], onDelete: SetNull)
+  payments        BillingPayment[]
+
+  @@index([tenantId, status])
+  @@index([provider, providerSubscriptionId])
+  @@index([currentPeriodEnd])
+  @@map("billing_subscriptions")
+}
+
+model BillingPayment {
+  id                   String        @id @default(uuid())
+  tenantId             String        @map("tenant_id")
+  billingCustomerId    String?       @map("billing_customer_id")
+  subscriptionId       String?       @map("subscription_id")
+  provider             String        @default("mock")
+  providerPaymentId    String?       @map("provider_payment_id")
+  providerOrderId      String?       @map("provider_order_id")
+  amount               Int
+  currency             String        @default("KRW")
+  status               PaymentStatus @default(succeeded)
+  paidAt               DateTime?     @map("paid_at")
+  refundAt             DateTime?     @map("refund_at")
+  metadata             Json?
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  billingCustomer BillingCustomer?  @relation(fields: [billingCustomerId], references: [id], onDelete: SetNull)
+  subscription    BillingSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([status, paidAt])
+  @@index([provider, providerPaymentId])
+  @@map("billing_payments")
+}

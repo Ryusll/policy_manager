@@ -1,0 +1,147 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 기본 테마(포레스트) — themeStore 수화 전 깜빡임 방지 */
+:root {
+  --color-navy-50: 236 248 242;
+  --color-navy-100: 212 237 227;
+  --color-navy-200: 169 220 200;
+  --color-navy-300: 123 196 168;
+  --color-navy-400: 77 170 135;
+  --color-navy-500: 31 143 104;
+  --color-navy-600: 0 112 74;
+  --color-navy-700: 0 92 61;
+  --color-navy-800: 36 82 72;
+  --color-navy-900: 30 57 50;
+  --color-gold-400: 232 220 196;
+  --color-gold-500: 212 165 116;
+  --color-gold-600: 184 137 92;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    @apply font-sans text-gray-800 bg-slate-50;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+}
+
+@layer components {
+  .page-shell {
+    @apply space-y-5 max-w-6xl mx-auto w-full;
+  }
+  .page-header {
+    @apply card flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4;
+  }
+  .page-header__title {
+    @apply text-xl font-semibold text-gray-900 tracking-tight;
+  }
+  .page-header__desc {
+    @apply text-sm text-gray-500 mt-1;
+  }
+  .page-header__actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .stat-card {
+    @apply card px-4 py-3.5 border-l-4;
+  }
+  .section-card {
+    @apply card overflow-hidden;
+  }
+  .section-card__head {
+    @apply flex items-center justify-between px-4 py-3 bg-navy-800 text-white text-sm font-medium;
+  }
+  .settings-layout {
+    @apply flex flex-col lg:flex-row gap-6 max-w-6xl;
+  }
+  .settings-nav {
+    @apply card p-2 lg:w-52 shrink-0 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-visible;
+  }
+  .settings-nav__btn {
+    @apply w-full text-left px-3 py-2.5 text-sm rounded-md transition-colors whitespace-nowrap;
+  }
+  .settings-nav__btn--active {
+    @apply bg-navy-800 text-white font-medium;
+  }
+  .settings-nav__btn--idle {
+    @apply text-gray-700 hover:bg-gray-100;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-navy-800 text-white text-sm font-medium rounded-md hover:bg-navy-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white text-navy-800 text-sm font-medium rounded-md border border-gray-200 hover:bg-gray-50 transition-colors;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-navy-700 rounded-md hover:bg-navy-50 transition-colors;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 transition-colors;
+  }
+  .badge-draft {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 border border-gray-300;
+  }
+  .badge-review {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-300;
+  }
+  .badge-published {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200;
+  }
+  .badge-archived {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-500 border border-gray-300;
+  }
+  .card {
+    @apply bg-white border border-gray-200 rounded-lg shadow-sm;
+  }
+  .input {
+    @apply w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-navy-500/25 focus:border-navy-500;
+  }
+  .gov-table th {
+    @apply bg-navy-800 text-white text-sm font-medium px-4 py-2.5 text-left border-r border-navy-700 last:border-r-0;
+  }
+  .gov-table td {
+    @apply px-4 py-2.5 text-sm border-b border-gray-200 border-r last:border-r-0;
+  }
+  .gov-table tr:hover td {
+    @apply bg-navy-50;
+  }
+}
+
+@media print {
+  html,
+  body {
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  /* 화면용 레이아웃은 공간을 차지하므로 visibility 방식만 쓰면 ‘빈 1페이지’가 생길 수 있음 → 인쇄 루트는 fixed로 분리 */
+  body * {
+    visibility: hidden !important;
+  }
+
+  .printable-policy-modal,
+  .printable-policy-modal * {
+    visibility: visible !important;
+  }
+
+  .printable-policy-modal {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    z-index: 2147483647 !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+}

@@ -1,0 +1,2 @@
+# Vite 플러그인이 dev/build 시 node_modules에서 복사함 (버전은 package.json의 pdfjs-dist와 일치)
+pdf.worker.mjs
