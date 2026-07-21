@@ -163,7 +163,7 @@ model RegulationParseSession {
   @@map("regulation_parse_sessions")
 }
 
-/** SaaS 운영사 표기(푸터·로그인 등). 고객사(tenant)와 무관한 단일 행 */
+/// SaaS 운영사 표기(푸터·로그인 등). 고객사(tenant)와 무관한 단일 행
 model PlatformBranding {
   id               String   @id
   legalName        String   @default("") @map("legal_name") @db.VarChar(200)
@@ -318,7 +318,7 @@ model VariableUsage {
   @@map("variable_usages")
 }
 
-/** 알림 수신 팀(예: 정보보안팀) — 테넌트별, 구성원은 User와 N:M */
+/// 알림 수신 팀(예: 정보보안팀) — 테넌트별, 구성원은 User와 N:M
 model NotificationGroup {
   id        String   @id @default(uuid())
   tenantId  String   @map("tenant_id")
@@ -344,7 +344,7 @@ model NotificationGroupMember {
   @@map("notification_group_members")
 }
 
-/** 규정 개정·시행 승인 등 사용자별 인앱 알림 */
+/// 규정 개정·시행 승인 등 사용자별 인앱 알림
 model UserNotification {
   id        String    @id @default(uuid())
   tenantId  String    @map("tenant_id")

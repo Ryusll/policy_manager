@@ -1,0 +1,151 @@
+# SRS (요구사항 명세)
+
+작성일: 2026-07-21
+근거: 실제 구현(코드) 역산 + `docs/VEDA_FeatureList.docx`. 이미 구현된 동작을 "현재 구현된 요구사항"으로 정리했으며, 신규 요구사항 추가 시 이 문서에 이어서 작성한다.
+
+## 1. 인증·사용자 (REQ-AUTH)
+
+| ID | 요구사항 |
+|---|---|
+| AUTH-1 | 이메일/비밀번호로 회원가입(신규 테넌트+최초 admin) 및 로그인 가능해야 한다 |
+| AUTH-2 | Google OAuth로 로그인/가입 가능해야 하며, `GOOGLE_CLIENT_ID/SECRET` 미설정 시 503으로 명확히 응답해야 한다 |
+| AUTH-3 | JWT access/refresh 토큰을 발급하고, refresh 토큰으로 재발급이 가능해야 한다 |
+| AUTH-4 | 테넌트 내 역할은 admin/editor/viewer 3종이어야 하며, viewer는 검색·규정상세·소개 화면만 접근 가능해야 한다 |
+| AUTH-5 | `global_admin` 플랫폼 역할을 가진 사용자만 통합 관리자 화면·API에 접근 가능해야 한다 |
+| AUTH-6 | 팀원 초대(사용자 생성)는 admin만 가능하며, Starter 플랜에서는 비활성이어야 한다 |
+
+## 2. 규정·조문 구조 (REQ-POLICY)
+
+| ID | 요구사항 |
+|---|---|
+| POLICY-1 | 규정은 코드(테넌트 내 유일)·제목·설명·담당부서·분류·개정일·시행일을 가져야 한다 |
+| POLICY-2 | 규정은 장(Chapter) → 조(Article, 조 루트) → 항(clauseNumber) → 목(itemNumber) 계층을 지원해야 한다 |
+| POLICY-3 | 행 유형은 `clauseNumber`/`itemNumber` null 여부로 판별되어야 한다 (조 루트: 둘 다 null / 항: clauseNumber만 있음 / 목: itemNumber 있음) |
+| POLICY-4 | 항·목은 제목 없이 본문만으로 등록 가능해야 한다 |
+| POLICY-5 | 조 루트 없이 제목+1항을 동시 입력하면 조 제목 행과 1항 본문 행이 자동 분리 생성되어야 한다 |
+| POLICY-6 | 장은 `suppressHeader` 설정 시 목차·전문·인쇄에서 장 제목을 숨겨야 한다 |
+| POLICY-7 | 조문에는 판례/법령/규칙 참조 여부(플래그)와 근거 메모를 기록할 수 있어야 한다 |
+| POLICY-8 | 부칙·별표·서식(PolicyAppendix)을 정렬 순서와 함께 CRUD할 수 있어야 한다 |
+| POLICY-9 | 규정 첨부파일을 업로드·다운로드·삭제할 수 있어야 한다 (MinIO 저장) |
+
+## 3. 버전·개정 워크플로 (REQ-VERSION)
+
+| ID | 요구사항 |
+|---|---|
+| VER-1 | 조문 버전 상태는 draft → review → published → archived 순으로 전이해야 한다 |
+| VER-2 | 시행 승인(published 전환) 시 승인 사유가 필수여야 하며, 기존 published 버전은 자동으로 archived 되어야 한다 |
+| VER-3 | 두 버전 간 diff를 줄 단위/단어 단위로 비교할 수 있어야 한다 |
+| VER-4 | 검토 반려(reject)와 버전 폐지(archive)는 API로 제공하되, 현재는 UI 연결이 없음을 명시해야 한다 |
+| VER-5 | 템플릿 변수(`{{VAR}}`) 사용은 버전 단위로 자동 추적(VariableUsage)되어야 한다 |
+
+## 4. 가져오기 (REQ-IMPORT)
+
+| ID | 요구사항 |
+|---|---|
+| IMPORT-1 | TXT/DOCX/PDF 업로드 또는 텍스트 붙여넣기로 규정을 가져올 수 있어야 한다 |
+| IMPORT-2 | 파싱 프로필(혼합형/한국형/영문형)과 분할 모드(auto/blank_block/line_each/delimiter/markdown)를 선택할 수 있어야 한다 |
+| IMPORT-3 | 가져오기 전 장/조문 인식 결과를 미리보기로 확인할 수 있어야 한다 |
+| IMPORT-4 | 가져오기는 `number`/`title`/`content`만 매핑하며, `clauseNumber`/`itemNumber`는 자동 매핑하지 않는다 — 이는 알려진 제한사항이며 사용자에게 안내되어야 한다 |
+| IMPORT-5 | 가져오기 이력(PolicyImportLog)이 테넌트별로 기록·조회되어야 한다 |
+
+## 5. 검색 (REQ-SEARCH)
+
+| ID | 요구사항 |
+|---|---|
+| SEARCH-1 | 규정명·코드와 게시된(published) 조문 본문/제목을 통합 검색할 수 있어야 한다 |
+| SEARCH-2 | 검색은 `pg_bigm`을 우선 사용하고, 사용 불가 시 `ILIKE`로 폴백해야 한다 |
+| SEARCH-3 | viewer 역할도 검색 기능에 접근 가능해야 한다 |
+
+## 6. 출력 템플릿 (REQ-TEMPLATE)
+
+| ID | 요구사항 |
+|---|---|
+| TPL-1 | 템플릿은 테넌트별로 CRUD·복제·기본값 지정이 가능해야 한다 |
+| TPL-2 | Starter 플랜은 템플릿 관리가 비활성이어야 한다 |
+| TPL-3 | Pro 플랜은 basic 빌더(헤더/메타/푸터/로고/결재란/A4/장별 페이지 나눔 토글)만 사용 가능해야 한다 |
+| TPL-4 | Enterprise 플랜은 HTML/CSS 자유 편집이 가능해야 한다 |
+| TPL-5 | 템플릿 변경 이력이 감사 로그 기반으로 기록·조회·복원 가능해야 한다 |
+| TPL-6 | 규정 인쇄/전문 보기는 지정된 템플릿으로 렌더링되어야 한다 |
+
+## 7. 알림 (REQ-NOTIFY)
+
+| ID | 요구사항 |
+|---|---|
+| NOTIFY-1 | 규정 개정 시 지정된 팀/개인에게 알림을 발송할 수 있어야 한다 |
+| NOTIFY-2 | 시행 승인 시 인앱 알림이 자동 생성되어야 한다 |
+| NOTIFY-3 | 사용자는 미읽음 수 확인, 개별/전체 읽음 처리를 할 수 있어야 한다 |
+
+## 8. 조문 코멘트 (REQ-COMMENT)
+
+| ID | 요구사항 |
+|---|---|
+| COMMENT-1 | 조문(Article) 단위로 코멘트를 목록 조회·작성할 수 있어야 한다 (viewer 포함 전 역할 조회·작성 가능) |
+| COMMENT-2 | 코멘트는 처리완료/미처리(`isResolved`) 상태를 토글할 수 있어야 한다 (admin/editor) |
+
+## 9. 브랜딩 (REQ-BRAND)
+
+| ID | 요구사항 |
+|---|---|
+| BRAND-1 | 테넌트(고객사) 브랜딩(로고·브랜드 마크 1~2자·로고 크기·테마 색)을 편집할 수 있어야 하며, Pro+ 플랜에서만 편집 가능해야 한다 |
+| BRAND-2 | 테넌트 브랜딩은 현재 브라우저 localStorage(`veda-brand`)에만 저장되며, 서버 동기화는 제공되지 않는다(기기/브라우저 변경 시 유실) — 알려진 제한사항 |
+| BRAND-3 | 플랫폼(운영사) 브랜딩(법인명·사업자번호·제품명·로고·lockup)은 `global_admin`이 편집하고 서버(PlatformBranding)에 저장되어야 한다 |
+| BRAND-4 | 플랫폼 브랜딩은 비로그인 상태에서도 조회 가능한 공개 API(`GET /platform-branding`)로 제공되어 로그인·푸터에 표시되어야 한다 |
+
+## 10. 감사 로그 (REQ-AUDIT)
+
+| ID | 요구사항 |
+|---|---|
+| AUDIT-1 | 주요 변경(버전 승인, 플랜 변경, 사용자 생성/역할 변경, 템플릿 변경, 벌크 임포트 등)은 AuditLog에 기록되어야 한다 |
+| AUDIT-2 | 감사 로그는 조회 API(`GET /audit-logs`, admin)로 제공되나 전용 화면(UI)은 아직 없다 — 단, 템플릿 변경 이력은 설정 > 양식 관리에서 조회·복원 가능 |
+
+## 11. 멀티테넌시·플랜·결제 (REQ-TENANT)
+
+| ID | 요구사항 |
+|---|---|
+| TENANT-1 | 모든 핵심 데이터는 `tenantId`로 격리되어야 하며, 한 테넌트의 사용자가 다른 테넌트 데이터에 접근할 수 없어야 한다 |
+| TENANT-2 | 플랜별 규정 개수·사용자 수 상한이 강제되어야 한다 (Starter 5규정/10명, Pro 10,000규정/50명, Enterprise 사실상 무제한) |
+| TENANT-3 | 플랜 변경(업그레이드)은 결제 프로바이더에 따라 동작해야 한다: `mock`(기본)은 즉시 반영, 그 외 프로바이더는 `PAYMENT_HOSTED_CHECKOUT_URL`로 리다이렉트 후 웹훅(`payment.succeeded`, 시크릿 검증)으로 반영한다 |
+| TENANT-4 | 결제 처리 결과는 **현재 `tenant.plan` 갱신 + 감사 로그만** 수행하며, 결제 이력/구독(BillingPayment·BillingSubscription·BillingCustomer)은 기록하지 않는다 — 스키마만 존재하는 미완성 영역(13.1 참고) |
+| TENANT-5 | `global_admin`은 통합 관리 콘솔에서 테넌트 목록·플랜·사용자 역할을 관리할 수 있어야 한다 |
+
+## 12. 비기능 요구사항 (REQ-NFR)
+
+| ID | 요구사항 |
+|---|---|
+| NFR-1 | API 요청은 100 req/min으로 레이트리밋되어야 한다 (ThrottlerGuard) |
+| NFR-2 | 모든 입력은 서버에서 whitelist 검증되어야 하며, DTO에 없는 필드는 거부되어야 한다 |
+| NFR-3 | 헬스체크(`/api/health`) 엔드포인트를 제공해 컨테이너 오케스트레이션이 상태를 확인할 수 있어야 한다 |
+| NFR-4 | UI는 한국어/영어를 지원해야 한다 |
+| NFR-5 | (미충족, 목표) 핵심 워크플로(로그인, 규정 CRUD, 버전 승인)에 대한 자동화 테스트가 있어야 한다 — 현재 없음, [기술부채 대장](../13_기술부채대장/기술부채_대장.md) 참고 |
+
+## 13. 범위 밖 (알려진 미구현)
+
+2026-07-21 코드 실사 기준. 아래는 요구사항에서 제외하고 향후 과제로 관리한다.
+
+### 13.1 코드가 없거나 스키마만 있는 것
+| 항목 | 실제 상태 |
+|---|---|
+| 규정 내보내기(Export) | `ExportModule`은 **빈 모듈**(컨트롤러·서비스 없음), `ExportJob` 테이블은 어떤 코드에서도 참조되지 않음 |
+| 결제 이력·구독 관리 | `BillingCustomer`/`BillingSubscription`/`BillingPayment` 테이블은 존재하나 **코드에서 전혀 읽거나 쓰지 않음**. 결제 시 `tenant.plan`만 변경됨 |
+| 실 PG 연동 | mock 즉시 반영, 또는 범용 hosted-checkout 리다이렉트+웹훅 골격만 존재. 특정 PG사(토스/아임포트 등) SDK 연동은 없음 |
+
+### 13.2 백엔드 API는 있으나 UI가 없는 것
+| 항목 | 실제 상태 |
+|---|---|
+| 버전 반려(reject)·폐지(archive) | `versions.service`에 구현됨, `POST /versions/:id/reject`·`/archive` 존재, 화면 연결 없음 |
+| 관리자 벌크 임포트 | `POST /admin/import/policies` 구현됨(admin), 화면 없음 |
+| PDF 파싱(regulation-parse) | upload/tree/commit API 구현됨, 화면 없음 |
+| 감사 로그 조회 | `GET /audit-logs` 구현됨, 전용 화면 없음(템플릿 변경 이력만 설정 화면에 노출) |
+
+### 13.3 UI에 있으나 비활성(placeholder)인 것
+| 항목 | 실제 상태 |
+|---|---|
+| 규정 상세 확장 기능 8종 | 제정·개정이유 / 별표·서식 / 3단비교 / 신구법비교 / 법령체계표 / 법령비교 / 음성지원 / 점자뷰어 — `disabled` 버튼, "추후 제공 예정" 툴팁 (`PolicyDetailPage.tsx`) |
+| 규정 `isActive` 토글 | 상태 표시만, 편집 UI 없음 |
+
+### 13.4 기능적 제한사항
+| 항목 | 실제 상태 |
+|---|---|
+| 가져오기 항·목 자동 매핑 | 가져오기는 `number`/`title`/`content`만 매핑, `clauseNumber`/`itemNumber`는 수동 구조 편집 필요 |
+| 테넌트 브랜딩 서버 동기화 | localStorage(`veda-brand`)에만 저장, 서버 백업/동기화 없음 (Pro+) |
+| 자동화 테스트·CI | 없음 ([기술부채 대장](../13_기술부채대장/기술부채_대장.md) 참고) |
