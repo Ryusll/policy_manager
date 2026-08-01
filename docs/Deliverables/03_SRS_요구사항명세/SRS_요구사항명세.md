@@ -45,7 +45,7 @@
 | IMPORT-1 | TXT/DOCX/PDF 업로드 또는 텍스트 붙여넣기로 규정을 가져올 수 있어야 한다 |
 | IMPORT-2 | 파싱 프로필(혼합형/한국형/영문형)과 분할 모드(auto/blank_block/line_each/delimiter/markdown)를 선택할 수 있어야 한다 |
 | IMPORT-3 | 가져오기 전 장/조문 인식 결과를 미리보기로 확인할 수 있어야 한다 |
-| IMPORT-4 | 가져오기는 `number`/`title`/`content`만 매핑하며, `clauseNumber`/`itemNumber`는 자동 매핑하지 않는다 — 이는 알려진 제한사항이며 사용자에게 안내되어야 한다 |
+| IMPORT-4 | 가져오기는 항(①②…)·목(1. 2. …) 패턴을 인식해 `clauseNumber`/`itemNumber`를 자동으로 채워야 한다. 「항·목 자동 인식」 옵션으로 끌 수 있고, 인식 결과 개수를 등록 전에 안내해야 한다 (2026-07-30 구현) |
 | IMPORT-5 | 가져오기 이력(PolicyImportLog)이 테넌트별로 기록·조회되어야 한다 |
 
 ## 5. 검색 (REQ-SEARCH)
@@ -146,6 +146,6 @@
 ### 13.4 기능적 제한사항
 | 항목 | 실제 상태 |
 |---|---|
-| 가져오기 항·목 자동 매핑 | 가져오기는 `number`/`title`/`content`만 매핑, `clauseNumber`/`itemNumber`는 수동 구조 편집 필요 |
+| ~~가져오기 항·목 자동 매핑~~ | **2026-07-30 해소**(IMPORT-4 참고). 패턴이 없는 원문은 여전히 조 단위로만 등록된다 |
 | 테넌트 브랜딩 서버 동기화 | localStorage(`veda-brand`)에만 저장, 서버 백업/동기화 없음 (Pro+) |
 | 자동화 테스트·CI | 없음 ([기술부채 대장](../13_기술부채대장/기술부채_대장.md) 참고) |

@@ -28,6 +28,7 @@ import { useAuthStore } from '../stores/authStore';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
 import TemplateRenderer from '../components/policy-template/TemplateRenderer';
+import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
 import { canManagePolicyTemplates } from '../lib/planFeatures';
 import { escapeRegExp } from '../lib/searchRegex';
 import { highlightText } from '../lib/highlightSearch';
@@ -1232,21 +1233,18 @@ export default function PolicyDetailPage() {
     }
     return templates.find((row: any) => row.isDefault) || null;
   }, [templates, selectedTemplateId, policy?.templateId]);
+  // 토큰 데이터는 templateTokens.buildTemplateTokenData 단일 소스를 사용한다.
+  // ({{content}}·{{logo}}는 렌더 시점 관심사라 TemplateRenderer가 덧붙인다)
   const templateRenderData = useMemo(
-    () => ({
-      tenant: { name: user?.tenantName || '' },
-      policy: { title: policy?.title || '', code: policy?.code || '' },
-      today: new Date().toLocaleDateString('ko-KR'),
-      revisionDate: formatKoDate(policy?.revisionDate) || '',
-      effectiveDate: formatKoDate(policy?.effectiveDate) || '',
-      content: fullViewGroups
-        .flatMap((chapter: any) => chapter.groups)
-        .flatMap((group: any) => group.items)
-        .map((article: any) => article.versions?.[0]?.content || '')
-        .filter(Boolean)
-        .join('\n\n'),
-    }),
-    [user?.tenantName, policy?.title, policy?.code, policy?.revisionDate, policy?.effectiveDate, fullViewGroups],
+    () =>
+      buildTemplateTokenData({
+        tenantName: user?.tenantName,
+        policyTitle: policy?.title,
+        policyCode: policy?.code,
+        revisionDate: policy?.revisionDate,
+        effectiveDate: policy?.effectiveDate,
+      }),
+    [user?.tenantName, policy?.title, policy?.code, policy?.revisionDate, policy?.effectiveDate],
   );
 
   const relatedQuery = (

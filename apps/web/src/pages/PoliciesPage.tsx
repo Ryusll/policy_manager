@@ -12,6 +12,11 @@ import { useI18n } from '../i18n/useI18n';
 import { type ParseProfile, type ParsedPolicyDraft } from '../lib/policyImportParser';
 import { parsePolicyTextWithSplitMode, type ImportSplitMode } from '../lib/policyImportSplitModes';
 import { defaultImportRefineOptions, refineImportRawText, type ImportRefineOptions } from '../lib/policyImportRefine';
+import {
+  countInferredHierarchy,
+  expandChaptersWithHierarchy,
+  type HierarchyArticleRow,
+} from '../lib/policyImportHierarchy';
 import { extractPolicyText } from '../lib/policyTextExtract';
 import { useAuthStore } from '../stores/authStore';
 import { ArticleBodyInline } from '../components/ArticleBodyInline';
@@ -48,7 +53,11 @@ export default function PoliciesPage() {
   const [selectedDepartment, setSelectedDepartment] = useState(searchParams.get('department') || 'all');
   const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || 'all');
   const [activeIssueTarget, setActiveIssueTarget] = useState<string>('');
-  const [cleanupOptions, setCleanupOptions] = useState({ renumber: true, trimEmptyArticles: true });
+  const [cleanupOptions, setCleanupOptions] = useState({
+    renumber: true,
+    trimEmptyArticles: true,
+    inferHierarchy: true,
+  });
   const [importSplitMode, setImportSplitMode] = useState<ImportSplitMode>('auto');
   const [importDelimiter, setImportDelimiter] = useState('');
   const [importRefineOptions, setImportRefineOptions] = useState<ImportRefineOptions>(() => defaultImportRefineOptions());
@@ -131,16 +140,24 @@ export default function PoliciesPage() {
           }))
           .filter((chapter) => chapter.articles.length > 0);
       }
-      for (const chapter of chaptersToCreate) {
+      // 항(①②…)·목(1. 2. …) 자동 추론: 조 번호를 유지하므로 renumber 이후에 적용해야 한다
+      const chaptersForCreate: { number: number; title?: string; articles: HierarchyArticleRow[] }[] =
+        cleanupOptions.inferHierarchy ? expandChaptersWithHierarchy(chaptersToCreate) : chaptersToCreate;
+
+      for (const chapter of chaptersForCreate) {
         const createdChapter = await policiesApi.createChapter(policy.id, {
           number: chapter.number,
           title: chapter.title || '총칙',
         });
         for (const article of chapter.articles) {
+          const isJoRoot = article.clauseNumber == null && article.itemNumber == null;
           await policiesApi.createArticle(policy.id, createdChapter.id, {
             number: article.number,
-            title: article.title || '조문',
+            // 항·목 행은 제목 없이 본문만 등록한다(조 제목과 중복 방지)
+            title: isJoRoot ? article.title || '조문' : '',
             content: article.content || '',
+            ...(article.clauseNumber != null ? { clauseNumber: article.clauseNumber } : {}),
+            ...(article.itemNumber != null ? { itemNumber: article.itemNumber } : {}),
           });
         }
       }
@@ -164,7 +181,7 @@ export default function PoliciesPage() {
       setImportRawText('');
       setParsedDraft({ chapters: [] });
       setImportError('');
-      setCleanupOptions({ renumber: true, trimEmptyArticles: true });
+      setCleanupOptions({ renumber: true, trimEmptyArticles: true, inferHierarchy: true });
       setImportSplitMode('auto');
       setImportDelimiter('');
       setImportRefineOptions(defaultImportRefineOptions());
@@ -347,6 +364,11 @@ export default function PoliciesPage() {
   }, [importRawText, importSplitMode, importDelimiter, parseProfile]);
 
   const parsedArticleCount = parsedDraft.chapters.reduce((acc, chapter) => acc + chapter.articles.length, 0);
+  // 미리보기: 항·목 자동 인식으로 몇 개가 만들어질지 미리 보여준다
+  const inferredHierarchyCounts = useMemo(
+    () => countInferredHierarchy(parsedDraft.chapters),
+    [parsedDraft.chapters],
+  );
   const importFallbackBlob =
     parsedDraft.chapters.length === 1 &&
     parsedDraft.chapters[0].title === '원문' &&
@@ -705,7 +727,22 @@ export default function PoliciesPage() {
                           />
                           빈 조문 자동 정리
                         </label>
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={cleanupOptions.inferHierarchy}
+                            onChange={(e) => setCleanupOptions((prev) => ({ ...prev, inferHierarchy: e.target.checked }))}
+                          />
+                          항·목 자동 인식 (①②… / 1. 2. …)
+                        </label>
                       </div>
+                      {cleanupOptions.inferHierarchy && (
+                        <p className="text-[11px] text-gray-500">
+                          {inferredHierarchyCounts.clauses + inferredHierarchyCounts.items > 0
+                            ? `현재 원문에서 항 ${inferredHierarchyCounts.clauses}개 · 목 ${inferredHierarchyCounts.items}개를 인식했습니다. 등록 시 조·항·목 구조로 저장됩니다.`
+                            : '현재 원문에서는 항·목 패턴(①②… / 1. 2. …)이 감지되지 않았습니다. 조 단위로만 등록됩니다.'}
+                        </p>
+                      )}
                     </div>
                   )}
                   {(importValidation.errors.length > 0 || importValidation.warnings.length > 0) && (

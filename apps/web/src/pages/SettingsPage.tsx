@@ -28,6 +28,7 @@ import { templatesApi, type PolicyTemplate, type TemplateRevision } from '../api
 import { policiesApi } from '../api/policies';
 import TemplateEditor from '../components/policy-template/TemplateEditor';
 import TemplateRenderer from '../components/policy-template/TemplateRenderer';
+import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
 import PlanModal from '../components/PlanModal';
 
 const PRESET_IDS: ThemePresetId[] = ['forest', 'ocean', 'slate', 'wine'];
@@ -315,6 +316,27 @@ export default function SettingsPage() {
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === selectedTemplateId) || null,
     [templates, selectedTemplateId],
+  );
+
+  // 미리보기 토큰 데이터도 실제 렌더와 동일한 빌더를 사용한다.
+  // (예전에는 revisionDate·effectiveDate를 넘기지 않아 미리보기에서만 빈칸으로 보였다)
+  const templatePreviewTokenData = useMemo(
+    () =>
+      buildTemplateTokenData({
+        tenantName: user?.tenantName || '샘플회사',
+        policyTitle: previewPolicy?.title || templateDraft.name || '규정 미리보기',
+        policyCode: previewPolicy?.code || 'TMP-001',
+        revisionDate: previewPolicy?.revisionDate,
+        effectiveDate: previewPolicy?.effectiveDate,
+      }),
+    [
+      user?.tenantName,
+      previewPolicy?.title,
+      previewPolicy?.code,
+      previewPolicy?.revisionDate,
+      previewPolicy?.effectiveDate,
+      templateDraft.name,
+    ],
   );
 
   const templatePreviewGroups = useMemo(() => {
@@ -1702,14 +1724,7 @@ export default function SettingsPage() {
                           ? { layoutJson: { mode: 'html', rawHtml: templateDraft.html }, cssText: templateDraft.css }
                           : { layoutJson: { mode: 'basic', basicConfig: basicTemplateDraft }, cssText: '' }
                       }
-                      data={{
-                        tenant: { name: user?.tenantName || '샘플회사' },
-                        policy: {
-                          title: previewPolicy?.title || templateDraft.name || '규정 미리보기',
-                          code: previewPolicy?.code || 'TMP-001',
-                        },
-                        today: new Date().toLocaleDateString('ko-KR'),
-                      }}
+                      data={templatePreviewTokenData}
                       fullViewGroups={templatePreviewGroups}
                     />
                   </div>
@@ -1742,14 +1757,7 @@ export default function SettingsPage() {
                     ? { layoutJson: { mode: 'html', rawHtml: templateDraft.html }, cssText: templateDraft.css }
                     : { layoutJson: { mode: 'basic', basicConfig: basicTemplateDraft }, cssText: '' }
                 }
-                data={{
-                  tenant: { name: user?.tenantName || '샘플회사' },
-                  policy: {
-                    title: previewPolicy?.title || templateDraft.name || '규정 미리보기',
-                    code: previewPolicy?.code || 'TMP-001',
-                  },
-                  today: new Date().toLocaleDateString('ko-KR'),
-                }}
+                data={templatePreviewTokenData}
                 fullViewGroups={templatePreviewGroups}
               />
             </div>

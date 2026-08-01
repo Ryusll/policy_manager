@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PlanTier, Prisma } from '@prisma/client';
+import * as sanitizeHtml from 'sanitize-html';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CloneTemplateDto, CreateTemplateDto, UpdateTemplateDto } from './templates.dto';
@@ -9,32 +10,54 @@ const MAX_TEMPLATE_DESCRIPTION = 500;
 const MAX_TEMPLATE_HTML = 200_000;
 const MAX_TEMPLATE_CSS = 80_000;
 
+/**
+ * 템플릿 HTML sanitize (서버 = 보안 경계, 저장 시점에 정화).
+ *
+ * 과거 정규식 구현은 따옴표 없는 이벤트 핸들러(`<img src=x onerror=alert(1)>`)와
+ * 허용목록에 없던 태그(`<svg onload=…>`)를 통과시켰다. 검증된 라이브러리로 교체했다.
+ *
+ * 클라이언트도 렌더 시 동일 정책으로 sanitize한다
+ * (`apps/web/src/components/policy-template/templateSanitize.ts`).
+ * 허용 목록을 바꿀 때는 **양쪽을 함께** 수정해야 한다.
+ */
+const TEMPLATE_ALLOWED_TAGS = [
+  'div', 'span', 'p', 'br', 'hr',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'strong', 'b', 'em', 'i', 'u', 's', 'small', 'sub', 'sup',
+  'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col',
+  'img', 'figure', 'figcaption', 'blockquote', 'pre', 'code',
+  'header', 'footer', 'section', 'article', 'aside', 'main', 'nav',
+  'mark', 'time', 'address', 'a',
+];
+
+const TEMPLATE_ALLOWED_ATTRS = [
+  'class', 'id', 'style', 'title', 'lang', 'dir',
+  'src', 'alt', 'width', 'height',
+  'colspan', 'rowspan', 'span', 'align', 'valign',
+  'datetime', 'cite',
+  'href', 'target', 'rel',
+];
+
 function sanitizeHtmlText(html: string) {
-  let out = String(html ?? '');
-  out = out.replace(/<!--[\s\S]*?-->/g, '');
-  out = out.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
-  out = out.replace(/<(iframe|object|embed|link|meta|base|form|input|button|textarea|select)[\s\S]*?>[\s\S]*?<\/\1>/gi, '');
-  out = out.replace(/<(iframe|object|embed|link|meta|base|form|input|button|textarea|select)\b[^>]*\/?>/gi, '');
-  out = out.replace(/\son\w+="[^"]*"/gi, '');
-  out = out.replace(/\son\w+='[^']*'/gi, '');
-  out = out.replace(/\son\w+=\{[^}]*\}/gi, '');
-  out = out.replace(/\sxmlns(:\w+)?="[^"]*"/gi, '');
-  out = out.replace(/\sstyle="[^"]*"/gi, (m) =>
-    m
-      .replace(/expression\s*\([^)]*\)/gi, '')
-      .replace(/@import[^;]*;?/gi, '')
-      .replace(/url\(\s*['"]?\s*(javascript:|vbscript:|data:text\/html)/gi, 'url(about:blank'),
-  );
-  out = out.replace(/\sstyle='[^']*'/gi, (m) =>
-    m
-      .replace(/expression\s*\([^)]*\)/gi, '')
-      .replace(/@import[^;]*;?/gi, '')
-      .replace(/url\(\s*['"]?\s*(javascript:|vbscript:|data:text\/html)/gi, 'url(about:blank'),
-  );
-  out = out.replace(/vbscript:/gi, '');
-  out = out.replace(/data:text\/html/gi, '');
-  out = out.replace(/javascript:/gi, '');
-  return out;
+  return sanitizeHtml(String(html ?? ''), {
+    allowedTags: TEMPLATE_ALLOWED_TAGS,
+    // 모든 허용 태그에 동일 속성 집합 적용. on* 이벤트 핸들러는 목록에 없어 제거된다
+    allowedAttributes: { '*': TEMPLATE_ALLOWED_ATTRS },
+    // 문서 양식용 이미지: data URI(로고) + http(s) 허용
+    allowedSchemes: ['http', 'https', 'mailto', 'tel'],
+    allowedSchemesByTag: { img: ['http', 'https', 'data'] },
+    allowProtocolRelative: false,
+    // style 속성 내부의 위험 구문 제거는 sanitizeCssText와 동일 정책으로 후처리
+    transformTags: {
+      '*': (tagName, attribs) => {
+        if (typeof attribs.style === 'string') {
+          attribs.style = sanitizeCssText(attribs.style);
+        }
+        return { tagName, attribs };
+      },
+    },
+  });
 }
 
 function sanitizeCssText(css: string) {
@@ -50,6 +73,9 @@ function sanitizeCssText(css: string) {
   out = out.replace(/javascript:/gi, '');
   out = out.replace(/vbscript:/gi, '');
   out = out.replace(/data:text\/html/gi, '');
+  // </style> 로 스타일 컨텍스트를 탈출해 스크립트를 여는 것을 방지
+  out = out.replace(/<\/?style\b[^>]*>/gi, '');
+  out = out.replace(/<\/?script\b[^>]*>/gi, '');
   return out;
 }
 

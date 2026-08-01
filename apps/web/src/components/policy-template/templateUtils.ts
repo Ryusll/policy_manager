@@ -1,4 +1,5 @@
 import { escapeRegExp } from '../../lib/searchRegex';
+import { sanitizeTemplateCss, sanitizeTemplateHtml } from './templateSanitize';
 import {
   formatArticleJo,
   formatClauseHang,
@@ -7,21 +8,18 @@ import {
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
 
+/**
+ * 템플릿 HTML sanitize.
+ * 과거 정규식 구현은 따옴표 없는 이벤트 핸들러(`onerror=alert(1)`) 등을 통과시켰다.
+ * 이제 DOMPurify 기반 `sanitizeTemplateHtml`에 위임한다(`templateSanitize.ts`).
+ */
 export function sanitizeHtmlLite(html: string) {
-  let out = String(html ?? '');
-  out = out.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
-  out = out.replace(/\son\w+="[^"]*"/gi, '');
-  out = out.replace(/\son\w+='[^']*'/gi, '');
-  out = out.replace(/javascript:/gi, '');
-  return out;
+  return sanitizeTemplateHtml(html);
 }
 
+/** 템플릿 CSS sanitize. `templateSanitize.ts`의 정책에 위임한다. */
 export function sanitizeCssLite(css: string) {
-  let out = String(css ?? '');
-  out = out.replace(/@import/gi, '');
-  out = out.replace(/expression\s*\(/gi, '');
-  out = out.replace(/javascript:/gi, '');
-  return out;
+  return sanitizeTemplateCss(css);
 }
 
 function resolvePath(data: any, path: string) {

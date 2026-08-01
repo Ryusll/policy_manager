@@ -33,7 +33,8 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.1",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "sanitize-html": "^2.17.6"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.3.2",
@@ -46,6 +47,7 @@
     "@types/node": "^20.11.10",
     "@types/passport-google-oauth20": "^2.0.14",
     "@types/passport-jwt": "^4.0.1",
+    "@types/sanitize-html": "^2.16.1",
     "prisma": "^5.9.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"

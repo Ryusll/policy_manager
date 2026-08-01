@@ -7,7 +7,7 @@
 
 - 전역 가드(적용 순서): `JwtAuthGuard` → `PlanGuard` → `RolesGuard` → `ThrottlerGuard` (`apps/api/src/app.module.ts`)
 - `@Public()` 표시된 라우트만 JWT 없이 호출 가능, 나머지는 `Authorization: Bearer <accessToken>` 필수
-- `@Roles(...)`는 테넌트 내 역할(admin/editor/viewer), `@PlatformRoles('global_admin')`은 SaaS 운영자 전용
+- `@Roles(...)`는 테넌트 내 역할(admin/editor/viewer), `@PlatformRoles('global_admin')`은 SaaS 운영자 전용, `@MinPlan('pro')`는 플랜 하한(PlanGuard)
 - 레이트리밋: 100 req/min (`ThrottlerGuard`)
 - 요청 바디는 전역 `ValidationPipe`(whitelist, forbidNonWhitelisted, transform) 적용 — DTO에 없는 필드는 자동 거부
 
@@ -90,9 +90,12 @@
 | GET | related-preview | JWT | 판·법·규 연관 미리보기. Query: `type`(precedent\|law\|rule, 필수), `q`(필수), `limit`(기본 5), `sort`(relevance\|latest), `scope`(title\|fulltext) |
 
 ## templates (`/api/templates`)
+
+> 컨트롤러 전체에 `@MinPlan('pro')`가 적용되어 **Starter 플랜은 모든 템플릿 엔드포인트가 차단**된다(403).
+
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | JWT | 출력 템플릿 목록 |
+| GET | (root) | JWT (Pro+) | 출력 템플릿 목록 |
 | GET | :id | JWT | 템플릿 상세 |
 | GET | :id/revisions | JWT | 템플릿 변경 이력(audit 기반) |
 | POST | (root) | admin | 템플릿 생성 (Pro: basic 모드, Enterprise: HTML/CSS) |
@@ -259,3 +262,31 @@
 - UI가 연결되지 않은 API 전용 엔드포인트는 [13_기술부채대장](../13_기술부채대장/기술부채_대장.md)에서 추적.
 - 본 부록은 소스의 DTO를 옮긴 것이다. 2026-07-21 스모크 테스트로 auth/policies/search/me/health/platform-branding 엔드포인트의 상태코드·응답 형태를 실측 확인했다([16_Runbook 9절](../16_Runbook_배포롤백/Runbook_배포롤백.md)). 나머지 엔드포인트의 응답 필드는 여전히 소스(`*.service.ts` 반환값) 기준이며 개별 실측은 미완료.
 - 실측 참고: 공개 브랜딩 응답은 입력 DTO의 `logoDataUrl`이 아니라 `logoUrl` 필드로 반환된다(공개 컨트롤러가 형태를 변환). 요청 DTO와 응답 형태가 다를 수 있으니 응답은 실제 호출로 확인 권장.
+
+---
+
+# 부록 C. 출력 템플릿 토큰 계약
+
+작성 근거: `apps/web/src/components/policy-template/templateTokens.ts` (단일 소스).
+Pro 기본 빌더(`basicConfig`)와 Enterprise 자유 HTML(`rawHtml`)이 **같은 토큰 집합**을 참조한다. 템플릿에는 `{{경로}}` 형태로 쓴다.
+
+| 토큰 | 종류 | 설명 |
+|---|---|---|
+| `{{tenant.name}}` | 텍스트 | 테넌트(고객사) 이름 |
+| `{{policy.title}}` | 텍스트 | 규정 제목 |
+| `{{policy.code}}` | 텍스트 | 규정 코드 |
+| `{{today}}` | 텍스트 | 출력일 (ko-KR) |
+| `{{revisionDate}}` | 텍스트 | 개정일. 미설정 시 빈 문자열 |
+| `{{effectiveDate}}` | 텍스트 | 시행일. 미설정 시 빈 문자열 |
+| `{{content}}` | HTML | 조·항·목 구조를 유지한 규정 전문. 본문 텍스트는 이스케이프됨 (렌더 시점 주입) |
+| `{{logo}}` | HTML | 테넌트 브랜딩 로고 `<img>`. 로고 없으면 빈 문자열 (렌더 시점 주입) |
+
+**규칙**
+- 목록에 없는 토큰은 렌더 시 **빈 문자열로 제거**된다. 에디터가 미지원 토큰을 경고로 표시한다.
+- `{{content}}`가 만드는 마크업의 시맨틱 클래스(`.tmpl-chapter`, `.tmpl-chapter-title`, `.tmpl-article-body` 등)를 CSS로 스타일링한다.
+- 토큰을 추가할 때는 `templateTokens.ts`의 `TEMPLATE_TOKENS`와 `buildTemplateTokenData`를 함께 수정한다(한쪽만 고치면 목록과 실제 값이 어긋난다).
+- 조문 단위 토큰(`{{article.number}}` 등)은 **지원하지 않는다**. 조문은 `{{content}}` 안에서 렌더된다.
+
+**sanitize**: 템플릿 HTML/CSS는 저장 시 서버(`sanitize-html`)에서, 렌더 시 클라이언트(`DOMPurify`)에서 정화된다. 허용 태그·속성 목록은 서버 `templates.service.ts`와 클라이언트 `templateSanitize.ts`에 있고 **함께 유지보수해야 한다**. 스크립트·프레임·폼 계열 태그와 `on*` 이벤트 핸들러는 전부 제거된다.
+
+---
