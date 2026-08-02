@@ -13,13 +13,15 @@
 | ADR-0002 | 멀티테넌시를 공유 DB + tenantId 컬럼(앱 레벨 격리)로 구현 | Accepted |
 | ADR-0003 | 테넌트 브랜딩을 서버가 아닌 브라우저 localStorage에 저장 | Accepted (제한 있음) |
 | ADR-0004 | 결제를 provider 추상화로 두되 결제 이력 테이블은 미사용 | Accepted (미완성) |
-| ADR-0005 | 컨테이너 기동 시 migrate 실패하면 db push로 폴백 | Accepted (기술부채) |
+| ADR-0005 | 컨테이너 기동 시 migrate 실패하면 db push로 폴백 | **Superseded by ADR-0012** |
 | ADR-0006 | 검색을 pg_bigm 우선 + ILIKE 폴백으로 구현 | Accepted |
 | ADR-0007 | JWT를 Authorization 헤더로, CORS는 origin reflect | Accepted |
 | ADR-0008 | PDF 텍스트 추출을 런타임 Python 서브프로세스로 수행 | Accepted |
 | ADR-0009 | 템플릿 sanitize를 서버 sanitize-html + 클라이언트 DOMPurify로 이원화 | Accepted |
 | ADR-0010 | 가져오기 항·목 추론을 클라이언트에서 수행 | Accepted |
 | ADR-0011 | 절(節)을 선택 계층으로 추가하되 Article.chapterId는 필수로 유지 | Accepted |
+| ADR-0012 | 마이그레이션을 baseline으로 스쿼시하고 db push 폴백을 제거 | Accepted |
+| ADR-0013 | 컨테이너 베이스를 Alpine → Debian slim으로 전환 | Accepted |
 
 ---
 
@@ -96,7 +98,7 @@
 
 ## ADR-0005 — 컨테이너 기동 시 migrate 실패하면 db push로 폴백
 
-**상태**: Accepted (기술부채)
+**상태**: **Superseded by [ADR-0012](#adr-0012--마이그레이션을-baseline으로-스쿼시하고-db-push-폴백을-제거) (2026-08-02)**
 
 **맥락**
 API 컨테이너 기동 시 DB 스키마를 자동으로 최신화해야 한다. Prisma에는 `migrate deploy`(이력 기반)와 `db push`(스키마 강제 반영)가 있다.
@@ -223,3 +225,47 @@ Enterprise 플랜은 출력 템플릿의 HTML/CSS를 자유 편집할 수 있다
 - (+) 절을 쓰는 규정과 쓰지 않는 규정을 한 모델로 다룬다.
 - (−) DB상으로는 여전히 조가 장에 종속된다. "장 없음"은 **숨김 장이라는 관례**로 표현되므로, 이 관례를 모르는 코드가 빈 제목 장을 그대로 노출할 위험이 있다(`isChapterHeaderHidden` 헬퍼를 반드시 경유해야 함).
 - (−) 정석 구조로 가려면 후속 마이그레이션이 필요하다. 테스트 기반이 갖춰진 뒤 재검토한다.
+
+---
+
+## ADR-0012 — 마이그레이션을 baseline으로 스쿼시하고 db push 폴백을 제거
+
+**상태**: Accepted (2026-08-02). [ADR-0005](#adr-0005--컨테이너-기동-시-migrate-실패하면-db-push로-폴백)를 대체한다.
+
+**맥락**
+마이그레이션 13건 중 첫 번째(`enable_pgbigm`)가 확장만 만들고 테이블은 만들지 않아, 빈 DB에서 `migrate deploy`가 두 번째 마이그레이션부터 `relation "users" does not exist`로 실패했다. 그래서 기동 스크립트가 `db push --accept-data-loss`로 폴백했는데, 이는 **운영 데이터 손실 위험**이 있고 스키마가 마이그레이션 이력으로 재현되지 않는다는 뜻이기도 했다. 실제로 개발 DB의 `_prisma_migrations`에는 `google_oauth`가 실패 상태로 남아 있었다.
+
+**결정**
+Prisma 표준 baseline 절차대로 이력을 스쿼시한다.
+- `00000000000000_init` — 현재 스키마 전체(`migrate diff --from-empty --to-schema-datamodel`로 생성, 23개 테이블)
+- `00000000000001_enable_pgbigm` — 기존 pg_bigm 커스텀 SQL을 그대로 보존(가드 포함)
+- 기존 13개 마이그레이션 파일은 제거한다. 재생이 불가능했으므로 이력으로서의 가치가 없었다.
+
+기동 스크립트에서 `db push --accept-data-loss`를 **제거**하고, 대신 baseline 이전 DB를 자동 처리한다: `migrate deploy` 실패 → `users` 테이블 존재 확인 → 현재 이력에 없는 `_prisma_migrations` 행 정리(스쿼시로 사라진 실패 기록이 P3009를 유발) → baseline을 applied로 표시 → 재시도. 그래도 실패하면 **종료**(1)한다.
+
+**결과**
+- (+) 빈 DB에서 `migrate deploy`만으로 전체 스키마가 재현된다. `migrate diff`로 **드리프트 0** 확인.
+- (+) 데이터 손실 경로가 사라졌다. 실패는 조용히 넘어가지 않고 컨테이너를 멈춘다.
+- (+) 앞으로 `prisma migrate dev`가 섀도 DB에서 정상 동작하므로 마이그레이션을 손으로 쓰지 않아도 된다.
+- (−) 2026-08-02 이전 마이그레이션 이력이 사라졌다(어차피 재생 불가였다).
+- (−) 기존 DB는 최초 1회 자동 baseline 처리를 거친다. 이 경로는 `_prisma_migrations`의 과거 행을 지우므로, 커스텀 마이그레이션을 따로 넣어 쓰던 환경이 있다면 확인이 필요하다.
+
+---
+
+## ADR-0013 — 컨테이너 베이스를 Alpine → Debian slim으로 전환
+
+**상태**: Accepted (2026-08-02)
+
+**맥락**
+[ADR-0008](#adr-0008--pdf-텍스트-추출을-런타임-python-서브프로세스로-수행)에 따라 런타임 이미지에 `pdfplumber`·`PyMuPDF`를 설치하는데, Alpine(musl)에서 `pip install`이 실패해 **이미지 자체를 빌드할 수 없었다**. 실측 결과 원인은 명확했다: PyMuPDF는 musllinux wheel을 **아예 배포하지 않아**(`No matching distribution found`) 소스 빌드로 넘어가고, Alpine에는 C 툴체인이 없어 `cc` 127로 죽는다. pdfplumber는 순수 Python이라 문제없다.
+
+**결정**
+빌더·런너 모두 `node:20-slim`(Debian bookworm)으로 전환한다. 두 스테이지의 베이스가 같아야 builder에서 생성한 Prisma 엔진을 런너가 그대로 쓸 수 있다. Prisma `binaryTargets`도 `linux-musl-openssl-3.0.x` → `debian-openssl-3.0.x`로 바꾼다. pip 설치에는 `--only-binary=:all:`을 붙여 wheel이 없으면 **즉시 실패**하게 한다(소스 빌드로 조용히 새다가 뒤늦게 깨지는 것을 막는다).
+
+**대안**: Alpine 유지 + 빌드 툴체인 설치. MuPDF 소스 빌드는 느리고 취약해 채택하지 않았다. PyMuPDF를 빼고 pdfplumber만 쓰는 안도 검토했으나, PyMuPDF는 pdfplumber 실패 시의 폴백 엔진이라 추출 견고성이 떨어져 보류했다.
+
+**결과**
+- (+) 원본 Dockerfile 그대로 빌드·기동되고, 런타임에서 `import pdfplumber, fitz`가 성공한다.
+- (+) wheel 부재가 빌드 실패로 즉시 드러난다.
+- (−) 이미지 크기가 Alpine 대비 커진다.
+- (−) Alpine 전용 설정(musl 타깃)이 남아 있으면 엔진 불일치가 나므로, 베이스를 다시 바꿀 때는 `binaryTargets`도 함께 봐야 한다.

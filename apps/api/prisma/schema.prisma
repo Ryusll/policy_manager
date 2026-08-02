@@ -1,6 +1,8 @@
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // 컨테이너 베이스가 Debian(node:20-slim)이므로 debian 타깃이 필요하다.
+  // musl 타깃은 Alpine을 쓰던 시절의 잔재라 제거 (Dockerfile 주석 참고)
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

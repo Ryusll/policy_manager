@@ -43,8 +43,9 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      # 컨텍스트가 리포 루트여야 워크스페이스 락파일(package-lock.json)로 재현 설치가 가능하다
+      context: .
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     ports:
       - "3001:3000"

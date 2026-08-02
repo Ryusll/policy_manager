@@ -35,12 +35,13 @@ npm run docker:logs        # 기동 로그 확인
 ```
 
 `api` 컨테이너는 `docker-entrypoint.sh`에 따라 기동 시 자동으로:
-1. `prisma migrate deploy` (실패 시 → 2로 폴백)
-2. `prisma db push --accept-data-loss` (실패 시 FATAL 종료)
-3. 데모 데이터 시드 (테넌트 `demo`, 계정 `admin@demo.com` / `password123`; seed.ts에는 `astrum`/`admin@astrum.com`도 포함)
-4. `node dist/main`으로 서버 기동
+1. `prisma migrate deploy`
+2. (1이 실패하고 **기존 스키마가 있으면**) baseline 이전 DB로 보고 자동 처리 — 옛 이력 행 정리 → `00000000000000_init`을 applied로 표시 → `migrate deploy` 재시도
+3. 그래도 실패하면 **FATAL 종료** (데이터를 덮어쓰지 않는다)
+4. 데모 데이터 시드 (테넌트 `demo`, 계정 `admin@demo.com` / `password123`; seed.ts에는 `astrum`/`admin@astrum.com`도 포함)
+5. `node dist/main`으로 서버 기동
 
-> ⚠️ 2번 폴백(`db push --accept-data-loss`)은 스키마 불일치 시 **데이터 손실 가능성**이 있다. baseline 마이그레이션 부재로 인한 구조이며, 운영 데이터가 있는 환경에서는 폴백에 의존하지 말고 마이그레이션이 정상 적용되는지 먼저 확인할 것 ([13_기술부채대장](../13_기술부채대장/기술부채_대장.md) 항목 참고).
+> 2026-08-02부터 `db push --accept-data-loss` 폴백은 **제거**됐다([ADR-0012](../10_ADR_의사결정기록/ADR.md)). 스키마는 마이그레이션으로만 반영되며, 실패는 조용히 넘어가지 않고 컨테이너를 멈춘다.
 
 ## 4. 코드 변경 재배포
 
@@ -53,9 +54,9 @@ docker compose up -d api web
 docker compose build --no-cache web && docker compose up -d web
 ```
 
-## 5. 마이그레이션 수동 적용 (권장 운영 방식)
+## 5. 마이그레이션 수동 적용
 
-자동 폴백에 의존하지 않으려면 배포 시 명시적으로:
+기동 시 자동 적용되지만, 배포 절차상 명시적으로 확인하려면:
 
 ```bash
 docker compose exec api npx prisma migrate deploy
@@ -93,7 +94,7 @@ api 컨테이너 헬스체크는 `/api/health`를 5초 간격, start_period 60�
 - [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가
 - [ ] `PUBLIC_URL`과 Google OAuth 콜백 URL이 일치하는가
 - [ ] 배포 전 DB 백업(`pg_dump`)을 수행했는가
-- [ ] 마이그레이션이 `migrate deploy`로 정상 적용되었는가 (폴백에 의존하지 않았는가)
+- [ ] 마이그레이션이 `migrate deploy`로 정상 적용되었는가 (기동 로그에서 `migrate deploy completed.` 확인)
 - [ ] 통합 관리자(global_admin)에서 플랫폼 브랜딩 초기값을 설정했는가
 - [ ] 헬스체크·주요 화면(로그인, 규정 목록/상세, 검색) 스모크 테스트를 통과했는가
 
@@ -108,13 +109,21 @@ api 컨테이너 헬스체크는 `/api/health`를 5초 간격, start_period 60�
 - 데이터: `GET /api/policies`→200(샘플 규정 반환), `GET /api/search?q=…`→200
 - web 컨테이너: SPA 정상 서빙(`<title>Veda · 베다</title>`), nginx `/api/` 프록시→api 200 (Docker 네트워크 내부에서 확인)
 
-### 발견된 빌드 블로커 (문서와 현실의 차이 — [13_기술부채대장](../13_기술부채대장/기술부채_대장.md) #5~#8)
+> **2026-08-02 갱신**: 아래 블로커 4건은 모두 해소됐다. 빈 볼륨에서 `docker compose down -v && docker compose up -d --build` → 마이그레이션만으로 기동 → 로그인·규정 API·절 API·PDF 의존성 import까지 실측 확인. 아래는 당시 기록으로 남긴다.
+
+### 발견된 빌드 블로커 (2026-07-21 기준 — 전부 2026-08-02 해소)
 1. **Prisma 블록 주석**으로 `prisma generate` 실패 → 스모크 중 `///`로 수정(해결).
 2. **pymupdf/pdfplumber pip 설치 실패**(Alpine musl) → 스모크에서는 해당 라인 임시 제외 후 진행. **근본 해결 필요**(미해결).
 3. **apps/api 락파일 부재**로 클린 빌드가 최신 Prisma를 끌어와 1번을 표면화(미해결).
 4. **baseline 마이그레이션 부재**로 `migrate deploy` 실패 → `db push --accept-data-loss` 폴백으로만 기동됨(실측 재현). 운영 데이터가 있으면 위험.
 
-> 결론: **현재 클린 체크아웃에서는 위 2·3·4 때문에 본 Runbook의 배포 절차가 그대로 동작하지 않는다.** 위 항목 해소 후 재검증 필요.
+> ~~결론: 현재 클린 체크아웃에서는 위 2·3·4 때문에 본 Runbook의 배포 절차가 그대로 동작하지 않는다.~~
+> **2026-08-02 해소 완료**: Debian 베이스 전환(#7), 루트 컨텍스트 + `npm ci`(#6), baseline 스쿼시(#8)로 클린 체크아웃에서 배포 절차가 그대로 동작한다.
+
+### 마이그레이션 운영 메모 (2026-08-02~)
+- 스키마 변경 시 `prisma migrate dev --name <이름>`이 정상 동작한다(baseline 확보로 섀도 DB 재생 가능). 더 이상 SQL을 손으로 쓰지 않는다.
+- **baseline 이전에 만들어진 DB**는 기동 시 1회 자동 처리된다: `migrate deploy` 실패 → 기존 스키마 감지 → 옛 이력 행 정리 → baseline을 applied로 표시 → 재시도.
+- 마이그레이션이 끝내 실패하면 컨테이너는 **종료**된다. 예전처럼 `db push`로 넘어가 데이터를 덮어쓰지 않는다.
 
 ### 환경 주의: 호스트 80 포트 충돌
 검증 머신에 로컬 Kubernetes(ingress-nginx)가 호스트 `:80`을 점유하고 있어 web 컨테이너가 `:80`으로 게시되지 않았다(컨테이너는 정상, 호스트 노출만 실패). 동일 상황에서는 `docker-compose.yml`의 web 포트를 `"8080:80"` 등으로 바꾸거나 점유 프로세스를 내리고 기동할 것.
