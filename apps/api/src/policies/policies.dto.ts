@@ -123,11 +123,42 @@ export class UpdateChapterDto {
   suppressHeader?: boolean;
 }
 
+export class CreateSectionDto {
+  @ApiProperty({ description: '절 번호 (제N절)' })
+  @IsInt()
+  @Min(1)
+  number: number;
+
+  @ApiProperty({ description: '절 제목' })
+  @IsString()
+  @MaxLength(300)
+  title: string;
+}
+
+export class UpdateSectionDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  number?: number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  title?: string;
+}
+
 export class CreateArticleDto {
   @ApiProperty()
   @IsInt()
   @Min(1)
   number: number;
+
+  @ApiProperty({ required: false, description: '소속 절 ID. 절에 속하지 않으면 생략' })
+  @IsOptional()
+  @IsString()
+  sectionId?: string;
 
   @ApiProperty({ required: false, description: '조 제목 (항·목만 추가할 때는 비워도 됨)' })
   @IsOptional()
@@ -191,6 +222,10 @@ export class UpdateArticleDto {
   @IsInt()
   @Min(1)
   number?: number;
+
+  @ApiProperty({ required: false, nullable: true, description: '소속 절 ID. null이면 절에서 분리' })
+  @IsOptional()
+  sectionId?: string | null;
 
   @ApiProperty({ required: false })
   @IsOptional()

@@ -225,13 +225,33 @@ model Chapter {
 
   policy   Policy    @relation(fields: [policyId], references: [id], onDelete: Cascade)
   articles Article[]
+  sections Section[]
 
   @@map("chapters")
+}
+
+/// 절(節) — 선택 계층. 사내 규정은 법령의 편>장>절>조 구조를 반드시 따르지 않으므로
+/// 조가 절에 속하지 않아도 된다(Article.sectionId 는 nullable). ADR-0011 참고
+model Section {
+  id        String   @id @default(uuid())
+  chapterId String   @map("chapter_id")
+  number    Int
+  title     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  chapter  Chapter   @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  articles Article[]
+
+  @@index([chapterId, number])
+  @@map("sections")
 }
 
 model Article {
   id        String   @id @default(uuid())
   chapterId String   @map("chapter_id")
+  /// 절(선택 계층). null이면 절에 속하지 않는 조
+  sectionId String?  @map("section_id")
   number    Int
   clauseNumber Int?  @map("clause_number")
   itemNumber Int?    @map("item_number")
@@ -246,6 +266,7 @@ model Article {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   chapter  Chapter          @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  section  Section?         @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   versions ArticleVersion[]
   comments ArticleComment[]
 

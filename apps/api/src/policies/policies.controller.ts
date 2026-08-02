@@ -12,6 +12,7 @@ import { PoliciesService } from './policies.service';
 import {
   CreatePolicyDto, UpdatePolicyDto,
   CreateChapterDto, UpdateChapterDto,
+  CreateSectionDto, UpdateSectionDto,
   CreateArticleDto, UpdateArticleDto,
   CreatePolicyAppendixDto, UpdatePolicyAppendixDto,
   CreatePolicyImportLogDto,
@@ -136,6 +137,44 @@ export class PoliciesController {
     @Param('chapterId') chapterId: string,
   ) {
     return this.policiesService.removeChapter(req.user.tenantId, id, chapterId);
+  }
+
+  @Post(':id/chapters/:chapterId/sections')
+  @Roles('admin', 'editor')
+  @ApiOperation({ summary: '절 추가 (선택 계층)' })
+  createSection(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('chapterId') chapterId: string,
+    @Body() dto: CreateSectionDto,
+  ) {
+    return this.policiesService.createSection(req.user.tenantId, id, chapterId, dto, req.user.id);
+  }
+
+  @Put(':id/chapters/:chapterId/sections/:sectionId')
+  @Roles('admin', 'editor')
+  @ApiOperation({ summary: '절 수정' })
+  updateSection(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('chapterId') chapterId: string,
+    @Param('sectionId') sectionId: string,
+    @Body() dto: UpdateSectionDto,
+  ) {
+    return this.policiesService.updateSection(req.user.tenantId, id, chapterId, sectionId, dto);
+  }
+
+  @Delete(':id/chapters/:chapterId/sections/:sectionId')
+  @Roles('admin')
+  @HttpCode(204)
+  @ApiOperation({ summary: '절 삭제 (소속 조문은 보존되고 절 연결만 해제)' })
+  removeSection(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('chapterId') chapterId: string,
+    @Param('sectionId') sectionId: string,
+  ) {
+    return this.policiesService.removeSection(req.user.tenantId, id, chapterId, sectionId);
   }
 
   @Post(':id/chapters/:chapterId/articles')

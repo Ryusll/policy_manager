@@ -46,12 +46,14 @@ import {
   formatKoDate,
   sortArticlesForToc,
 } from '../lib/legalArticleLabel';
+import { buildFullViewGroups } from '../lib/fullViewGroups';
 import {
   buildArticleCreateRequests,
   canSubmitNewArticleForm,
   chapterHasJoRoot,
   inferJoTitle,
   nextClauseNumberForJo,
+  nextJoNumberForPolicy,
   segmentArticleHeading,
   titleFieldHint,
   titleFieldLabel,
@@ -433,6 +435,8 @@ export default function PolicyDetailPage() {
   const [newChapter, setNewChapter] = useState({ number: 1, title: '' });
   const [newArticle, setNewArticle] = useState<{
     chapterId: string;
+    /** 소속 절(선택 계층). 절 없이 장 직속이면 undefined */
+    sectionId?: string;
     number: number;
     clauseNumber?: number;
     itemNumber?: number;
@@ -446,6 +450,9 @@ export default function PolicyDetailPage() {
     relatedRuleNote: string;
   } | null>(null);
   const [showAddChapter, setShowAddChapter] = useState(false);
+  const [newSection, setNewSection] = useState<
+    { chapterId: string; number: number; title: string } | null
+  >(null);
   const [versionContent, setVersionContent] = useState('');
   const [versionChangeNote, setVersionChangeNote] = useState('');
   const [revisionInternalReasons, setRevisionInternalReasons] = useState<string[]>([]);
@@ -680,6 +687,40 @@ export default function PolicyDetailPage() {
     },
   });
 
+  /* ── 절(節): 선택 계층 ── */
+  const addSectionMutation = useMutation({
+    mutationFn: ({ chapterId, ...data }: { chapterId: string; number: number; title: string }) =>
+      policiesApi.createSection(id!, chapterId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      setNewSection(null);
+    },
+  });
+
+  const removeSectionMutation = useMutation({
+    mutationFn: ({ chapterId, sectionId }: { chapterId: string; sectionId: string }) =>
+      policiesApi.deleteSection(id!, chapterId, sectionId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policy', id] }),
+  });
+
+  /** 절에 속하지 않는 조문 (절은 선택 계층이라 같은 장에 공존한다) */
+  const articlesWithoutSection = useCallback(
+    (chapter: any) => (chapter?.articles || []).filter((a: any) => !a.sectionId),
+    [],
+  );
+  const articlesInSection = useCallback(
+    (chapter: any, sectionId: string) =>
+      (chapter?.articles || []).filter((a: any) => a.sectionId === sectionId),
+    [],
+  );
+  const openAddSectionForm = useCallback((chapter: any) => {
+    const nextNo = ((chapter?.sections || []).reduce(
+      (max: number, s: any) => Math.max(max, Number(s.number) || 0),
+      0,
+    ) || 0) + 1;
+    setNewSection({ chapterId: chapter.id, number: nextNo, title: '' });
+  }, []);
+
   const [policyRevisionDate, setPolicyRevisionDate] = useState('');
   const [policyEffectiveDate, setPolicyEffectiveDate] = useState('');
   const [revisionNotify, setRevisionNotify] = useState({
@@ -726,6 +767,7 @@ export default function PolicyDetailPage() {
     async (
       chapterId?: string,
       preset?: { number?: number; clauseNumber?: number; itemNumber?: number },
+      sectionId?: string,
     ) => {
       if (!id || !canEdit) return;
       let ch: any = chapterId
@@ -739,12 +781,11 @@ export default function PolicyDetailPage() {
         });
         await qc.invalidateQueries({ queryKey: ['policy', id] });
       }
-      const articles = ch.articles || [];
-      const joNumbers = articles.map((a: any) => Number(a.number) || 0);
-      const nextJo = joNumbers.length ? Math.max(...joNumbers) + 1 : 1;
-      const jo = preset?.number ?? nextJo;
+      // 조 번호는 법령·규정 관례대로 문서 전체에서 이어진다(장이 바뀌어도 1로 돌아가지 않음).
+      const jo = preset?.number ?? nextJoNumberForPolicy(policy?.chapters);
       setNewArticle({
         chapterId: ch.id,
+        sectionId,
         number: jo,
         clauseNumber: preset?.clauseNumber,
         itemNumber: preset?.itemNumber,
@@ -961,19 +1002,7 @@ export default function PolicyDetailPage() {
       return { idx, before, after, kind };
     });
   }, [diffResult]);
-  const fullViewGroups = useMemo(() => {
-    return (policy?.chapters || []).map((chapter: any) => {
-      const joGroups = groupArticlesByJo(chapter.articles || []);
-      const groups = joGroups.map((g) => ({
-        articleNumber: g.jo,
-        main: g.main,
-        hangs: g.hangs,
-        orphanItems: g.orphanItems,
-        items: flattenJoGroup(g),
-      }));
-      return { ...chapter, groups };
-    });
-  }, [policy]);
+  const fullViewGroups = useMemo(() => buildFullViewGroups(policy?.chapters), [policy]);
 
   const fullViewMatchCount = useMemo(() => {
     const q = fullViewSearchQuery.trim();
@@ -1734,8 +1763,9 @@ export default function PolicyDetailPage() {
 
                 {expandedChapters.has(chapter.id) && (
                   <div className="bg-gray-50 border-t border-gray-100">
+                    {/* 절에 속하지 않는 조문 먼저 (절은 선택 계층이므로 공존 가능) */}
                     <TocArticleGroups
-                      articles={chapter.articles || []}
+                      articles={articlesWithoutSection(chapter)}
                       query={tocQuery}
                       plJo="pl-3"
                       plHang="pl-8"
@@ -1750,14 +1780,111 @@ export default function PolicyDetailPage() {
                         })
                       }
                     />
+                    {(chapter.sections || []).map((section: any) => (
+                      <div key={section.id}>
+                        <div className="flex items-center gap-2 pl-5 pr-3 py-1.5 bg-gray-100/80 border-y border-gray-200">
+                          <span className="text-xs font-medium text-gray-700">
+                            제{section.number}절 {section.title}
+                          </span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => removeSectionMutation.mutate({ chapterId: chapter.id, sectionId: section.id })}
+                              className="ml-auto text-[11px] text-gray-400 hover:text-red-600"
+                              title="절 삭제 (조문은 유지됩니다)"
+                            >
+                              삭제
+                            </button>
+                          )}
+                        </div>
+                        <TocArticleGroups
+                          articles={articlesInSection(chapter, section.id)}
+                          query={tocQuery}
+                          plJo="pl-5"
+                          plHang="pl-10"
+                          plItem="pl-16"
+                          selectedArticle={selectedArticle}
+                          onSelect={selectTocArticle}
+                          canEdit={canEdit}
+                          onAddHang={(jo) =>
+                            openAddArticleForm(chapter.id, {
+                              number: jo,
+                              clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo),
+                            })
+                          }
+                        />
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => openAddArticleForm(chapter.id, undefined, section.id)}
+                            className="w-full flex items-center gap-1.5 pl-11 pr-4 py-1.5 text-[11px] text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
+                          >
+                            <Plus size={11} /> 제{section.number}절에 조 추가
+                          </button>
+                        )}
+                      </div>
+                    ))}
                     {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => openAddArticleForm(chapter.id)}
-                        className="w-full flex items-center gap-1.5 pl-9 pr-4 py-2 text-xs text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
-                      >
-                        <Plus size={11} /> 조 추가
-                      </button>
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openAddArticleForm(chapter.id)}
+                          className="flex items-center gap-1.5 pl-9 pr-4 py-2 text-xs text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
+                        >
+                          <Plus size={11} /> 조 추가
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openAddSectionForm(chapter)}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
+                        >
+                          <Plus size={11} /> 절 추가
+                        </button>
+                      </div>
+                    )}
+                    {canEdit && newSection != null && newSection.chapterId === chapter.id && (
+                      <div className="m-2 rounded border border-gray-200 bg-white p-2.5 space-y-2">
+                        <div className="flex items-end gap-2">
+                          <div className="w-20">
+                            <label className="block text-[11px] text-gray-600 mb-1">절 번호</label>
+                            <input
+                              type="number"
+                              min={1}
+                              className="input h-8 text-sm"
+                              value={newSection.number}
+                              onChange={(e) =>
+                                setNewSection({ ...newSection, number: +e.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="block text-[11px] text-gray-600 mb-1">절 제목</label>
+                            <input
+                              className="input h-8 text-sm"
+                              placeholder="예) 채용, 복무"
+                              value={newSection.title}
+                              onChange={(e) => setNewSection({ ...newSection, title: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            className="btn-primary text-xs py-1 px-2.5"
+                            disabled={!newSection.title.trim() || addSectionMutation.isPending}
+                            onClick={() => addSectionMutation.mutate(newSection)}
+                          >
+                            {addSectionMutation.isPending ? '추가 중...' : '절 추가'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary text-xs py-1 px-2.5"
+                            onClick={() => setNewSection(null)}
+                          >
+                            취소
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
@@ -2302,14 +2429,34 @@ export default function PolicyDetailPage() {
           </button>
         </div>
         <div className="px-3 py-2 sm:px-4 flex flex-wrap gap-1.5 bg-gray-50/80">
+          {/* 이미 제공 중인 기능은 해당 패널로 이동시킨다(도구줄에서 '추후 제공'으로 잘못 안내되던 항목) */}
+          <button
+            type="button"
+            onClick={() => {
+              setLeftSidebarTab('appendices');
+              setTocOpen(true);
+            }}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            부칙·별표·서식
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLeftSidebarTab('history');
+              setTocOpen(true);
+            }}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            연혁
+          </button>
           {(
             [
               '제정·개정이유',
-              '별표·서식',
               '3단비교',
-              '신구법비교',
-              '법령체계표',
-              '법령비교',
+              '신구조문대비표',
+              '규정체계도',
+              '규정 간 비교',
               '음성지원',
               '점자뷰어',
             ] as const

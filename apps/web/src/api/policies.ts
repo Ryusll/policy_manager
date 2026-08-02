@@ -14,6 +14,18 @@ export const policiesApi = {
   deleteChapter: (policyId: string, chapterId: string) =>
     client.delete('/policies/' + policyId + '/chapters/' + chapterId),
 
+  // 절(節) — 선택 계층
+  createSection: (policyId: string, chapterId: string, data: any) =>
+    client
+      .post('/policies/' + policyId + '/chapters/' + chapterId + '/sections', data)
+      .then((r) => r.data),
+  updateSection: (policyId: string, chapterId: string, sectionId: string, data: any) =>
+    client
+      .put('/policies/' + policyId + '/chapters/' + chapterId + '/sections/' + sectionId, data)
+      .then((r) => r.data),
+  deleteSection: (policyId: string, chapterId: string, sectionId: string) =>
+    client.delete('/policies/' + policyId + '/chapters/' + chapterId + '/sections/' + sectionId),
+
   createArticle: (policyId: string, chapterId: string, data: any) =>
     client
       .post('/policies/' + policyId + '/chapters/' + chapterId + '/articles', data)

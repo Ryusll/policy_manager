@@ -42,6 +42,9 @@
 | POST | :id/chapters | admin, editor | 장 생성 |
 | PUT | :id/chapters/:chapterId | admin, editor | 장 수정(suppressHeader 등) |
 | DELETE | :id/chapters/:chapterId | admin | 장 삭제 |
+| POST | :id/chapters/:chapterId/sections | admin, editor | **절 추가** (선택 계층) |
+| PUT | :id/chapters/:chapterId/sections/:sectionId | admin, editor | 절 수정 |
+| DELETE | :id/chapters/:chapterId/sections/:sectionId | admin | 절 삭제 (소속 조문은 보존, 연결만 해제) |
 | POST | :id/chapters/:chapterId/articles | admin, editor | 조문 생성 |
 | PUT | :id/chapters/:chapterId/articles/:articleId | admin, editor | 조문 구조·메타 수정 |
 | DELETE | :id/chapters/:chapterId/articles/:articleId | admin | 조문 삭제 |
@@ -187,9 +190,11 @@
 **CreatePolicyDto** — `code`, `title`, `description?`, `department?`(≤100), `category?`(≤100), `templateId?`
 **UpdatePolicyDto** — `title?`, `description?`, `department?`(≤100), `category?`(≤100), `isActive?`(bool), `templateId?`(null로 해제 가능), `revisionDate?`(YYYY-MM-DD, null 가능), `effectiveDate?`(YYYY-MM-DD, null 가능), `revisionNotify?`(아래 PolicyRevisionNotifyDto)
 **CreateChapterDto** — `number`(정수≥1), `title?`, `suppressHeader?`(bool)
+**CreateSectionDto** — `number`(정수≥1), `title`(≤300)
+**UpdateSectionDto** — `number?`(≥1), `title?`(≤300)
 **UpdateChapterDto** — `number?`(≥1), `title?`, `suppressHeader?`
-**CreateArticleDto** — `number`(정수≥1), `title?`(항·목만 추가 시 생략), `clauseNumber?`(≥1), `itemNumber?`(≥1), `hasPrecedent?`/`hasRelatedLaw?`/`hasRelatedRule?`(bool), `relatedPrecedentNote?`/`relatedLawNote?`/`relatedRuleNote?`(≤8000), `content?`
-**UpdateArticleDto** — `number?`(≥1), `title?`, `clauseNumber?`(null로 비우기), `itemNumber?`(null로 비우기), has* 플래그, related*Note(≤8000)
+**CreateArticleDto** — `number`(정수≥1), `sectionId?`(소속 절, 미지정 시 장 직속), `title?`(항·목만 추가 시 생략), `clauseNumber?`(≥1), `itemNumber?`(≥1), `hasPrecedent?`/`hasRelatedLaw?`/`hasRelatedRule?`(bool), `relatedPrecedentNote?`/`relatedLawNote?`/`relatedRuleNote?`(≤8000), `content?`
+**UpdateArticleDto** — `number?`(≥1), `sectionId?`(절 이동. `null`이면 절에서 분리), `title?`, `clauseNumber?`(null로 비우기), `itemNumber?`(null로 비우기), has* 플래그, related*Note(≤8000)
 **CreatePolicyAppendixDto** — `kind`(supplementary=부칙|annex=별표|form=서식), `title`(≤500), `body`(≤500000), `sortOrder?`(≥0)
 **UpdatePolicyAppendixDto** — 위 필드 전부 optional
 **CreatePolicyImportLogDto** — `policyId?`, `sourceName?`, `parseProfile?`(mixed|korean|english), `chapterCount?`(≥0), `articleCount?`(≥0), `cleanupOptions?`(JSON), `status?`, `message?`

@@ -14,6 +14,7 @@ import {
   formatItemMok,
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
+import { joGroupRenderRows } from '../../lib/fullViewGroups';
 
 type TemplateLike = {
   id?: string;
@@ -41,12 +42,16 @@ type BasicTemplateConfig = {
   showPageNumber?: boolean;
 };
 
+const DEPTH_PADDING = ['pl-0', 'pl-4', 'pl-8'] as const;
+
 export function DefaultPolicyRenderer({
   fullViewGroups,
   highlightQuery = '',
+  showArticleTitle = true,
 }: {
   fullViewGroups: any[];
   highlightQuery?: string;
+  showArticleTitle?: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -61,61 +66,30 @@ export function DefaultPolicyRenderer({
           )}
           <div className="p-3 space-y-2">
             {chapter.groups.map((group: any) => (
-              <div key={`${chapter.id}-${group.articleNumber}`} className="text-sm border border-gray-100 rounded p-2 bg-white">
-                <div className="font-semibold text-gray-800 mb-1">
-                  {highlightText(formatArticleJo(group.articleNumber), highlightQuery)}
-                </div>
-                <div className="space-y-2">
-                  {group.main ? (
-                    <FullViewArticleRow
-                      article={group.main}
-                      plClass="pl-0"
+              <JoGroupBlock
+                key={`${chapter.id}-${group.articleNumber}`}
+                group={group}
+                highlightQuery={highlightQuery}
+                showArticleTitle={showArticleTitle}
+              />
+            ))}
+            {/* 절(선택 계층) — 절 미소속 조문 뒤에 번호순으로 표시 */}
+            {(chapter.sectionBlocks || []).map((section: any) => (
+              <section key={section.id} className="border border-gray-200 rounded">
+                <header className="px-2.5 py-1.5 bg-gray-50/80 border-b border-gray-200 text-xs font-semibold text-gray-700">
+                  {highlightText(`제${section.number}절 ${section.title}`, highlightQuery)}
+                </header>
+                <div className="p-2 space-y-2">
+                  {(section.groups || []).map((group: any) => (
+                    <JoGroupBlock
+                      key={`${section.id}-${group.articleNumber}`}
+                      group={group}
                       highlightQuery={highlightQuery}
-                      showTitle={showArticleTitleInDefault}
-                    />
-                  ) : null}
-                  {(group.hangs?.length ? group.hangs : []).map((hang: any) => (
-                    <div key={`h-${hang.clauseNumber}`} className="space-y-1">
-                      {hang.hang ? (
-                        <FullViewArticleRow
-                          article={hang.hang}
-                          plClass="pl-4"
-                          highlightQuery={highlightQuery}
-                          showTitle={showArticleTitleInDefault}
-                        />
-                      ) : null}
-                      {(hang.items || []).map((article: any) => (
-                        <FullViewArticleRow
-                          key={article.id}
-                          article={article}
-                          plClass="pl-8"
-                          highlightQuery={highlightQuery}
-                          showTitle={showArticleTitleInDefault}
-                        />
-                      ))}
-                    </div>
-                  ))}
-                  {(group.orphanItems || []).map((article: any) => (
-                    <FullViewArticleRow
-                      key={article.id}
-                      article={article}
-                      plClass="pl-4"
-                      highlightQuery={highlightQuery}
-                      showTitle={showArticleTitleInDefault}
+                      showArticleTitle={showArticleTitle}
                     />
                   ))}
-                  {!group.hangs?.length &&
-                    (group.items || []).map((article: any) => (
-                      <FullViewArticleRow
-                        key={article.id}
-                        article={article}
-                        plClass="pl-4"
-                        highlightQuery={highlightQuery}
-                        showTitle={showArticleTitleInDefault}
-                      />
-                    ))}
                 </div>
-              </div>
+              </section>
             ))}
           </div>
         </section>
@@ -125,20 +99,46 @@ export function DefaultPolicyRenderer({
   );
 }
 
-function showArticleTitleInDefault(article: { title?: string }) {
-  return !!String(article.title ?? '').trim();
+/** 조 그룹 1건(조 루트 + 항 + 목). 장 직속과 절 소속이 같은 모양으로 그려지도록 분리했다. */
+function JoGroupBlock({
+  group,
+  highlightQuery,
+  showArticleTitle,
+}: {
+  group: any;
+  highlightQuery: string;
+  showArticleTitle: boolean;
+}) {
+  return (
+    <div className="text-sm border border-gray-100 rounded p-2 bg-white">
+      <div className="font-semibold text-gray-800 mb-1">
+        {highlightText(formatArticleJo(group.articleNumber), highlightQuery)}
+      </div>
+      <div className="space-y-2">
+        {joGroupRenderRows(group).map(({ article, depth }, idx) => (
+          <FullViewArticleRow
+            key={article.id ?? `${group.articleNumber}-${idx}`}
+            article={article}
+            plClass={DEPTH_PADDING[depth]}
+            highlightQuery={highlightQuery}
+            showArticleTitle={showArticleTitle}
+          />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function FullViewArticleRow({
   article,
   plClass,
   highlightQuery,
-  showTitle,
+  showArticleTitle,
 }: {
   article: any;
   plClass: string;
   highlightQuery: string;
-  showTitle: (article: { title?: string }) => boolean;
+  showArticleTitle: boolean;
 }) {
   const sub =
     article.itemNumber != null
@@ -146,18 +146,16 @@ function FullViewArticleRow({
       : article.clauseNumber != null
         ? formatClauseHang(article.clauseNumber)
         : null;
+  const title = showArticleTitle ? String(article.title ?? '').trim() : '';
   return (
     <div className={clsx(plClass, 'border-l-2 border-gray-100 pl-3')}>
       {sub ? (
         <div className="font-medium text-gray-800">
-          {highlightText(
-            `${sub}${article.title && showTitle(article) ? ` ${article.title}` : ''}`,
-            highlightQuery,
-          )}
+          {highlightText(`${sub}${title ? ` ${title}` : ''}`, highlightQuery)}
         </div>
-      ) : article.title ? (
+      ) : title ? (
         <div className="font-medium text-gray-800">
-          {highlightText(article.title, highlightQuery)}
+          {highlightText(title, highlightQuery)}
         </div>
       ) : null}
       <div className="text-gray-700 mt-1 whitespace-pre-wrap leading-relaxed">
@@ -278,16 +276,10 @@ export default function TemplateRenderer({
         )}
         <DefaultPolicyRenderer
           highlightQuery={highlightQuery}
+          showArticleTitle={showArticleTitle}
           fullViewGroups={fullViewGroups.map((chapter: any) => ({
             ...chapter,
             className: chapterPageBreak && !isChapterHeaderHidden(chapter) ? 'chapter-section' : undefined,
-            groups: chapter.groups.map((group: any) => ({
-              ...group,
-              items: group.items.map((article: any) => ({
-                ...article,
-                title: showArticleTitle ? article.title : '',
-              })),
-            })),
           }))}
         />
         {showFooter && (

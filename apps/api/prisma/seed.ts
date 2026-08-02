@@ -181,10 +181,11 @@ async function main() {
     },
   });
 
+  // 조 번호는 장이 바뀌어도 문서 전체에서 이어진다(제1장이 제1·2조 → 제2장은 제3조부터).
   const articleAccount = await prisma.article.create({
     data: {
       chapterId: chapterOperation.id,
-      number: 1,
+      number: 3,
       title: '계정 및 접근권한 관리',
     },
   });
@@ -202,7 +203,7 @@ async function main() {
   const articleIncident = await prisma.article.create({
     data: {
       chapterId: chapterOperation.id,
-      number: 2,
+      number: 4,
       title: '보안사고 대응',
     },
   });

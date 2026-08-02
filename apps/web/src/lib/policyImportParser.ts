@@ -8,6 +8,8 @@ type ParsedChapter = {
   number: number;
   title: string;
   articles: ParsedArticle[];
+  /** 원문에 장 표기가 없어 파서가 임의로 만든 장. 등록 시 숨김 장으로 처리한다 */
+  auto?: boolean;
 };
 
 export type ParsedPolicyDraft = {
@@ -214,7 +216,7 @@ export function parsePolicyTextToStructure(input: string, profile: ParseProfile 
 
   const ensureChapter = () => {
     if (currentChapter) return currentChapter;
-    currentChapter = { number: chapterSeq, title: '총칙', articles: [] };
+    currentChapter = { number: chapterSeq, title: '총칙', articles: [], auto: true };
     chapterSeq += 1;
     chapters.push(currentChapter);
     articleSeq = 1;

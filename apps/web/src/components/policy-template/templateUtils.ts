@@ -4,9 +4,9 @@ import {
   formatArticleJo,
   formatClauseHang,
   formatItemMok,
-  isArticleJoRoot,
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
+import { joGroupRenderRows } from '../../lib/fullViewGroups';
 
 /**
  * 템플릿 HTML sanitize.
@@ -81,9 +81,7 @@ function appendArticleBodyHtml(
       ? formatItemMok(article.itemNumber)
       : article?.clauseNumber != null
         ? formatClauseHang(article.clauseNumber)
-        : isArticleJoRoot(article)
-          ? ''
-          : '';
+        : '';
   out.push(`<article class="tmpl-article ${rowClass}">`);
   if (sub) {
     out.push('<div class="tmpl-article-head">');
@@ -115,28 +113,15 @@ function appendArticleBodyHtml(
   out.push('</article>');
 }
 
+const ROW_CLASS_BY_DEPTH = ['tmpl-row-jo', 'tmpl-row-hang', 'tmpl-row-item'] as const;
+
 function appendJoGroupHtml(out: string[], group: any, highlightQuery?: string) {
   const an = Number(group?.articleNumber) || 0;
   out.push(`<div class="tmpl-article-block tmpl-art-${an}" data-article="${an}">`);
   out.push(`<div class="tmpl-article-label">${escapeHtmlText(formatArticleJo(an))}</div>`);
 
-  if (group?.main) appendArticleBodyHtml(out, group.main, 'tmpl-row-jo', highlightQuery);
-
-  const hangs = Array.isArray(group?.hangs) ? group.hangs : [];
-  if (hangs.length > 0) {
-    for (const hang of hangs) {
-      if (hang.hang) appendArticleBodyHtml(out, hang.hang, 'tmpl-row-hang', highlightQuery);
-      for (const item of hang.items || []) {
-        appendArticleBodyHtml(out, item, 'tmpl-row-item', highlightQuery);
-      }
-    }
-    for (const item of group.orphanItems || []) {
-      appendArticleBodyHtml(out, item, 'tmpl-row-hang', highlightQuery);
-    }
-  } else {
-    for (const article of group?.items || []) {
-      appendArticleBodyHtml(out, article, 'tmpl-row-hang', highlightQuery);
-    }
+  for (const { article, depth } of joGroupRenderRows(group)) {
+    appendArticleBodyHtml(out, article, ROW_CLASS_BY_DEPTH[depth], highlightQuery);
   }
   out.push('</div>');
 }
@@ -164,6 +149,24 @@ export function buildEnterprisePolicyBodyHtml(fullViewGroups: any[], highlightQu
     const groups = Array.isArray(chapter?.groups) ? chapter.groups : [];
     for (const group of groups) {
       appendJoGroupHtml(out, group, highlightQuery);
+    }
+    // 절(선택 계층) 블록 — 절 미소속 조문 뒤에 번호순으로 이어 붙인다
+    const sectionBlocks = Array.isArray(chapter?.sectionBlocks) ? chapter.sectionBlocks : [];
+    for (const section of sectionBlocks) {
+      const sn = Number(section?.number) || 0;
+      out.push(`<section class="tmpl-section tmpl-section-${sn}" data-section="${sn}">`);
+      out.push('<header class="tmpl-section-head">');
+      const secTitle = wrapSearchHighlightsInEscapedHtml(
+        escapeHtmlText(String(section?.title ?? '')),
+        highlightQuery ?? '',
+      );
+      out.push(`<h3 class="tmpl-section-title">제${sn}절 ${secTitle}</h3>`);
+      out.push('</header>');
+      out.push('<div class="tmpl-section-body">');
+      for (const group of section?.groups || []) {
+        appendJoGroupHtml(out, group, highlightQuery);
+      }
+      out.push('</div></section>');
     }
     out.push('</div></section>');
   }

@@ -7,7 +7,9 @@
 
 ```
 Tenant 1───N User
-Tenant 1───N Policy 1───N Chapter 1───N Article 1───N ArticleVersion 1───N VariableUsage N───1 Variable
+Tenant 1───N Policy 1───N Chapter 1───N Section(선택) ┐
+                          └────────────────────────── ├─N Article 1───N ArticleVersion 1───N VariableUsage N───1 Variable
+                                (Article.sectionId 는 nullable)
                                           Article 1───N ArticleComment N───1 User
                         Policy 1───N PolicyAppendix
                         Policy N───1 PolicyTemplate (nullable, SetNull)
@@ -68,11 +70,25 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | title | string | |
 | suppressHeader | boolean | 장 제목 미표시 (목차·인쇄) |
 
+### Section (`sections`) — 절(節), 선택 계층
+법령은 `편 > 장 > 절 > 조 > 항 > 목` 구조를 갖지만, 사내 규정은 이를 반드시 따르지 않는다. 따라서 절은 **선택 계층**이며 조가 절에 속하지 않아도 된다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| id | uuid PK | |
+| chapterId | uuid FK → Chapter (cascade) | 절은 항상 장에 속한다 |
+| number | int | 절 번호 (제N절) |
+| title | string | 절 제목 |
+| createdAt/updatedAt | datetime | |
+
+인덱스: `[chapterId, number]`.
+
 ### Article (`articles`) — 조·항·목 통합 테이블
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | id | uuid PK | |
 | chapterId | uuid FK → Chapter (cascade) | |
+| sectionId | uuid FK? → Section (SetNull) | **nullable**. 절에 속하지 않는 조는 null |
 | number | int | 조 번호 |
 | clauseNumber | int? | 항 번호 (null이면 조 루트/조 본문) |
 | itemNumber | int? | 목 번호 (null이면 조 또는 항) |
@@ -81,6 +97,8 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | relatedPrecedentNote / relatedLawNote / relatedRuleNote | text? | 근거 메모 |
 
 행 유형 판별 규칙: `clauseNumber == null && itemNumber == null` → 조 루트, `clauseNumber` 있고 `itemNumber` null → 항, `itemNumber` 있음 → 목.
+
+계층 필수 여부: **조(Article)만 필수**이고 장·절은 선택이다. 장이 없는 규정은 `suppressHeader: true`인 장 1건을 만들어 조를 담되 화면·인쇄에서 장 제목을 표시하지 않는다(`Article.chapterId`는 DB상 필수로 유지 — 자세한 이유는 [ADR-0011](../10_ADR_의사결정기록/ADR.md) 참고).
 
 ### ArticleVersion (`article_versions`)
 | 필드 | 타입 | 설명 |

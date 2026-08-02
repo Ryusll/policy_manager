@@ -83,6 +83,7 @@ export default function PoliciesPage() {
         {
           number: 1,
           title: '원문',
+          auto: true,
           articles: [{ number: 1, title: '본문', content: text }],
         },
       ],
@@ -145,9 +146,13 @@ export default function PoliciesPage() {
         cleanupOptions.inferHierarchy ? expandChaptersWithHierarchy(chaptersToCreate) : chaptersToCreate;
 
       for (const chapter of chaptersForCreate) {
+        // 원문에 장 표기가 없어 파서가 만든 장(auto)은 숨김 장으로 등록한다.
+        // 없는 "제1장 총칙"을 임의로 만들어 붙이지 않기 위함 (SRS POLICY-6)
+        const isAutoChapter = (chapter as { auto?: boolean }).auto === true;
         const createdChapter = await policiesApi.createChapter(policy.id, {
           number: chapter.number,
-          title: chapter.title || '총칙',
+          title: isAutoChapter ? '' : chapter.title || '본문',
+          suppressHeader: isAutoChapter,
         });
         for (const article of chapter.articles) {
           const isJoRoot = article.clauseNumber == null && article.itemNumber == null;

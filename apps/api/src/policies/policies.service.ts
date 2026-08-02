@@ -13,6 +13,8 @@ import {
   CreatePolicyDto,
   UpdatePolicyDto,
   CreateChapterDto,
+  CreateSectionDto,
+  UpdateSectionDto,
   UpdateChapterDto,
   CreateArticleDto,
   UpdateArticleDto,
@@ -49,6 +51,7 @@ export class PoliciesService {
         template: true,
         chapters: {
           include: {
+            sections: { orderBy: { number: 'asc' } },
             articles: {
               include: {
                 versions: {
@@ -262,6 +265,84 @@ export class PoliciesService {
     await this.prisma.chapter.delete({ where: { id: chapterId } });
   }
 
+  /**
+   * 조문에 지정된 절이 같은 장에 속하는지 검증한다.
+   * `undefined`(미지정)와 `null`(절에서 분리)을 구분해서 돌려준다.
+   */
+  private async resolveSectionId(
+    chapterId: string,
+    sectionId: string | null | undefined,
+  ): Promise<string | null | undefined> {
+    if (sectionId === undefined) return undefined;
+    if (sectionId === null || sectionId === '') return null;
+    const section = await this.prisma.section.findFirst({
+      where: { id: sectionId, chapterId },
+      select: { id: true },
+    });
+    if (!section) throw new BadRequestException('해당 장에 속한 절이 아닙니다.');
+    return section.id;
+  }
+
+  /** 절(節)은 선택 계층이다. 절을 지워도 소속 조문은 남고 sectionId만 해제된다(ADR-0011) */
+  private async findChapterOrThrow(tenantId: string, policyId: string, chapterId: string) {
+    await this.findOne(tenantId, policyId);
+    const chapter = await this.prisma.chapter.findFirst({ where: { id: chapterId, policyId } });
+    if (!chapter) throw new NotFoundException('Chapter not found');
+    return chapter;
+  }
+
+  async createSection(
+    tenantId: string,
+    policyId: string,
+    chapterId: string,
+    dto: CreateSectionDto,
+    userId: string,
+  ) {
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
+    const title = String(dto.title ?? '').trim();
+    if (!title) throw new BadRequestException('절 제목을 입력하세요.');
+    const section = await this.prisma.section.create({
+      data: { chapterId, number: dto.number, title },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'section.create',
+      entityType: 'Section',
+      entityId: section.id,
+      details: { policyId, chapterId },
+    });
+    return section;
+  }
+
+  async updateSection(
+    tenantId: string,
+    policyId: string,
+    chapterId: string,
+    sectionId: string,
+    dto: UpdateSectionDto,
+  ) {
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
+    const section = await this.prisma.section.findFirst({ where: { id: sectionId, chapterId } });
+    if (!section) throw new NotFoundException('Section not found');
+    const data: { number?: number; title?: string } = {};
+    if (dto.number !== undefined) data.number = dto.number;
+    if (dto.title !== undefined) {
+      const title = String(dto.title).trim();
+      if (!title) throw new BadRequestException('절 제목을 입력하세요.');
+      data.title = title;
+    }
+    return this.prisma.section.update({ where: { id: sectionId }, data });
+  }
+
+  async removeSection(tenantId: string, policyId: string, chapterId: string, sectionId: string) {
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
+    const section = await this.prisma.section.findFirst({ where: { id: sectionId, chapterId } });
+    if (!section) throw new NotFoundException('Section not found');
+    // onDelete: SetNull 로 소속 조문의 sectionId만 해제된다(조문은 보존)
+    await this.prisma.section.delete({ where: { id: sectionId } });
+  }
+
   async createArticle(
     tenantId: string,
     policyId: string,
@@ -271,10 +352,12 @@ export class PoliciesService {
     await this.findOne(tenantId, policyId);
     const chapter = await this.prisma.chapter.findFirst({ where: { id: chapterId, policyId } });
     if (!chapter) throw new NotFoundException('Chapter not found');
+    const sectionId = await this.resolveSectionId(chapterId, dto.sectionId);
 
     const article = await this.prisma.article.create({
       data: {
         chapterId,
+        sectionId,
         number: dto.number,
         title: (dto.title ?? '').trim(),
         clauseNumber: dto.clauseNumber,
@@ -309,6 +392,10 @@ export class PoliciesService {
     });
     if (!article) throw new NotFoundException('Article not found');
     const data: Record<string, unknown> = { ...dto };
+    // 절 이동: 같은 장의 절인지 검증. null이면 절에서 분리
+    if (dto.sectionId !== undefined) {
+      data.sectionId = await this.resolveSectionId(chapterId, dto.sectionId);
+    }
     for (const key of ['relatedPrecedentNote', 'relatedLawNote', 'relatedRuleNote'] as const) {
       if (data[key] !== undefined) {
         const t = String(data[key] ?? '').trim();

@@ -29,9 +29,37 @@ import { policiesApi } from '../api/policies';
 import TemplateEditor from '../components/policy-template/TemplateEditor';
 import TemplateRenderer from '../components/policy-template/TemplateRenderer';
 import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
+import { buildFullViewGroups } from '../lib/fullViewGroups';
 import PlanModal from '../components/PlanModal';
 
 const PRESET_IDS: ThemePresetId[] = ['forest', 'ocean', 'slate', 'wine'];
+
+/** 미리보기 대상 규정이 없을 때 쓰는 샘플 (조 루트 + 항 구조를 함께 보여준다) */
+const SAMPLE_PREVIEW_CHAPTERS = [
+  {
+    id: 'preview-ch-1',
+    number: 1,
+    title: '총칙',
+    articles: [
+      {
+        id: 'preview-art-1',
+        number: 1,
+        clauseNumber: null,
+        itemNumber: null,
+        title: '목적',
+        versions: [{ content: '이 규정은 회사 운영의 공정성과 효율성을 높이기 위한 기준을 정한다.' }],
+      },
+      {
+        id: 'preview-art-1-1',
+        number: 1,
+        clauseNumber: 1,
+        itemNumber: null,
+        title: '',
+        versions: [{ content: '이 규정에서 정하지 아니한 사항은 관계 법령과 사규에 따른다.' }],
+      },
+    ],
+  },
+];
 
 function tripletToCss(t: string) {
   return `rgb(${t.replace(/\s+/g, ' ').split(' ').join(',')})`;
@@ -339,47 +367,11 @@ export default function SettingsPage() {
     ],
   );
 
-  const templatePreviewGroups = useMemo(() => {
-    if (!previewPolicy?.chapters?.length) {
-      return [
-        {
-          id: 'preview-ch-1',
-          number: 1,
-          title: '총칙',
-          groups: [
-            {
-              articleNumber: 1,
-              items: [
-                {
-                  id: 'preview-art-1',
-                  clauseNumber: null,
-                  itemNumber: null,
-                  title: '목적',
-                  versions: [{ content: '이 규정은 회사 운영의 공정성과 효율성을 높이기 위한 기준을 정한다.' }],
-                },
-              ],
-            },
-          ],
-        },
-      ];
-    }
-    return previewPolicy.chapters.map((chapter: any) => {
-      const grouped = new Map<number, any[]>();
-      for (const article of chapter.articles || []) {
-        const key = Number(article.number || 0);
-        const list = grouped.get(key) || [];
-        list.push(article);
-        grouped.set(key, list);
-      }
-      const groups = Array.from(grouped.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([articleNumber, items]) => ({
-          articleNumber,
-          items,
-        }));
-      return { ...chapter, groups };
-    });
-  }, [previewPolicy]);
+  // 미리보기도 전문 보기와 같은 그룹 구조를 써야 조·항·목 들여쓰기가 실제 출력과 일치한다.
+  const templatePreviewGroups = useMemo(
+    () => buildFullViewGroups(previewPolicy?.chapters?.length ? previewPolicy.chapters : SAMPLE_PREVIEW_CHAPTERS),
+    [previewPolicy],
+  );
 
   const renderRevisionDiff = (rev: TemplateRevision) => {
     const before = rev.details?.before || null;
