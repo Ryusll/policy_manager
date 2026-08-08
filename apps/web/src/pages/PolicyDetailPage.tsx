@@ -29,6 +29,8 @@ import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
 import TemplateRenderer from '../components/policy-template/TemplateRenderer';
 import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
+import { buildEnterprisePolicyBodyHtml } from '../components/policy-template/templateUtils';
+import RevisionReasonsModal from '../components/RevisionReasonsModal';
 import { canManagePolicyTemplates } from '../lib/planFeatures';
 import { escapeRegExp } from '../lib/searchRegex';
 import { highlightText } from '../lib/highlightSearch';
@@ -469,6 +471,8 @@ export default function PolicyDetailPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [approveTargetId, setApproveTargetId] = useState<string | null>(null);
   const [approveNote, setApproveNote] = useState('');
+  /** 시행 승인 시 확정할 시행일(YYYY-MM-DD). 비우면 서버가 승인일로 기록 */
+  const [approveEffectiveDate, setApproveEffectiveDate] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [tocQuery, setTocQuery] = useState('');
   const [fullViewSearchQuery, setFullViewSearchQuery] = useState('');
@@ -486,6 +490,10 @@ export default function PolicyDetailPage() {
   }>({ kind: 'supplementary', title: '', body: '', sortOrder: '' });
   const [lawToolMsg, setLawToolMsg] = useState('');
   const [articleViewMode, setArticleViewMode] = useState<'full' | 'segment'>('full');
+  /** 시점 조회 기준일(YYYY-MM-DD). 빈 문자열이면 현행 본문 */
+  const [asOfDate, setAsOfDate] = useState('');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [showRevisionReasons, setShowRevisionReasons] = useState(false);
   const [relationNotesDraft, setRelationNotesDraft] = useState({
     relatedPrecedentNote: '',
     relatedLawNote: '',
@@ -582,6 +590,21 @@ export default function PolicyDetailPage() {
     queryFn: () => policiesApi.get(id!),
     enabled: !!id,
   });
+
+  // 시점(as-of) 조회: 기준일이 있으면 그날 시행 중이던 본문으로 전문을 갈아끼운다.
+  const { data: asOfPolicy, isFetching: isAsOfLoading } = useQuery({
+    queryKey: ['policy', id, 'as-of', asOfDate],
+    queryFn: () => policiesApi.getAsOf(id!, asOfDate),
+    enabled: !!id && !!asOfDate,
+  });
+  const { data: effectiveDates = [] } = useQuery<string[]>({
+    queryKey: ['policy', id, 'effective-dates'],
+    queryFn: () => policiesApi.effectiveDates(id!),
+    enabled: !!id,
+  });
+  /** 전문 보기가 실제로 그리는 규정 — 시점 조회 중이면 그 시점 스냅샷 */
+  const viewPolicy = asOfDate && asOfPolicy ? asOfPolicy : policy;
+  const asOfInfo = asOfDate && asOfPolicy ? asOfPolicy.asOf : null;
   useEffect(() => {
     if (!policy?.chapters?.length) return;
     const hashId = window.location.hash.replace('#article-', '').trim();
@@ -912,13 +935,23 @@ export default function PolicyDetailPage() {
   });
 
   const approveMutation = useMutation({
-    mutationFn: ({ id, changeNote }: { id: string; changeNote: string }) =>
-      versionsApi.approve(id, { changeNote }),
+    mutationFn: ({
+      id: versionId,
+      changeNote,
+      effectiveDate,
+    }: {
+      id: string;
+      changeNote: string;
+      effectiveDate?: string;
+    }) => versionsApi.approve(versionId, { changeNote, effectiveDate }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
       qc.invalidateQueries({ queryKey: ['policy', id] });
+      // 시행일이 바뀌었으니 시점 조회 후보 날짜도 다시 받는다
+      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
       setApproveTargetId(null);
       setApproveNote('');
+      setApproveEffectiveDate('');
     },
   });
 
@@ -1002,7 +1035,7 @@ export default function PolicyDetailPage() {
       return { idx, before, after, kind };
     });
   }, [diffResult]);
-  const fullViewGroups = useMemo(() => buildFullViewGroups(policy?.chapters), [policy]);
+  const fullViewGroups = useMemo(() => buildFullViewGroups(viewPolicy?.chapters), [viewPolicy]);
 
   const fullViewMatchCount = useMemo(() => {
     const q = fullViewSearchQuery.trim();
@@ -1236,6 +1269,42 @@ export default function PolicyDetailPage() {
     setLawToolMsg('전문 텍스트(.txt)를 내려받았습니다.');
     setTimeout(() => setLawToolMsg(''), 2500);
   }, [policy, fullViewGroups, appendicesGrouped.all]);
+
+  const downloadPdf = useCallback(async () => {
+    if (!policy || !id) return;
+    setIsExportingPdf(true);
+    setLawToolMsg('PDF를 만드는 중입니다…');
+    try {
+      // 전문 보기와 같은 빌더로 만든 HTML을 그대로 보낸다(화면 = 인쇄물 = PDF).
+      const html = buildEnterprisePolicyBodyHtml(fullViewGroups, '');
+      const metaParts = [
+        policy.code ? `코드: ${policy.code}` : '',
+        policy.revisionDate ? `개정일: ${formatKoDate(policy.revisionDate)}` : '',
+        policy.effectiveDate ? `시행일: ${formatKoDate(policy.effectiveDate)}` : '',
+        asOfDate ? `기준일: ${asOfDate} 시점 본문` : '',
+      ].filter(Boolean);
+      const blob = await policiesApi.exportPdf(id, {
+        html,
+        title: policy.title,
+        metaLine: metaParts.join(' · '),
+        footerText: `출력일: ${new Date().toLocaleDateString('ko-KR')}`,
+        pageNumbers: true,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfDate ? `-${asOfDate}` : ''}.pdf`;
+      a.rel = 'noopener';
+      a.click();
+      URL.revokeObjectURL(url);
+      setLawToolMsg('PDF를 내려받았습니다.');
+    } catch (err: any) {
+      setLawToolMsg(err?.response?.status === 500 ? 'PDF 생성에 실패했습니다.' : 'PDF 요청에 실패했습니다.');
+    } finally {
+      setIsExportingPdf(false);
+      setTimeout(() => setLawToolMsg(''), 3000);
+    }
+  }, [policy, id, fullViewGroups, asOfDate]);
 
   const copyPageUrl = useCallback(async () => {
     try {
@@ -2392,6 +2461,15 @@ export default function PolicyDetailPage() {
           </button>
           <button
             type="button"
+            onClick={() => void downloadPdf()}
+            disabled={isExportingPdf}
+            className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download size={14} aria-hidden />
+            {isExportingPdf ? 'PDF 생성 중…' : 'PDF 저장'}
+          </button>
+          <button
+            type="button"
             onClick={downloadFullTextTxt}
             className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50"
           >
@@ -2428,6 +2506,59 @@ export default function PolicyDetailPage() {
             표준국어대사전
           </button>
         </div>
+        {/* 시점 조회 — 기준일에 시행 중이던 본문으로 전문을 갈아끼운다 */}
+        <div className="px-3 py-2 sm:px-4 flex flex-wrap items-center gap-2 border-b border-gray-100 bg-white">
+          <label htmlFor="policy-as-of" className="text-[11px] font-semibold text-slate-700">
+            시점 조회
+          </label>
+          <input
+            id="policy-as-of"
+            type="date"
+            className="input text-xs py-1.5 w-[10.5rem]"
+            value={asOfDate}
+            onChange={(e) => setAsOfDate(e.target.value)}
+          />
+          {effectiveDates.length > 0 && (
+            <select
+              className="input text-xs py-1.5 max-w-[12rem]"
+              value=""
+              onChange={(e) => e.target.value && setAsOfDate(e.target.value)}
+              aria-label="본문이 바뀐 시행일로 이동"
+            >
+              <option value="">개정 시점 선택…</option>
+              {effectiveDates.map((d) => (
+                <option key={d} value={d}>
+                  {d} 시행
+                </option>
+              ))}
+            </select>
+          )}
+          {asOfDate ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setAsOfDate('')}
+                className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50"
+              >
+                현행으로
+              </button>
+              <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                {isAsOfLoading
+                  ? '불러오는 중…'
+                  : `${asOfDate} 시점 본문입니다${
+                      asOfInfo?.omittedArticles ? ` (그 시점에 없던 조문 ${asOfInfo.omittedArticles}개 제외)` : ''
+                    }`}
+              </span>
+              {asOfInfo && !asOfInfo.hasEffectiveDates ? (
+                <span className="text-[11px] text-gray-500">
+                  시행일이 기록된 조문 버전이 없어 결과가 비어 있을 수 있습니다.
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="text-[11px] text-gray-500">비워두면 현행 본문을 봅니다.</span>
+          )}
+        </div>
         <div className="px-3 py-2 sm:px-4 flex flex-wrap gap-1.5 bg-gray-50/80">
           {/* 이미 제공 중인 기능은 해당 패널로 이동시킨다(도구줄에서 '추후 제공'으로 잘못 안내되던 항목) */}
           <button
@@ -2450,9 +2581,15 @@ export default function PolicyDetailPage() {
           >
             연혁
           </button>
+          <button
+            type="button"
+            onClick={() => setShowRevisionReasons(true)}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            제정·개정이유
+          </button>
           {(
             [
-              '제정·개정이유',
               '3단비교',
               '신구조문대비표',
               '규정체계도',
@@ -3563,6 +3700,15 @@ export default function PolicyDetailPage() {
         </div>
       )}
 
+      {showRevisionReasons && id && (
+        <RevisionReasonsModal
+          policyId={id}
+          policy={policy}
+          canEdit={canEdit}
+          onClose={() => setShowRevisionReasons(false)}
+        />
+      )}
+
       {showAttachmentsModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-300 shadow-xl w-full max-w-lg">
@@ -4051,13 +4197,32 @@ export default function PolicyDetailPage() {
                   autoFocus
                 />
               </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="approve-effective-date">
+                  시행일
+                </label>
+                <input
+                  id="approve-effective-date"
+                  type="date"
+                  className="input w-full"
+                  value={approveEffectiveDate}
+                  onChange={(e) => setApproveEffectiveDate(e.target.value)}
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  비워두면 오늘로 기록됩니다. 이 날짜가 <strong>시점 조회</strong>의 기준이 됩니다.
+                </p>
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     const note = approveNote.trim();
                     if (!note) return;
-                    approveMutation.mutate({ id: approveTargetId, changeNote: note });
+                    approveMutation.mutate({
+                      id: approveTargetId,
+                      changeNote: note,
+                      effectiveDate: approveEffectiveDate || undefined,
+                    });
                   }}
                   disabled={!approveNote.trim() || approveMutation.isPending}
                   className="btn-primary"

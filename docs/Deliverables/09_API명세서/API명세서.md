@@ -51,6 +51,13 @@
 | POST | :id/appendices | admin, editor | 부칙/별표/서식 생성 |
 | PUT | :id/appendices/:appendixId | admin, editor | 부칙/별표/서식 수정 |
 | DELETE | :id/appendices/:appendixId | admin | 부칙/별표/서식 삭제 |
+| GET | :id/revision-reasons | admin, editor | **제정·개정 이유 목록** (문서 차수별 개정문) |
+| POST | :id/revision-reasons | admin, editor | 제정·개정 이유 추가 |
+| PUT | :id/revision-reasons/:reasonId | admin, editor | 제정·개정 이유 수정 |
+| DELETE | :id/revision-reasons/:reasonId | admin, editor | 제정·개정 이유 삭제 |
+| GET | :id/effective-dates | admin, editor | **시점 조회용** — 본문이 바뀐 시행일 목록(내림차순) |
+| GET | :id/as-of | admin, editor | **시점 조회** — 기준일에 시행 중이던 본문. Query: `date`(YYYY-MM-DD) |
+| POST | :id/export/pdf | admin, editor | **전문 PDF 내보내기.** Body는 전문 보기 렌더 HTML, 응답은 `application/pdf` |
 | POST | :id/files | admin, editor | 첨부파일 업로드 (MinIO) |
 | GET | :id/files | admin, editor | 첨부파일 목록 |
 | GET | :id/files/:filename | admin, editor | 첨부파일 다운로드 |
@@ -64,7 +71,7 @@
 | GET | versions/:id | admin, editor | 버전 상세 |
 | PUT | versions/:id | admin, editor | 초안 본문·변경메모 수정 |
 | POST | versions/:id/submit | admin | 검토 요청 (draft→review) |
-| POST | versions/:id/approve | admin | 시행 승인 (review→published, 이전 published는 archived) |
+| POST | versions/:id/approve | admin | 시행 승인 (review→published, 이전 published는 archived). **`effectiveDate` 확정 — 시점 조회의 기준** |
 | POST | versions/:id/reject | admin | 검토 반려 — **UI 미연결(API만)** |
 | POST | versions/:id/archive | admin | 버전 폐지 — **UI 미연결(API만)** |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
@@ -198,11 +205,19 @@
 **CreatePolicyAppendixDto** — `kind`(supplementary=부칙|annex=별표|form=서식), `title`(≤500), `body`(≤500000), `sortOrder?`(≥0)
 **UpdatePolicyAppendixDto** — 위 필드 전부 optional
 **CreatePolicyImportLogDto** — `policyId?`, `sourceName?`, `parseProfile?`(mixed|korean|english), `chapterCount?`(≥0), `articleCount?`(≥0), `cleanupOptions?`(JSON), `status?`, `message?`
+**CreateRevisionReasonDto** — `kind?`(enactment=제정|amendment=일부개정|full_amendment=전부개정|repeal=폐지, 기본 amendment), `label`(≤200, 예 "제3차 일부개정"), `reason`(≤100000), `summary?`(≤100000), `promulgatedDate?`(YYYY-MM-DD), `effectiveDate?`(YYYY-MM-DD)
+**UpdateRevisionReasonDto** — 위 필드 전부 optional
+**ExportPolicyPdfDto** — `html`(전문 보기 렌더 결과, ≤4MB — 서버에서 sanitize 후 변환), `title?`(≤300), `metaLine?`(≤500), `footerText?`(≤500), `pageNumbers?`(기본 true)
+
+### 시점 조회(as-of) 응답 규칙
+- 조문별로 **시행일 ≤ 기준일인 `published`/`archived` 버전 중 가장 나중** 것을 고른다.
+- 기준일에 아직 시행되지 않은 조문은 응답에서 **제외**한다(그날 존재하지 않던 조문).
+- 응답은 `GET :id`와 같은 형태 + `asOf: { date, omittedArticles, hasEffectiveDates }`. 전문 보기·인쇄·PDF가 그대로 재사용한다.
 
 ## versions
 **CreateVersionDto** — `content`(문자열), `changeNote?`
 **UpdateVersionDto** — `content?`, `changeNote?`
-**ApproveVersionDto** — `changeNote`(필수, 최소 1자 — "개정 사유를 입력하세요")
+**ApproveVersionDto** — `changeNote`(필수, 최소 1자 — "개정 사유를 입력하세요"), `effectiveDate?`(YYYY-MM-DD, 생략 시 승인일 — **시점 조회의 기준**)
 
 ## comments
 **CreateArticleCommentDto** — `content`(1~2000자)

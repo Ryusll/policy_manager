@@ -55,7 +55,13 @@ export class VersionsController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Approve version (publish) — 개정 사유 필수' })
   approve(@Request() req: any, @Param('id') id: string, @Body() dto: ApproveVersionDto) {
-    return this.versionsService.approve(req.user.tenantId, id, req.user.id, dto.changeNote);
+    return this.versionsService.approve(
+      req.user.tenantId,
+      id,
+      req.user.id,
+      dto.changeNote,
+      dto.effectiveDate,
+    );
   }
 
   @Post('versions/:id/reject')

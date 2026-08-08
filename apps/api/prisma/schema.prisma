@@ -134,6 +134,7 @@ model Policy {
   template PolicyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   chapters   Chapter[]
   appendices PolicyAppendix[]
+  revisionReasons PolicyRevisionReason[]
   importLogs PolicyImportLog[]
   committedParseSessions RegulationParseSession[] @relation("CommittedParsePolicy")
 
@@ -300,6 +301,8 @@ model ArticleVersion {
   content     String
   status      VersionStatus @default(draft)
   changeNote  String?       @map("change_note")
+  /// 이 버전이 시행된 날. 시점 조회(as-of)의 기준. 승인 시 확정된다.
+  effectiveDate DateTime?   @map("effective_date") @db.Date
   approvedBy  String?       @map("approved_by")
   approvedAt  DateTime?     @map("approved_at")
   createdBy   String?       @map("created_by")
@@ -309,7 +312,44 @@ model ArticleVersion {
   article        Article          @relation(fields: [articleId], references: [id], onDelete: Cascade)
   variableUsages VariableUsage[]
 
+  /// 시점 조회: 조문별로 "기준일 이전 시행분 중 가장 최근" 버전을 찾는다
+  @@index([articleId, effectiveDate])
   @@map("article_versions")
+}
+
+/// 제정·개정 이유(개정문). 법령의 "제정·개정이유"에 해당하는 문서 단위 기록.
+/// 조문 단위 사유는 `ArticleVersion.changeNote`가 담당한다.
+model PolicyRevisionReason {
+  id               String                   @id @default(uuid())
+  policyId         String                   @map("policy_id")
+  kind             PolicyRevisionKind       @default(amendment)
+  /// 개정 차수 표시용 라벨 (예: "제3차 일부개정")
+  label            String
+  /// 개정 이유 본문
+  reason           String                   @db.Text
+  /// 주요 변경사항 요약 (선택)
+  summary          String?                  @db.Text
+  promulgatedDate  DateTime?                @map("promulgated_date") @db.Date
+  effectiveDate    DateTime?                @map("effective_date") @db.Date
+  createdBy        String?                  @map("created_by")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([policyId, effectiveDate])
+  @@map("policy_revision_reasons")
+}
+
+enum PolicyRevisionKind {
+  /// 제정
+  enactment
+  /// 일부개정
+  amendment
+  /// 전부개정
+  full_amendment
+  /// 폐지
+  repeal
 }
 
 model Variable {

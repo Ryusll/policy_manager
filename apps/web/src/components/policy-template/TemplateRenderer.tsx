@@ -147,18 +147,22 @@ function FullViewArticleRow({
         ? formatClauseHang(article.clauseNumber)
         : null;
   const title = showArticleTitle ? String(article.title ?? '').trim() : '';
+  // 부제 없는 항·목은 법령 표기대로 번호를 본문 첫 줄에 붙인다("① 본문 …").
+  // HTML 템플릿·PDF 출력(`buildEnterprisePolicyBodyHtml`)과 같은 규칙이어야 화면과 인쇄물이 일치한다.
+  const inlineSub = !!sub && !title;
+  const headLine = sub ? `${sub}${title ? ` ${title}` : ''}` : title;
   return (
     <div className={clsx(plClass, 'border-l-2 border-gray-100 pl-3')}>
-      {sub ? (
-        <div className="font-medium text-gray-800">
-          {highlightText(`${sub}${title ? ` ${title}` : ''}`, highlightQuery)}
-        </div>
-      ) : title ? (
-        <div className="font-medium text-gray-800">
-          {highlightText(title, highlightQuery)}
-        </div>
+      {headLine && !inlineSub ? (
+        <div className="font-medium text-gray-800">{highlightText(headLine, highlightQuery)}</div>
       ) : null}
-      <div className="text-gray-700 mt-1 whitespace-pre-wrap leading-relaxed">
+      <div
+        className={clsx(
+          'text-gray-700 whitespace-pre-wrap leading-relaxed',
+          !inlineSub && headLine && 'mt-1',
+        )}
+      >
+        {inlineSub ? <span className="font-medium text-gray-800">{sub} </span> : null}
         {highlightText(article.versions?.[0]?.content || '시행중 버전이 없습니다.', highlightQuery)}
       </div>
     </div>

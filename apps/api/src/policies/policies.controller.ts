@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Delete, Param, Body, Request, HttpCode,
+  Controller, Get, Post, Put, Delete, Param, Body, Query, Request, HttpCode,
   UseInterceptors, UploadedFile, Res, NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -9,6 +9,7 @@ import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { Response } from 'express';
 import { PoliciesService } from './policies.service';
+import { PolicyPdfService } from './policy-pdf.service';
 import {
   CreatePolicyDto, UpdatePolicyDto,
   CreateChapterDto, UpdateChapterDto,
@@ -16,6 +17,8 @@ import {
   CreateArticleDto, UpdateArticleDto,
   CreatePolicyAppendixDto, UpdatePolicyAppendixDto,
   CreatePolicyImportLogDto,
+  CreateRevisionReasonDto, UpdateRevisionReasonDto,
+  ExportPolicyPdfDto,
 } from './policies.dto';
 import { Roles } from '../common/guards/decorators';
 
@@ -23,7 +26,10 @@ import { Roles } from '../common/guards/decorators';
 @ApiBearerAuth()
 @Controller('policies')
 export class PoliciesController {
-  constructor(private policiesService: PoliciesService) {}
+  constructor(
+    private policiesService: PoliciesService,
+    private policyPdfService: PolicyPdfService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: '규정 목록 조회' })
@@ -78,6 +84,65 @@ export class PoliciesController {
     @Param('appendixId') appendixId: string,
   ) {
     return this.policiesService.removeAppendix(req.user.tenantId, id, appendixId);
+  }
+
+  @Get(':id/revision-reasons')
+  @ApiOperation({ summary: '제정·개정 이유 목록' })
+  listRevisionReasons(@Request() req: any, @Param('id') id: string) {
+    return this.policiesService.listRevisionReasons(req.user.tenantId, id);
+  }
+
+  @Post(':id/revision-reasons')
+  @Roles('admin', 'editor')
+  @ApiOperation({ summary: '제정·개정 이유 추가' })
+  createRevisionReason(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() dto: CreateRevisionReasonDto,
+  ) {
+    return this.policiesService.createRevisionReason(req.user.tenantId, id, dto, req.user.id);
+  }
+
+  @Put(':id/revision-reasons/:reasonId')
+  @Roles('admin', 'editor')
+  @ApiOperation({ summary: '제정·개정 이유 수정' })
+  updateRevisionReason(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('reasonId') reasonId: string,
+    @Body() dto: UpdateRevisionReasonDto,
+  ) {
+    return this.policiesService.updateRevisionReason(
+      req.user.tenantId,
+      id,
+      reasonId,
+      dto,
+      req.user.id,
+    );
+  }
+
+  @Delete(':id/revision-reasons/:reasonId')
+  @Roles('admin', 'editor')
+  @HttpCode(204)
+  @ApiOperation({ summary: '제정·개정 이유 삭제' })
+  removeRevisionReason(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('reasonId') reasonId: string,
+  ) {
+    return this.policiesService.removeRevisionReason(req.user.tenantId, id, reasonId, req.user.id);
+  }
+
+  @Get(':id/effective-dates')
+  @ApiOperation({ summary: '시점 조회용 — 본문이 바뀐 시행일 목록' })
+  listEffectiveDates(@Request() req: any, @Param('id') id: string) {
+    return this.policiesService.listEffectiveDates(req.user.tenantId, id);
+  }
+
+  @Get(':id/as-of')
+  @ApiOperation({ summary: '시점 조회 — 기준일에 시행 중이던 본문' })
+  findOneAsOf(@Request() req: any, @Param('id') id: string, @Query('date') date: string) {
+    return this.policiesService.findOneAsOf(req.user.tenantId, id, date);
   }
 
   @Get(':id')
@@ -284,6 +349,37 @@ export class PoliciesController {
         uploadedAt: stat.birthtime,
       };
     });
+  }
+
+  @Post(':id/export/pdf')
+  @ApiOperation({ summary: '전문 PDF 내보내기 (전문 보기 렌더 결과를 그대로 PDF로)' })
+  async exportPdf(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() dto: ExportPolicyPdfDto,
+    @Res() res: Response,
+  ) {
+    // 테넌트 밖 규정으로 파일명을 만들지 못하도록 먼저 소유 확인
+    const policy = await this.policiesService.findOne(req.user.tenantId, id);
+    const pdf = await this.policyPdfService.render({
+      html: dto.html,
+      title: dto.title ?? policy.title,
+      metaLine: dto.metaLine,
+      footerText: dto.footerText,
+      pageNumbers: dto.pageNumbers,
+    });
+
+    const base = `${policy.code || 'policy'}_${policy.title || ''}`
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .trim()
+      .slice(0, 80);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="policy.pdf"; filename*=UTF-8''${encodeURIComponent(base)}.pdf`,
+    );
+    res.setHeader('Content-Length', String(pdf.length));
+    res.end(pdf);
   }
 
   @Get(':id/files/:filename')

@@ -108,15 +108,33 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | versionNum | int | |
 | content | string | 조문 본문 |
 | status | enum VersionStatus | draft/review/published/archived |
-| changeNote | string? | |
+| changeNote | string? | 조문 단위 개정 사유. 시행 승인 시 필수 |
+| effectiveDate | date? | **이 버전이 시행된 날. 시점 조회(as-of)의 기준.** 승인 시 확정(미지정이면 승인일) |
 | approvedBy / approvedAt | string?/datetime? | |
 | createdBy | string? | |
+
+인덱스: `[articleId, effectiveDate]` — 시점 조회에서 조문별 "기준일 이전 시행분 중 가장 최근"을 찾는 경로.
 
 ### ArticleComment (`article_comments`)
 tenantId, articleId FK, userId FK, content, isResolved. 인덱스: `[tenantId, articleId]`.
 
 ### PolicyAppendix (`policy_appendices`)
 policyId FK, kind(enum PolicyAppendixKind: supplementary/annex/form), title, body(text), sortOrder. 인덱스: `[policyId, kind]`, `[policyId, sortOrder]`.
+
+### PolicyRevisionReason (`policy_revision_reasons`) — 제정·개정 이유(개정문)
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| id | uuid PK | |
+| policyId | uuid FK → Policy (cascade) | |
+| kind | enum PolicyRevisionKind | enactment=제정 / amendment=일부개정 / full_amendment=전부개정 / repeal=폐지 |
+| label | string | 차수 라벨 (예: "제3차 일부개정") |
+| reason | text | 개정 이유 본문 |
+| summary | text? | 주요 변경사항 |
+| promulgatedDate / effectiveDate | date? | 공포일 / 시행일 |
+| createdBy | string? | |
+
+인덱스: `[policyId, effectiveDate]`.
+**조문 단위 사유는 `ArticleVersion.changeNote`가 담당**하고, 이 테이블은 문서 차수 단위를 담당한다. 규정 상세의 "제정·개정이유" 화면이 둘을 함께 보여준다.
 
 ### PolicyTemplate (`policy_templates`)
 tenantId FK, name, description, isDefault, isActive, layoutJson(json), cssText. `@@unique([tenantId, name])`, 인덱스 `[tenantId, isDefault]`.

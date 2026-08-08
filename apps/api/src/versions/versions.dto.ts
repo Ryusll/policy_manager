@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MinLength } from 'class-validator';
+import { IsString, IsOptional, MinLength, IsDateString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateVersionDto {
@@ -29,4 +29,12 @@ export class ApproveVersionDto {
   @IsString()
   @MinLength(1, { message: '개정 사유를 입력하세요.' })
   changeNote: string;
+
+  @ApiProperty({
+    required: false,
+    description: '시행일 (YYYY-MM-DD). 생략하면 승인일. 시점 조회의 기준이 된다.',
+  })
+  @IsOptional()
+  @IsDateString()
+  effectiveDate?: string;
 }

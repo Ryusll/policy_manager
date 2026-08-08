@@ -82,10 +82,16 @@ function appendArticleBodyHtml(
       : article?.clauseNumber != null
         ? formatClauseHang(article.clauseNumber)
         : '';
+  const subInner = sub
+    ? wrapSearchHighlightsInEscapedHtml(escapeHtmlText(sub), highlightQuery ?? '')
+    : '';
+  // 부제가 없는 항·목은 법령 표기대로 번호를 본문 첫 줄에 붙여 읽는다("① 본문 …").
+  // 별도 줄로 띄우면 인쇄·PDF에서 번호만 덩그러니 남는다.
+  const inlineSub = sub && !article?.title;
+
   out.push(`<article class="tmpl-article ${rowClass}">`);
-  if (sub) {
+  if (sub && !inlineSub) {
     out.push('<div class="tmpl-article-head">');
-    const subInner = wrapSearchHighlightsInEscapedHtml(escapeHtmlText(sub), highlightQuery ?? '');
     out.push(`<span class="tmpl-article-sub">${subInner}</span>`);
     if (article?.title) {
       const nameInner = wrapSearchHighlightsInEscapedHtml(
@@ -95,7 +101,7 @@ function appendArticleBodyHtml(
       out.push(`<span class="tmpl-article-name">${nameInner}</span>`);
     }
     out.push('</div>');
-  } else if (article?.title) {
+  } else if (!sub && article?.title) {
     out.push('<div class="tmpl-article-head">');
     const nameInner = wrapSearchHighlightsInEscapedHtml(
       escapeHtmlText(String(article.title)),
@@ -109,7 +115,8 @@ function appendArticleBodyHtml(
     escapeHtmlText(raw != null && raw !== '' ? String(raw) : '시행중 버전이 없습니다.'),
     highlightQuery ?? '',
   );
-  out.push(`<div class="tmpl-article-body">${bodyInner}</div>`);
+  const bodyLead = inlineSub ? `<span class="tmpl-article-sub">${subInner}</span> ` : '';
+  out.push(`<div class="tmpl-article-body">${bodyLead}${bodyInner}</div>`);
   out.push('</article>');
 }
 

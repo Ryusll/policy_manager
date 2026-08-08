@@ -45,6 +45,59 @@ export const policiesApi = {
     client.delete('/policies/' + policyId + '/appendices/' + appendixId),
   listImportLogs: () => client.get('/policies/import-logs').then((r) => r.data),
   createImportLog: (data: any) => client.post('/policies/import-logs', data).then((r) => r.data),
+
+  // 제정·개정 이유(개정문)
+  listRevisionReasons: (policyId: string) =>
+    client.get('/policies/' + policyId + '/revision-reasons').then((r) => r.data),
+  createRevisionReason: (policyId: string, data: RevisionReasonInput) =>
+    client.post('/policies/' + policyId + '/revision-reasons', data).then((r) => r.data),
+  updateRevisionReason: (policyId: string, reasonId: string, data: RevisionReasonInput) =>
+    client
+      .put('/policies/' + policyId + '/revision-reasons/' + reasonId, data)
+      .then((r) => r.data),
+  deleteRevisionReason: (policyId: string, reasonId: string) =>
+    client.delete('/policies/' + policyId + '/revision-reasons/' + reasonId),
+
+  // 시점(as-of) 조회
+  effectiveDates: (policyId: string): Promise<string[]> =>
+    client.get('/policies/' + policyId + '/effective-dates').then((r) => r.data),
+  getAsOf: (policyId: string, date: string) =>
+    client.get('/policies/' + policyId + '/as-of', { params: { date } }).then((r) => r.data),
+
+  exportPdf: (policyId: string, data: ExportPdfInput): Promise<Blob> =>
+    client
+      .post('/policies/' + policyId + '/export/pdf', data, { responseType: 'blob' })
+      .then((r) => r.data),
+};
+
+export type PolicyRevisionKind = 'enactment' | 'amendment' | 'full_amendment' | 'repeal';
+
+export type RevisionReasonInput = {
+  kind?: PolicyRevisionKind;
+  label?: string;
+  reason?: string;
+  summary?: string | null;
+  promulgatedDate?: string | null;
+  effectiveDate?: string | null;
+};
+
+export type PolicyRevisionReason = {
+  id: string;
+  kind: PolicyRevisionKind;
+  label: string;
+  reason: string;
+  summary: string | null;
+  promulgatedDate: string | null;
+  effectiveDate: string | null;
+  createdAt: string;
+};
+
+export type ExportPdfInput = {
+  html: string;
+  title?: string;
+  metaLine?: string;
+  footerText?: string;
+  pageNumbers?: boolean;
 };
 
 export const versionsApi = {
@@ -54,7 +107,7 @@ export const versionsApi = {
     client.post('/articles/' + articleId + '/versions', data).then((r) => r.data),
   update: (id: string, data: any) => client.put('/versions/' + id, data).then((r) => r.data),
   submit: (id: string) => client.post('/versions/' + id + '/submit').then((r) => r.data),
-  approve: (id: string, data: { changeNote: string }) =>
+  approve: (id: string, data: { changeNote: string; effectiveDate?: string }) =>
     client.post('/versions/' + id + '/approve', data).then((r) => r.data),
   reject: (id: string) => client.post('/versions/' + id + '/reject').then((r) => r.data),
   diff: (v1: string, v2: string) =>

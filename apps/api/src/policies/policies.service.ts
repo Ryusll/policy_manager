@@ -9,6 +9,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
+import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
 import {
   CreatePolicyDto,
   UpdatePolicyDto,
@@ -21,6 +22,8 @@ import {
   CreatePolicyAppendixDto,
   UpdatePolicyAppendixDto,
   CreatePolicyImportLogDto,
+  CreateRevisionReasonDto,
+  UpdateRevisionReasonDto,
 } from './policies.dto';
 
 @Injectable()
@@ -72,10 +75,117 @@ export class PoliciesService {
         appendices: {
           orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
         },
+        revisionReasons: {
+          orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+        },
       },
     });
     if (!policy) throw new NotFoundException('Policy not found');
     return policy;
+  }
+
+  /**
+   * 시점(as-of) 조회 — 기준일에 시행 중이던 본문을 재구성한다.
+   *
+   * 조문별로 "시행일이 기준일 이하인 시행분 중 가장 나중" 버전을 고른다.
+   * 기준일에 아직 시행되지 않은 조는 결과에서 제외한다(그날 존재하지 않던 조문).
+   * `findOne`과 같은 형태로 돌려주므로 전문 보기·인쇄·PDF가 그대로 재사용된다.
+   */
+  async findOneAsOf(tenantId: string, id: string, asOf: string) {
+    const asOfDate = parseDateOnly(asOf);
+    if (!asOfDate) {
+      throw new BadRequestException('기준일(date)은 YYYY-MM-DD 형식이어야 합니다.');
+    }
+
+    const policy = await this.prisma.policy.findFirst({
+      where: { id, tenantId },
+      include: {
+        template: true,
+        chapters: {
+          include: {
+            sections: { orderBy: { number: 'asc' } },
+            articles: {
+              include: {
+                versions: {
+                  // 시행 이력이 있는 버전만 후보(초안·검토중 제외)
+                  where: {
+                    status: { in: ['published', 'archived'] },
+                    effectiveDate: { not: null, lte: asOfDate },
+                  },
+                  orderBy: [{ effectiveDate: 'desc' }, { versionNum: 'desc' }],
+                  take: 1,
+                },
+              },
+              orderBy: [
+                { number: 'asc' },
+                { clauseNumber: { sort: 'asc', nulls: 'first' } },
+                { itemNumber: { sort: 'asc', nulls: 'first' } },
+              ],
+            },
+          },
+          orderBy: { number: 'asc' },
+        },
+        appendices: {
+          orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+        },
+        revisionReasons: {
+          where: { OR: [{ effectiveDate: null }, { effectiveDate: { lte: asOfDate } }] },
+          orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+        },
+      },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    let omittedArticles = 0;
+    const chapters = policy.chapters.map((chapter) => {
+      const articles = chapter.articles.filter((article) => {
+        if (article.versions.length > 0) return true;
+        omittedArticles += 1;
+        return false;
+      });
+      return { ...chapter, articles };
+    });
+
+    return {
+      ...policy,
+      chapters,
+      asOf: {
+        date: asOf,
+        omittedArticles,
+        // 시행일이 하나도 기록되지 않았다면 시점 조회가 무의미하다는 신호
+        hasEffectiveDates: await this.hasAnyEffectiveDate(id),
+      },
+    };
+  }
+
+  private async hasAnyEffectiveDate(policyId: string): Promise<boolean> {
+    const count = await this.prisma.articleVersion.count({
+      where: {
+        effectiveDate: { not: null },
+        article: { chapter: { policyId } },
+      },
+    });
+    return count > 0;
+  }
+
+  /** 시점 조회 슬라이더용: 이 규정에서 실제로 본문이 바뀐 날짜들 */
+  async listEffectiveDates(tenantId: string, id: string) {
+    const policy = await this.prisma.policy.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    const rows = await this.prisma.articleVersion.findMany({
+      where: {
+        status: { in: ['published', 'archived'] },
+        effectiveDate: { not: null },
+        article: { chapter: { policyId: id } },
+      },
+      select: { effectiveDate: true },
+      distinct: ['effectiveDate'],
+      orderBy: { effectiveDate: 'desc' },
+    });
+    return rows
+      .map((r) => (r.effectiveDate ? toDateOnlyString(r.effectiveDate) : null))
+      .filter((d): d is string => !!d);
   }
 
   async create(tenantId: string, dto: CreatePolicyDto, userId: string) {
@@ -456,6 +566,109 @@ export class PoliciesService {
     });
     if (!row) throw new NotFoundException('Appendix not found');
     await this.prisma.policyAppendix.delete({ where: { id: appendixId } });
+  }
+
+  // --- 제정·개정 이유(개정문) ---
+
+  async listRevisionReasons(tenantId: string, policyId: string) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    return this.prisma.policyRevisionReason.findMany({
+      where: { policyId },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async createRevisionReason(
+    tenantId: string,
+    policyId: string,
+    dto: CreateRevisionReasonDto,
+    userId: string,
+  ) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    const created = await this.prisma.policyRevisionReason.create({
+      data: {
+        policyId,
+        kind: dto.kind ?? 'amendment',
+        label: dto.label.trim(),
+        reason: dto.reason ?? '',
+        summary: dto.summary ?? null,
+        promulgatedDate: coerceNullableDate(dto.promulgatedDate),
+        effectiveDate: coerceNullableDate(dto.effectiveDate),
+        createdBy: userId,
+      },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.revision_reason.create',
+      entityType: 'PolicyRevisionReason',
+      entityId: created.id,
+      details: { policyId, kind: created.kind, label: created.label },
+    });
+    return created;
+  }
+
+  async updateRevisionReason(
+    tenantId: string,
+    policyId: string,
+    reasonId: string,
+    dto: UpdateRevisionReasonDto,
+    userId: string,
+  ) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    const row = await this.prisma.policyRevisionReason.findFirst({
+      where: { id: reasonId, policyId },
+    });
+    if (!row) throw new NotFoundException('Revision reason not found');
+
+    const data: Record<string, unknown> = {};
+    if (dto.kind !== undefined) data.kind = dto.kind;
+    if (dto.label !== undefined) data.label = dto.label.trim();
+    if (dto.reason !== undefined) data.reason = dto.reason;
+    if (dto.summary !== undefined) data.summary = dto.summary || null;
+    if (dto.promulgatedDate !== undefined) data.promulgatedDate = coerceNullableDate(dto.promulgatedDate);
+    if (dto.effectiveDate !== undefined) data.effectiveDate = coerceNullableDate(dto.effectiveDate);
+
+    const updated = await this.prisma.policyRevisionReason.update({
+      where: { id: reasonId },
+      data: data as any,
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.revision_reason.update',
+      entityType: 'PolicyRevisionReason',
+      entityId: reasonId,
+      details: { policyId, fields: Object.keys(data) },
+    });
+    return updated;
+  }
+
+  async removeRevisionReason(tenantId: string, policyId: string, reasonId: string, userId: string) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    const row = await this.prisma.policyRevisionReason.findFirst({
+      where: { id: reasonId, policyId },
+    });
+    if (!row) throw new NotFoundException('Revision reason not found');
+    await this.prisma.policyRevisionReason.delete({ where: { id: reasonId } });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.revision_reason.delete',
+      entityType: 'PolicyRevisionReason',
+      entityId: reasonId,
+      details: { policyId },
+    });
+  }
+
+  /** 테넌트 경계 확인만 하는 가벼운 검사 (본문 전체를 끌어오는 findOne 대신) */
+  private async assertPolicyInTenant(tenantId: string, policyId: string) {
+    const policy = await this.prisma.policy.findFirst({
+      where: { id: policyId, tenantId },
+      select: { id: true },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+    return policy;
   }
 
   async listImportLogs(tenantId: string, take = 30) {

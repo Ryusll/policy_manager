@@ -4,6 +4,7 @@ import { CreateVersionDto, UpdateVersionDto } from './versions.dto';
 import { VariablesService } from '../variables/variables.service';
 import { AuditService } from '../audit/audit.service';
 import { RevisionNotifyService } from '../notifications/revision-notify.service';
+import { coerceNullableDate, todayDateOnly } from '../common/date-only';
 import * as Diff from 'diff';
 
 @Injectable()
@@ -123,10 +124,23 @@ export class VersionsService {
     return row;
   }
 
-  async approve(tenantId: string, versionId: string, userId: string, changeNote: string) {
+  async approve(
+    tenantId: string,
+    versionId: string,
+    userId: string,
+    changeNote: string,
+    effectiveDate?: string,
+  ) {
     const reason = changeNote?.trim();
     if (!reason) {
       throw new BadRequestException('시행 승인 시 개정 사유(changeNote)가 필요합니다.');
+    }
+
+    // 시행일은 시점 조회(as-of)의 기준이라 승인 시점에 반드시 확정한다. 미지정이면 승인일.
+    // DTO가 ISO 날짜시간도 허용하므로 날짜 부분만 취한다(coerceNullableDate).
+    const effective = effectiveDate ? coerceNullableDate(effectiveDate) : todayDateOnly();
+    if (!effective) {
+      throw new BadRequestException('시행일은 YYYY-MM-DD 형식이어야 합니다.');
     }
 
     const version = await this.findOne(tenantId, versionId);
@@ -146,6 +160,7 @@ export class VersionsService {
           status: 'published',
           approvedBy: userId,
           approvedAt: new Date(),
+          effectiveDate: effective,
           changeNote: reason,
         },
       });
