@@ -179,4 +179,4 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 ## 3. 참고
 - 모든 타임스탬프는 `createdAt`(default now) / `updatedAt`(@updatedAt) 패턴 일관 적용
 - 테넌트 격리는 각 모델의 `tenantId` FK(대부분 `onDelete: Cascade`)로 이루어지며, DB 레벨 Row-Level Security는 적용되어 있지 않음 — 애플리케이션 코드가 매 쿼리에 `tenantId` 필터를 직접 걸어야 함 (누락 시 테넌트 간 데이터 노출 위험, [15_보안검토서](../15_보안검토서/보안_검토서.md) 참고)
-- 스키마 변경 이력(마이그레이션 파일 12건)은 [04_시스템아키텍처](../04_시스템아키텍처/시스템아키텍처.md) 5절 참고
+- 스키마 변경 이력은 2026-08-02 baseline으로 스쿼시되어 마이그레이션 파일 2건(`00000000000000_init`, `00000000000001_enable_pgbigm`)만 남아 있음 — [04_시스템아키텍처](../04_시스템아키텍처/시스템아키텍처.html) 7절 참고

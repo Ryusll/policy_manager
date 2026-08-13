@@ -25,7 +25,7 @@ policy_manager 프로젝트 문서 산출물 폴더입니다. 대표·개발자1
 | 01 | 프로젝트 기획서 | 작성됨 | 목적·범위·플랜 구성. 서비스명·가격 등은 "미정" 표기 |
 | 02 | WBS (작업분해) | 작성됨 | 확인된 격차를 WP1~6으로 분해 |
 | 03 | SRS (요구사항 명세) | 작성됨 | 구현된 동작을 요구사항으로 역산 정리 + 플랜 게이팅 |
-| 04 | 시스템 아키텍처 | 작성됨 | NestJS/Prisma/Postgres/Redis/MinIO/React/Docker 구성 |
+| 04 | 시스템 아키텍처 | 작성됨 (**HTML**) | NestJS/Prisma/Postgres/Redis/MinIO/React/Docker 구성. 2026-08-13 `.html`로 전환(구성도·가드체인·도메인계층 다이어그램 포함), 이전 `.md`는 `구버전/` |
 | 05 | 개발컨벤션 | 작성됨 | 실제 코드 패턴 기반. git/lint 일부 "미정" |
 | 06 | README | 작성됨 | 실제 파일은 루트 `/README.md`, 이 폴더는 이력만 관리 |
 | 07 | .env.example | 변경이력만 관리 | 실제 파일은 루트 `.env.example` 유지 (docker-compose·npm 스크립트가 참조하므로 이동 불가). 여기는 변경 이력만 기록 |

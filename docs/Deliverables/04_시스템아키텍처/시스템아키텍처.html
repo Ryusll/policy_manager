@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>시스템 아키텍처 · policy_manager (VEDA)</title>
+<style>
+  :root {
+    --navy-900: #0f1e33;
+    --navy-800: #16294a;
+    --navy-700: #1e3a5f;
+    --navy-500: #37618f;
+    --navy-300: #8fb0d4;
+    --gold-600: #a9821c;
+    --gold-500: #c9a227;
+    --gold-200: #f0e0a8;
+
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --surface-2: #f1f4f8;
+    --border: #dde3ec;
+    --border-strong: #c3cddc;
+    --text: #1c2431;
+    --text-muted: #5d6a7e;
+    --accent: var(--navy-700);
+    --accent-soft: #e8eef7;
+    --ok: #1a7f52;
+    --ok-soft: #e3f4ec;
+    --warn: #9a6708;
+    --warn-soft: #fdf1dc;
+    --bad: #a32d2d;
+    --bad-soft: #fbe9e9;
+    --code-bg: #eef1f6;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "D2Coding", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
+            "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1420;
+      --surface: #151d2b;
+      --surface-2: #1b2536;
+      --border: #2a3648;
+      --border-strong: #3a4a63;
+      --text: #e4e9f1;
+      --text-muted: #9aa8bd;
+      --accent: #7ea6dc;
+      --accent-soft: #1c2a3f;
+      --ok: #56c891;
+      --ok-soft: #14301f;
+      --warn: #e0ac4a;
+      --warn-soft: #33270f;
+      --bad: #e88a8a;
+      --bad-soft: #331919;
+      --code-bg: #1e2839;
+      --navy-300: #6f8db4;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    word-break: keep-all;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  /* ── 헤더 ───────────────────────────────── */
+  header.doc {
+    background: linear-gradient(135deg, var(--navy-800) 0%, var(--navy-700) 55%, var(--navy-500) 100%);
+    color: #fff;
+    padding: 40px 24px 34px;
+    border-bottom: 3px solid var(--gold-500);
+  }
+  header.doc .inner { max-width: 1180px; margin: 0 auto; }
+  header.doc .eyebrow {
+    font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--gold-200); margin: 0 0 8px; font-weight: 600;
+  }
+  header.doc h1 { margin: 0 0 6px; font-size: 30px; line-height: 1.3; letter-spacing: -.01em; }
+  header.doc .sub { margin: 0; color: #c9d8ec; font-size: 14px; }
+  header.doc .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 22px;
+    margin-top: 20px; padding-top: 18px;
+    border-top: 1px solid rgba(255,255,255,.16);
+    font-size: 13px; color: #b9cce4;
+  }
+  header.doc .meta b { color: #fff; font-weight: 600; }
+
+  /* ── 목차 ───────────────────────────────── */
+  nav.toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin: 28px 0 36px;
+  }
+  nav.toc h2 {
+    margin: 0 0 10px; font-size: 12px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  nav.toc ol {
+    margin: 0; padding: 0; list-style: none;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 2px 20px;
+  }
+  nav.toc a {
+    display: block; padding: 3px 0; color: var(--text);
+    text-decoration: none; font-size: 14px;
+  }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+  nav.toc .num { color: var(--navy-300); font-variant-numeric: tabular-nums; margin-right: 7px; }
+
+  /* ── 섹션 ───────────────────────────────── */
+  section { margin: 0 0 44px; scroll-margin-top: 20px; }
+  h2.sec {
+    font-size: 21px; margin: 0 0 4px; letter-spacing: -.01em;
+    padding-bottom: 10px; border-bottom: 2px solid var(--border-strong);
+  }
+  h2.sec .n {
+    display: inline-block; min-width: 30px;
+    color: var(--gold-600); font-variant-numeric: tabular-nums;
+  }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p { margin: 12px 0; }
+  ul, ol.body { margin: 12px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  a { color: var(--accent); }
+
+  code {
+    font-family: var(--mono); font-size: .875em;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 4px;
+    word-break: break-all;
+  }
+
+  /* ── 표 ─────────────────────────────────── */
+  .table-scroll { overflow-x: auto; margin: 16px 0; -webkit-overflow-scrolling: touch; }
+  table {
+    border-collapse: collapse; width: 100%; min-width: 520px;
+    font-size: 14px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  }
+  th, td { padding: 9px 13px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+  thead th {
+    background: var(--surface-2); font-weight: 600; font-size: 13px;
+    color: var(--text-muted); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+
+  /* ── 다이어그램 ─────────────────────────── */
+  figure {
+    margin: 20px 0; padding: 20px 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  figure .svg-scroll { overflow-x: auto; }
+  figure svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  figcaption {
+    margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border);
+    font-size: 13px; color: var(--text-muted); text-align: center;
+  }
+  svg text { font-family: var(--sans); }
+  .s-box { fill: var(--surface-2); stroke: var(--border-strong); stroke-width: 1.5; }
+  .s-box-accent { fill: var(--accent-soft); stroke: var(--navy-500); stroke-width: 1.5; }
+  .s-box-gold { fill: var(--warn-soft); stroke: var(--gold-500); stroke-width: 1.5; }
+  .s-title { fill: var(--text); font-size: 13.5px; font-weight: 600; }
+  .s-sub { fill: var(--text-muted); font-size: 11.5px; }
+  .s-line { stroke: var(--border-strong); stroke-width: 1.6; fill: none; }
+  .s-label { fill: var(--text-muted); font-size: 11px; }
+  .s-dash { stroke-dasharray: 5 4; }
+
+  /* ── 콜아웃 ─────────────────────────────── */
+  .note {
+    margin: 18px 0; padding: 13px 16px; border-radius: var(--radius);
+    border-left: 4px solid var(--accent); background: var(--accent-soft); font-size: 14px;
+  }
+  .note.warn { border-left-color: var(--gold-500); background: var(--warn-soft); }
+  .note.bad  { border-left-color: var(--bad); background: var(--bad-soft); }
+  .note.ok   { border-left-color: var(--ok); background: var(--ok-soft); }
+  .note > :first-child { margin-top: 0; }
+  .note > :last-child { margin-bottom: 0; }
+  .note b.tag {
+    display: inline-block; margin-right: 6px; font-size: 12px;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+
+  /* ── 배지 ───────────────────────────────── */
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; white-space: nowrap; line-height: 1.7;
+  }
+  .badge.ok   { background: var(--ok-soft);   color: var(--ok); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.bad  { background: var(--bad-soft);  color: var(--bad); }
+  .badge.info { background: var(--accent-soft); color: var(--accent); }
+
+  /* ── 스택 카드 ──────────────────────────── */
+  .cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px; margin: 18px 0;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+  }
+  .card h4 {
+    margin: 0 0 8px; font-size: 13px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--gold-600);
+  }
+  .card ul { margin: 0; padding-left: 18px; font-size: 14px; }
+  .card li { margin: 3px 0; }
+
+  footer.doc {
+    margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border);
+    font-size: 13px; color: var(--text-muted);
+  }
+
+  /* ── 인쇄 ───────────────────────────────── */
+  @media print {
+    :root {
+      --bg: #fff; --surface: #fff; --surface-2: #f4f6f9;
+      --border: #ccc; --border-strong: #999; --text: #000; --text-muted: #444;
+      --accent-soft: #eef3f9; --warn-soft: #fdf6e6; --ok-soft: #eef7f2; --bad-soft: #fdeded;
+      --code-bg: #f0f0f0;
+    }
+    body { font-size: 10.5pt; background: #fff; }
+    header.doc { background: #fff !important; color: #000; border-bottom: 2px solid #000; padding: 0 0 12px; }
+    header.doc h1 { font-size: 20pt; }
+    header.doc .eyebrow { color: #666; }
+    header.doc .sub, header.doc .meta { color: #333; }
+    header.doc .meta b { color: #000; }
+    header.doc .meta { border-top-color: #ccc; }
+    nav.toc { break-after: page; }
+    .wrap { padding: 0; max-width: none; }
+    section { break-inside: avoid-page; }
+    h2.sec { break-after: avoid; }
+    figure, table, .note { break-inside: avoid; }
+    a { color: #000; text-decoration: none; }
+  }
+
+  @media (max-width: 640px) {
+    header.doc h1 { font-size: 23px; }
+    .wrap { padding: 0 16px 64px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="doc">
+  <div class="inner">
+    <p class="eyebrow">Deliverable 04</p>
+    <h1>시스템 아키텍처</h1>
+    <p class="sub">policy_manager (VEDA) — 사내 규정 관리 멀티테넌트 SaaS</p>
+    <div class="meta">
+      <span><b>최초 작성</b> 2026-07-21</span>
+      <span><b>최종 갱신</b> 2026-08-13</span>
+      <span><b>형식</b> Markdown → HTML 전환</span>
+      <span><b>대상 커밋</b> <code style="background:rgba(255,255,255,.12);color:#fff">ae406f8</code> + 미커밋 작업물</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <nav class="toc">
+    <h2>목차</h2>
+    <ol>
+      <li><a href="#s1"><span class="num">01</span>개요</a></li>
+      <li><a href="#s2"><span class="num">02</span>구성도</a></li>
+      <li><a href="#s3"><span class="num">03</span>요청 처리 경로</a></li>
+      <li><a href="#s4"><span class="num">04</span>백엔드</a></li>
+      <li><a href="#s5"><span class="num">05</span>프론트엔드</a></li>
+      <li><a href="#s6"><span class="num">06</span>도메인 모델</a></li>
+      <li><a href="#s7"><span class="num">07</span>데이터베이스·마이그레이션</a></li>
+      <li><a href="#s8"><span class="num">08</span>외부 프로세스 연동</a></li>
+      <li><a href="#s9"><span class="num">09</span>인프라·배포</a></li>
+      <li><a href="#s10"><span class="num">10</span>인증·권한</a></li>
+      <li><a href="#s11"><span class="num">11</span>멀티테넌시·플랜</a></li>
+      <li><a href="#s12"><span class="num">12</span>품질·CI</a></li>
+      <li><a href="#s13"><span class="num">13</span>구조적 부채</a></li>
+    </ol>
+  </nav>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s1">
+    <h2 class="sec"><span class="n">01</span>개요</h2>
+    <p>
+      policy_manager는 <b>회사(테넌트) 단위 멀티테넌트 SaaS</b>다. 하나의 백엔드·DB를 여러 테넌트가
+      공유하고 모든 핵심 테이블의 <code>tenantId</code> 컬럼으로 데이터를 격리한다.
+      단일 호스트 Docker Compose 배포를 기준으로 설계돼 있으며, 브라우저는 nginx(<code>web</code>)만
+      직접 호출하고 nginx가 <code>/api/</code>를 NestJS(<code>api</code>)로 프록시한다.
+    </p>
+    <p>
+      도메인의 중심은 <b>법령 구조를 따르는 규정 문서</b>다. 규정 &rarr; 장(章) &rarr; 절(節) &rarr;
+      조(條) &rarr; 항 &rarr; 목 계층을 표현하고, 조문 단위 버전 관리·승인 워크플로·시점 조회를 제공한다.
+    </p>
+    <div class="cards">
+      <div class="card">
+        <h4>백엔드</h4>
+        <ul>
+          <li>NestJS 10 / TypeScript</li>
+          <li>Prisma 5 ORM</li>
+          <li>PostgreSQL 15 + <code>pg_bigm</code></li>
+          <li>Redis 7 / MinIO</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>프론트엔드</h4>
+        <ul>
+          <li>React 18 + Vite</li>
+          <li>TanStack Query (서버 상태)</li>
+          <li>Zustand (클라이언트 상태)</li>
+          <li>Tailwind CSS + CSS 변수 테마</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>인프라</h4>
+        <ul>
+          <li>Docker Compose 5개 서비스</li>
+          <li>멀티스테이지 빌드 (Debian slim)</li>
+          <li>GitHub Actions CI 2 job</li>
+          <li>기동 시 자동 마이그레이션</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s2">
+    <h2 class="sec"><span class="n">02</span>구성도</h2>
+
+    <figure>
+      <div class="svg-scroll">
+      <svg viewBox="0 0 860 470" width="860" role="img" aria-label="컨테이너 구성도">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-strong)"/>
+          </marker>
+        </defs>
+
+        <!-- Browser -->
+        <rect class="s-box-gold" x="310" y="14" width="240" height="52" rx="8"/>
+        <text class="s-title" x="430" y="38" text-anchor="middle">Browser</text>
+        <text class="s-sub" x="430" y="55" text-anchor="middle">사용자 · PUBLIC_URL 로 접속</text>
+
+        <path class="s-line" d="M430 66 L430 108" marker-end="url(#ah)"/>
+        <text class="s-label" x="440" y="92">HTTPS</text>
+
+        <!-- web -->
+        <rect class="s-box-accent" x="255" y="108" width="350" height="62" rx="8"/>
+        <text class="s-title" x="430" y="133" text-anchor="middle">web — nginx (:80)</text>
+        <text class="s-sub" x="430" y="152" text-anchor="middle">React SPA 정적 서빙 + /api/ 리버스 프록시</text>
+
+        <path class="s-line" d="M430 170 L430 212" marker-end="url(#ah)"/>
+        <text class="s-label" x="440" y="196">/api/*</text>
+
+        <!-- api -->
+        <rect class="s-box-accent" x="200" y="212" width="460" height="76" rx="8"/>
+        <text class="s-title" x="430" y="238" text-anchor="middle">api — NestJS (:3000, 호스트 :3001)</text>
+        <text class="s-sub" x="430" y="256" text-anchor="middle">전역 prefix /api · Swagger /api/docs · 전역 가드 4단</text>
+        <text class="s-sub" x="430" y="273" text-anchor="middle">도메인 모듈 17개 + 공용(common) · Prisma Client</text>
+
+        <!-- fan-out -->
+        <path class="s-line" d="M300 288 L300 318 L150 318 L150 348" marker-end="url(#ah)"/>
+        <path class="s-line" d="M430 288 L430 348" marker-end="url(#ah)"/>
+        <path class="s-line" d="M560 288 L560 318 L710 318 L710 348" marker-end="url(#ah)"/>
+
+        <!-- postgres -->
+        <rect class="s-box" x="40" y="348" width="220" height="72" rx="8"/>
+        <text class="s-title" x="150" y="373" text-anchor="middle">postgres 15</text>
+        <text class="s-sub" x="150" y="391" text-anchor="middle">:5432 (호스트 5433)</text>
+        <text class="s-sub" x="150" y="408" text-anchor="middle">pg_bigm — 한글 검색</text>
+
+        <!-- redis -->
+        <rect class="s-box" x="320" y="348" width="220" height="72" rx="8"/>
+        <text class="s-title" x="430" y="373" text-anchor="middle">redis 7</text>
+        <text class="s-sub" x="430" y="391" text-anchor="middle">:6379 (호스트 6380)</text>
+        <text class="s-sub" x="430" y="408" text-anchor="middle">헬스체크만 · 캐시 미사용</text>
+
+        <!-- minio -->
+        <rect class="s-box" x="600" y="348" width="220" height="72" rx="8"/>
+        <text class="s-title" x="710" y="373" text-anchor="middle">minio</text>
+        <text class="s-sub" x="710" y="391" text-anchor="middle">:9000 / 콘솔 :9001</text>
+        <text class="s-sub" x="710" y="408" text-anchor="middle">버킷 policy-files</text>
+
+        <!-- python sidecar note -->
+        <rect class="s-box-gold s-dash" x="672" y="212" width="176" height="52" rx="8" style="stroke-dasharray:5 4"/>
+        <text class="s-title" x="760" y="234" text-anchor="middle">python3 (동일 컨테이너)</text>
+        <text class="s-sub" x="760" y="251" text-anchor="middle">PyMuPDF · pdfplumber</text>
+        <path class="s-line s-dash" d="M660 245 L672 240"/>
+
+        <text class="s-label" x="430" y="450" text-anchor="middle">모든 서비스는 Docker Compose 기본 네트워크에서 서비스명으로 통신한다</text>
+      </svg>
+      </div>
+      <figcaption>컨테이너 구성 및 트래픽 경로 (<code>docker-compose.yml</code> 기준)</figcaption>
+    </figure>
+
+    <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>서비스</th><th>이미지 / 베이스</th><th>컨테이너 : 호스트</th><th>역할</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>web</code></td><td>nginx (멀티스테이지)</td><td>80 : 80</td><td>SPA 서빙 + <code>/api/</code> 프록시</td></tr>
+        <tr><td><code>api</code></td><td><code>node:20-slim</code></td><td>3000 : 3001</td><td>NestJS REST API, PDF/파싱 파이썬 동거</td></tr>
+        <tr><td><code>postgres</code></td><td><code>postgres:15-alpine</code></td><td>5432 : 5433</td><td>주 데이터 저장소</td></tr>
+        <tr><td><code>redis</code></td><td><code>redis:7-alpine</code></td><td>6379 : 6380</td><td>기동돼 있으나 현재 애플리케이션 사용처 없음</td></tr>
+        <tr><td><code>minio</code></td><td><code>minio/minio</code></td><td>9000/9001 동일</td><td>규정 첨부파일 (S3 호환)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="note">
+      <b class="tag">설계 포인트</b>
+      환경변수 <code>PUBLIC_URL</code> 하나로 CORS 허용 오리진과 Google OAuth 콜백 URL을 함께 구성한다.
+      도메인이 바뀔 때 고쳐야 할 곳이 한 군데다. (<code>docker-compose.yml</code>, <code>apps/api/src/main.ts</code>)
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s3">
+    <h2 class="sec"><span class="n">03</span>요청 처리 경로</h2>
+    <p>
+      모든 요청은 <code>AppModule</code>에 등록된 <b>전역 가드 4단</b>을 통과한다. 순서가 곧 의미다 —
+      먼저 신원을 확인하고, 요금제 한도를 보고, 역할을 보고, 마지막에 호출량을 본다.
+    </p>
+
+    <figure>
+      <div class="svg-scroll">
+      <svg viewBox="0 0 860 210" width="860" role="img" aria-label="전역 가드 체인">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-strong)"/>
+          </marker>
+        </defs>
+
+        <rect class="s-box-gold" x="10" y="52" width="104" height="56" rx="8"/>
+        <text class="s-title" x="62" y="77" text-anchor="middle">요청</text>
+        <text class="s-sub" x="62" y="94" text-anchor="middle">HTTP</text>
+
+        <path class="s-line" d="M114 80 L142 80" marker-end="url(#ah2)"/>
+
+        <rect class="s-box-accent" x="142" y="42" width="150" height="76" rx="8"/>
+        <text class="s-title" x="217" y="66" text-anchor="middle">JwtAuthGuard</text>
+        <text class="s-sub" x="217" y="84" text-anchor="middle">JWT 검증 · req.user</text>
+        <text class="s-sub" x="217" y="101" text-anchor="middle">@Public() 로 우회</text>
+
+        <path class="s-line" d="M292 80 L320 80" marker-end="url(#ah2)"/>
+
+        <rect class="s-box-accent" x="320" y="42" width="150" height="76" rx="8"/>
+        <text class="s-title" x="395" y="66" text-anchor="middle">PlanGuard</text>
+        <text class="s-sub" x="395" y="84" text-anchor="middle">요금제 등급 확인</text>
+        <text class="s-sub" x="395" y="101" text-anchor="middle">@MinPlan('pro')</text>
+
+        <path class="s-line" d="M470 80 L498 80" marker-end="url(#ah2)"/>
+
+        <rect class="s-box-accent" x="498" y="42" width="150" height="76" rx="8"/>
+        <text class="s-title" x="573" y="66" text-anchor="middle">RolesGuard</text>
+        <text class="s-sub" x="573" y="84" text-anchor="middle">테넌트 역할 확인</text>
+        <text class="s-sub" x="573" y="101" text-anchor="middle">@Roles / @PlatformRoles</text>
+
+        <path class="s-line" d="M648 80 L676 80" marker-end="url(#ah2)"/>
+
+        <rect class="s-box-accent" x="676" y="42" width="150" height="76" rx="8"/>
+        <text class="s-title" x="751" y="66" text-anchor="middle">ThrottlerGuard</text>
+        <text class="s-sub" x="751" y="84" text-anchor="middle">60초당 100회</text>
+        <text class="s-sub" x="751" y="101" text-anchor="middle">전역 기본값</text>
+
+        <path class="s-line" d="M751 118 L751 146 L430 146 L430 166" marker-end="url(#ah2)"/>
+        <rect class="s-box" x="290" y="166" width="280" height="34" rx="8"/>
+        <text class="s-title" x="430" y="188" text-anchor="middle">Controller → Service → Prisma</text>
+
+        <text class="s-label" x="430" y="24" text-anchor="middle">AppModule 의 APP_GUARD 등록 순서대로 실행된다</text>
+      </svg>
+      </div>
+      <figcaption>전역 가드 체인 (<code>apps/api/src/app.module.ts</code>)</figcaption>
+    </figure>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>데코레이터</th><th>대상 가드</th><th>효과</th></tr></thead>
+      <tbody>
+        <tr><td><code>@Public()</code></td><td>JwtAuthGuard</td><td>인증 없이 접근 허용 (로그인, 공개 브랜딩 등)</td></tr>
+        <tr><td><code>@MinPlan('pro')</code></td><td>PlanGuard</td><td>지정 등급 미만 테넌트는 차단</td></tr>
+        <tr><td><code>@Roles('admin')</code></td><td>RolesGuard</td><td>테넌트 내 역할 제한</td></tr>
+        <tr><td><code>@PlatformRoles('global_admin')</code></td><td>RolesGuard</td><td>SaaS 운영자 전용 경로</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      컨트롤러 진입 전 전역 <code>ValidationPipe</code>가 DTO를 검증한다
+      (<code>whitelist</code>, <code>forbidNonWhitelisted</code>, <code>transform</code>) —
+      DTO에 선언되지 않은 필드는 조용히 버려지는 게 아니라 <b>요청 자체가 거부</b>된다.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s4">
+    <h2 class="sec"><span class="n">04</span>백엔드 <span style="font-size:14px;font-weight:400;color:var(--text-muted)">apps/api</span></h2>
+
+    <h3>기술 구성</h3>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>영역</th><th>선택</th><th>비고</th></tr></thead>
+      <tbody>
+        <tr><td>프레임워크</td><td>NestJS 10 / TypeScript</td><td>전역 prefix <code>api</code></td></tr>
+        <tr><td>ORM</td><td>Prisma 5.22</td><td><code>binaryTargets</code>에 <code>debian-openssl-3.0.x</code> 포함</td></tr>
+        <tr><td>인증</td><td><code>@nestjs/jwt</code> + <code>@nestjs/passport</code></td><td>Google OAuth 전략, bcrypt 해시</td></tr>
+        <tr><td>보안 미들웨어</td><td><code>helmet()</code>, <code>cookie-parser</code>, <code>@nestjs/throttler</code></td><td>+ 기동 시 시크릿 가드</td></tr>
+        <tr><td>API 문서</td><td>Swagger</td><td><code>/api/docs</code></td></tr>
+        <tr><td>파일 저장소</td><td>MinIO (S3 호환)</td><td><code>STORAGE_TYPE=minio</code>로 전환</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>모듈 구성</h3>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>모듈</th><th>책임</th><th>상태</th></tr></thead>
+      <tbody>
+        <tr><td><code>auth</code></td><td>로그인·회원가입·Google OAuth·JWT 재발급</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>users</code></td><td>테넌트 내 사용자(팀원) 조회·초대</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>policies</code></td><td>규정·장·<b>절</b>·조문·부칙·첨부파일 CRUD, <b>제정·개정이유</b>, <b>시점 조회</b>, <b>PDF 내보내기</b></td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>versions</code></td><td>조문 버전 워크플로(draft→review→published→archived), diff</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>comments</code></td><td>조문 단위 코멘트</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>variables</code></td><td>템플릿 변수 및 사용 이력</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>search</code></td><td>통합검색 — <code>pg_bigm</code> 우선, ILIKE 폴백</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>templates</code></td><td>출력 템플릿(양식) CRUD·복제·기본값·리비전</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>notifications</code></td><td>인앱 알림, 알림 수신 팀(<code>notification-groups</code>), 개정 알림(<code>revision-notify</code>)</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>regulation-parse</code></td><td>PDF/텍스트 업로드 → 파싱 트리 미리보기 → 규정 커밋</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>admin</code></td><td>관리자 전용 벌크 임포트</td><td><span class="badge warn">API만</span></td></tr>
+        <tr><td><code>audit</code></td><td>감사 로그 조회</td><td><span class="badge warn">API만</span></td></tr>
+        <tr><td><code>billing</code></td><td>결제 체크아웃·웹훅</td><td><span class="badge warn">mock</span></td></tr>
+        <tr><td><code>platform-admin</code></td><td>SaaS 운영 콘솔 — 테넌트·플랜·역할 관리</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>platform-branding</code></td><td>공개 플랫폼 브랜딩 API</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>integrations</code></td><td>Enterprise API 연동 안내</td><td><span class="badge ok">운영</span></td></tr>
+        <tr><td><code>common</code></td><td>Prisma 서비스, 가드, 플랜 한도(<code>plan-limits.ts</code>), 시크릿 가드</td><td><span class="badge info">공용</span></td></tr>
+        <tr><td><code>export</code></td><td>&mdash;</td><td><span class="badge bad">빈 셸</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="note warn">
+      <b class="tag">부채</b>
+      <code>ExportModule</code>은 <code>@Module({})</code> 빈 껍데기인데 <code>AppModule</code>에 등록돼 있고,
+      DB에는 쓰이지 않는 <code>ExportJob</code> 테이블이 남아 있다. 실제 PDF 내보내기는
+      <code>policies</code> 모듈의 <code>policy-pdf.service.ts</code>가 담당한다.
+      &rarr; 작업관리대장 <b>T-16</b>에서 정리 대상.
+    </div>
+
+    <h3>기동 시 시크릿 검증</h3>
+    <p>
+      <code>main.ts</code>는 Nest 앱을 만들기 <b>전에</b> <code>assertProductionSecrets()</code>를 호출한다.
+      <code>NODE_ENV=production</code>인데 리포에 공개된 기본 시크릿
+      (<code>JWT_SECRET</code>, <code>JWT_REFRESH_SECRET</code>, <code>MINIO_SECRET_KEY</code>)이
+      그대로면 <b>경고가 아니라 기동 실패</b>다. JWT 키는 최소 32자 길이도 함께 본다.
+      로컬 기본값 편의와 운영 사고 방지를 동시에 얻기 위한 장치다.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s5">
+    <h2 class="sec"><span class="n">05</span>프론트엔드 <span style="font-size:14px;font-weight:400;color:var(--text-muted)">apps/web</span></h2>
+
+    <div class="cards">
+      <div class="card">
+        <h4>상태 관리</h4>
+        <ul>
+          <li><b>서버 상태</b> — TanStack Query</li>
+          <li><b>클라이언트 상태</b> — Zustand
+            (<code>authStore</code>, <code>brandStore</code>, <code>themeStore</code>, <code>toastStore</code>)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>스타일 · 국제화</h4>
+        <ul>
+          <li>Tailwind CSS</li>
+          <li>CSS 변수 테마 토큰 <code>--color-navy-*</code>, <code>--color-gold-*</code></li>
+          <li><code>i18n/messages.ts</code> — ko / en</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>문서 처리 보조</h4>
+        <ul>
+          <li><code>mammoth</code> — DOCX</li>
+          <li><code>pdfjs-dist</code> — PDF 미리보기</li>
+          <li><code>DOMPurify</code> — 템플릿 HTML 살균</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>라우팅 · 접근 제어</h3>
+    <p>
+      <code>App.tsx</code>의 <code>react-router-dom</code> 트리에서 <code>PrivateRoute</code>가 인증 가드 역할을 한다.
+    </p>
+    <ul>
+      <li><code>viewer</code> 역할 &mdash; 검색·규정 상세·소개만 접근 가능</li>
+      <li><code>/platform-admin</code>, <code>/admin</code> &mdash; <code>global_admin</code>만 접근 가능</li>
+      <li><code>policies/import</code>는 <code>policies/:id</code>보다 <b>먼저</b> 선언 — 그렇지 않으면 "import"가 규정 ID로 잡힌다</li>
+    </ul>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>페이지</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td><code>LoginPage</code> / <code>RegisterPage</code> / <code>OAuthCallbackPage</code></td><td>인증 진입점</td></tr>
+        <tr><td><code>DashboardPage</code></td><td>테넌트 요약</td></tr>
+        <tr><td><code>PoliciesPage</code></td><td>규정 목록·생성·구조 편집</td></tr>
+        <tr><td><code>PolicyImportPage</code></td><td>문서 업로드 → 파싱 트리 확인 → 규정 커밋</td></tr>
+        <tr><td><code>PolicyDetailPage</code></td><td>규정 전문 열람·조문 편집·버전·시점 조회·인쇄/PDF</td></tr>
+        <tr><td><code>SearchPage</code></td><td>통합 검색</td></tr>
+        <tr><td><code>VariablesPage</code></td><td>템플릿 변수 관리</td></tr>
+        <tr><td><code>SettingsPage</code></td><td>테넌트 설정·브랜딩·출력 템플릿</td></tr>
+        <tr><td><code>PlatformAdminPage</code></td><td>SaaS 운영 콘솔</td></tr>
+        <tr><td><code>IntegrationsPage</code> / <code>AboutPage</code></td><td>연동 안내 / 서비스 소개</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s6">
+    <h2 class="sec"><span class="n">06</span>도메인 모델</h2>
+    <p>
+      규정 문서 구조가 이 시스템의 핵심이다. 법령은 <b>편 &gt; 장 &gt; 절 &gt; 조 &gt; 항 &gt; 목</b> 체계를 따르지만,
+      사내 규정은 이 체계를 <b>반드시 다 쓰지는 않는다</b>. 그래서 상위 계층을 모두 선택(nullable)으로 뒀다.
+    </p>
+
+    <figure>
+      <div class="svg-scroll">
+      <svg viewBox="0 0 800 330" width="800" role="img" aria-label="규정 문서 계층 구조">
+        <defs>
+          <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-strong)"/>
+          </marker>
+        </defs>
+
+        <rect class="s-box-accent" x="40" y="16" width="200" height="46" rx="8"/>
+        <text class="s-title" x="140" y="38" text-anchor="middle">Policy — 규정</text>
+        <text class="s-sub" x="140" y="54" text-anchor="middle">tenantId 로 격리</text>
+
+        <path class="s-line" d="M140 62 L140 88" marker-end="url(#ah3)"/>
+
+        <rect class="s-box" x="40" y="88" width="200" height="46" rx="8"/>
+        <text class="s-title" x="140" y="110" text-anchor="middle">Chapter — 장(章)</text>
+        <text class="s-sub" x="140" y="126" text-anchor="middle">suppressHeader 로 숨김 가능</text>
+
+        <path class="s-line" d="M140 134 L140 160" marker-end="url(#ah3)"/>
+
+        <rect class="s-box s-dash" x="40" y="160" width="200" height="46" rx="8" style="stroke-dasharray:5 4"/>
+        <text class="s-title" x="140" y="182" text-anchor="middle">Section — 절(節)</text>
+        <text class="s-sub" x="140" y="198" text-anchor="middle">선택 계층</text>
+
+        <path class="s-line" d="M140 206 L140 232" marker-end="url(#ah3)"/>
+        <path class="s-line s-dash" d="M240 111 C 300 111, 300 250, 262 254" marker-end="url(#ah3)"/>
+        <text class="s-label" x="306" y="176">절을 건너뛰고</text>
+        <text class="s-label" x="306" y="192">조를 직접 붙일 수 있다</text>
+        <text class="s-label" x="306" y="208">(sectionId = null)</text>
+
+        <rect class="s-box-accent" x="40" y="232" width="222" height="64" rx="8"/>
+        <text class="s-title" x="151" y="256" text-anchor="middle">Article — 조(條)</text>
+        <text class="s-sub" x="151" y="273" text-anchor="middle">clauseNumber = 항 · itemNumber = 목</text>
+        <text class="s-sub" x="151" y="289" text-anchor="middle">단일 테이블, 둘 다 nullable</text>
+
+        <!-- right side: versioning -->
+        <rect class="s-box-gold" x="520" y="16" width="240" height="60" rx="8"/>
+        <text class="s-title" x="640" y="40" text-anchor="middle">PolicyRevisionReason</text>
+        <text class="s-sub" x="640" y="57" text-anchor="middle">제정·개정 이유 (문서 단위)</text>
+        <text class="s-sub" x="640" y="70" text-anchor="middle">제정 / 일부개정 / 전부개정 / 폐지</text>
+
+        <rect class="s-box-gold" x="520" y="232" width="240" height="64" rx="8"/>
+        <text class="s-title" x="640" y="256" text-anchor="middle">ArticleVersion</text>
+        <text class="s-sub" x="640" y="273" text-anchor="middle">조문 단위 버전 · changeNote</text>
+        <text class="s-sub" x="640" y="289" text-anchor="middle">draft → review → published → archived</text>
+
+        <path class="s-line s-dash" d="M240 39 L520 42" marker-end="url(#ah3)"/>
+        <path class="s-line s-dash" d="M262 264 L520 264" marker-end="url(#ah3)"/>
+
+        <text class="s-label" x="400" y="318" text-anchor="middle">점선 = 선택 계층 또는 부가 관계</text>
+      </svg>
+      </div>
+      <figcaption>규정 문서 계층과 버전 기록 (<code>apps/api/prisma/schema.prisma</code>)</figcaption>
+    </figure>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>계층</th><th>표현 방식</th><th>필수 여부</th></tr></thead>
+      <tbody>
+        <tr><td>장(章)</td><td><code>Chapter</code> 테이블</td><td>필요. 단 <code>suppressHeader</code>로 출력에서 숨겨 "장 없는 규정"을 만들 수 있다</td></tr>
+        <tr><td>절(節)</td><td><code>Section</code> 테이블</td><td><span class="badge info">선택</span> <code>Article.sectionId</code>가 nullable</td></tr>
+        <tr><td>조(條)</td><td><code>Article.number</code></td><td>필수</td></tr>
+        <tr><td>항</td><td><code>Article.clauseNumber</code></td><td><span class="badge info">선택</span> 같은 테이블의 nullable 컬럼</td></tr>
+        <tr><td>목</td><td><code>Article.itemNumber</code></td><td><span class="badge info">선택</span> 같은 테이블의 nullable 컬럼</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      조·항·목을 <b>별도 테이블로 쪼개지 않고 한 테이블에 담은</b> 이유는, 실무에서 조와 항이 서로 승격·강등되는
+      편집이 잦기 때문이다. 계층을 테이블로 고정하면 그때마다 행을 옮겨야 한다.
+      배경은 <a href="../10_ADR_의사결정기록/ADR.md">ADR-0011</a> 참고.
+    </p>
+
+    <h3>시점 조회 (as-of)</h3>
+    <p>
+      "2024년 3월 시점의 이 규정"을 재구성하는 기능이다.
+      <code>GET /api/policies/:id/effective-dates</code>가 해당 규정에 존재하는 시행일 목록을 주고,
+      <code>GET /api/policies/:id/as-of?date=…</code>가 그 시점에 유효했던 조문 집합을 조립한다.
+      국가법령정보센터의 시점 조회와 같은 개념이다.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s7">
+    <h2 class="sec"><span class="n">07</span>데이터베이스 · 마이그레이션</h2>
+
+    <ul>
+      <li>PostgreSQL 15, 확장 <code>pg_bigm</code> (한국어 2-gram 검색 성능)</li>
+      <li>Prisma 모델 <b>24개</b> — 상세는 <a href="../08_ERD_테이블명세서/ERD_테이블명세서.md">08_ERD 테이블명세서</a></li>
+    </ul>
+
+    <div class="note ok">
+      <b class="tag">2026-08-02 baseline 스쿼시</b>
+      마이그레이션 13건을 <code>00000000000000_init</code>(전체 스키마) +
+      <code>00000000000001_enable_pgbigm</code> <b>2건으로 정리</b>했다.
+      빈 DB에서 <code>prisma migrate deploy</code>만으로 전체 스키마가 재현되며 드리프트 0으로 확인했다.
+      <code>db push --accept-data-loss</code> 폴백은 <b>제거</b>했다. (<a href="../10_ADR_의사결정기록/ADR.md">ADR-0012</a>)
+    </div>
+
+    <p>이 변경으로 얻은 것:</p>
+    <ul>
+      <li><code>prisma migrate dev</code>가 정상 동작한다(섀도 DB 재생 가능) — 더 이상 SQL을 손으로 쓰지 않는다</li>
+      <li>baseline 이전에 만들어진 DB는 기동 시 <b>1회 자동 처리</b>된다: <code>migrate deploy</code> 실패 → 기존 스키마 감지 → 옛 이력 행 정리 → baseline을 applied로 표시 → 재시도</li>
+      <li>마이그레이션이 끝내 실패하면 컨테이너가 <b>종료</b>된다. 예전처럼 <code>db push</code>로 넘어가 데이터를 덮어쓰지 않는다</li>
+    </ul>
+
+    <div class="note warn">
+      <b class="tag">한계</b>
+      Prisma 마이그레이션에 <b>down 스크립트가 없다</b>. 스키마 롤백은 자동화 불가이므로
+      배포 전 <code>pg_dump</code> 백업이 사실상 유일한 안전장치다.
+      절차는 <a href="../16_Runbook_배포롤백/Runbook_배포롤백.md">16_Runbook</a> 7절 참고.
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s8">
+    <h2 class="sec"><span class="n">08</span>외부 프로세스 연동 (Node ↔ Python)</h2>
+    <p>
+      PDF 입출력은 Node 생태계보다 파이썬 쪽이 압도적으로 낫다. 그래서 <code>api</code> 컨테이너 안에
+      python3와 <code>PyMuPDF</code>·<code>pdfplumber</code>를 함께 설치하고, Node가 자식 프로세스로 호출한다.
+      의존성은 <code>apps/api/scripts/requirements.txt</code> 단일 소스로 관리한다.
+    </p>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>용도</th><th>호출부</th><th>스크립트</th><th>호출 방식</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>규정 <b>PDF 내보내기</b></td>
+          <td><code>policies/policy-pdf.service.ts</code></td>
+          <td><code>scripts/pdf_render.py</code></td>
+          <td><span class="badge ok">spawn (비동기)</span></td>
+        </tr>
+        <tr>
+          <td>업로드 PDF <b>텍스트 추출</b></td>
+          <td><code>regulation-parse/regulation-parse.service.ts</code></td>
+          <td><code>scripts/</code> 추출기</td>
+          <td><span class="badge bad">spawnSync (동기)</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="note bad">
+      <b class="tag">주의</b>
+      <code>spawnSync</code>는 자식 프로세스가 끝날 때까지 <b>Node 이벤트 루프를 멈춘다</b> —
+      한 테넌트의 대용량 PDF 파싱이 다른 모든 테넌트의 요청을 대기시킨다.
+      PDF 내보내기 쪽은 <code>spawn</code>으로 처리했으나 파싱 쪽은 아직 동기 호출이 남아 있다.
+    </div>
+
+    <h3>PDF 렌더링 설계</h3>
+    <ul>
+      <li>입력: stdin으로 JSON(<code>html</code>, <code>title</code>, <code>metaLine</code>, <code>pageNumbers</code>) → 출력: stdout으로 PDF 바이트</li>
+      <li>한글 폰트는 <b>PyMuPDF wheel에 동봉된 CJK 폰트</b>(Droid Sans Fallback)를 그대로 쓴다 — 컨테이너에 폰트를 따로 설치할 필요가 없다</li>
+      <li>텍스트가 이미지가 아니라 실제 문자로 남아 <b>검색·복사가 된다</b></li>
+      <li>저장 직전 <code>subset_fonts()</code>로 실제 사용 글자만 임베드 (약 3.5MB → 수십 KB)</li>
+    </ul>
+
+    <div class="note">
+      <b class="tag">베이스 이미지</b>
+      컨테이너 베이스가 Alpine이 아니라 <code>node:20-slim</code>(Debian)인 이유가 여기 있다.
+      PyMuPDF는 musllinux(Alpine) wheel을 제공하지 않아 소스 빌드로 넘어가다 실패한다.
+      Dockerfile은 <code>--only-binary=:all:</code>로 소스 빌드를 아예 차단해, wheel이 없으면
+      런타임이 아니라 <b>빌드 시점에</b> 실패하게 만든다. (<a href="../10_ADR_의사결정기록/ADR.md">ADR-0013</a>)
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s9">
+    <h2 class="sec"><span class="n">09</span>인프라 · 배포</h2>
+
+    <h3>이미지 빌드</h3>
+    <ul>
+      <li><code>api</code> 빌드 컨텍스트는 <b>리포 루트</b>다. 워크스페이스 락파일(<code>package-lock.json</code>)이
+          루트에만 있어서, 컨텍스트가 <code>apps/api</code>이면 <code>npm install</code>이 매번 새로 해석된다</li>
+      <li>설치는 <code>npm ci --workspace=apps/api</code> — 락파일 기준 재현 설치</li>
+      <li>빌더·런너 모두 <code>node:20-slim</code> — 같은 베이스여야 builder가 만든 Prisma 엔진을 런너가 그대로 쓴다</li>
+    </ul>
+
+    <h3>기동 시퀀스</h3>
+    <ol class="body">
+      <li><code>assertProductionSecrets()</code> — 기본 시크릿이면 즉시 종료</li>
+      <li><code>prisma migrate deploy</code></li>
+      <li>(2가 실패하고 기존 스키마가 있으면) baseline 자동 처리 후 재시도</li>
+      <li>그래도 실패하면 <b>FATAL 종료</b> — 데이터를 덮어쓰지 않는다</li>
+      <li>데모 데이터 시드</li>
+      <li><code>node dist/main</code></li>
+    </ol>
+
+    <h3>시크릿 주입</h3>
+    <p>
+      <code>docker-compose.yml</code>은 모든 시크릿을 <code>${VAR:-기본값}</code> 형태로 바꿔
+      <code>.env</code> 주입을 우선하도록 했다. 로컬은 기본값으로 그냥 뜨고, 운영은 <code>.env</code>로 덮는다.
+      운영값 생성은 <code>npm run secrets:init</code>.
+    </p>
+
+    <p>상세 배포·롤백 절차는 <a href="../16_Runbook_배포롤백/Runbook_배포롤백.md">16_Runbook 배포·롤백</a> 참고.</p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s10">
+    <h2 class="sec"><span class="n">10</span>인증 · 권한</h2>
+
+    <div class="cards">
+      <div class="card">
+        <h4>테넌트 역할 (Role)</h4>
+        <ul>
+          <li><code>admin</code> — 테넌트 전체 관리</li>
+          <li><code>editor</code> — 규정 작성·편집</li>
+          <li><code>viewer</code> — 열람·검색만</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>플랫폼 역할 (PlatformRole)</h4>
+        <ul>
+          <li><code>none</code> — 일반 사용자</li>
+          <li><code>global_admin</code> — SaaS 운영자,<br>테넌트 간 통합 콘솔 접근</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>인증 방식</h4>
+        <ul>
+          <li>이메일 / 비밀번호 (bcrypt)</li>
+          <li>Google OAuth</li>
+          <li>JWT access + refresh (자동 갱신)</li>
+        </ul>
+      </div>
+    </div>
+
+    <p>
+      두 축은 <b>독립</b>이다. 테넌트 역할은 "이 회사 안에서 무엇을 할 수 있는가", 플랫폼 역할은
+      "서비스 운영자인가"를 뜻한다. <code>RolesGuard</code> 하나가 두 데코레이터를 모두 처리한다.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s11">
+    <h2 class="sec"><span class="n">11</span>멀티테넌시 · 플랜</h2>
+
+    <p>
+      모든 핵심 테이블에 <code>tenantId</code> FK를 두어 격리한다.
+      <b>DB 레벨 RLS는 적용하지 않았고</b>, 애플리케이션 레벨 필터링에 의존한다.
+    </p>
+
+    <div class="note bad">
+      <b class="tag">리스크</b>
+      쿼리 한 곳에서 <code>tenantId</code> 조건을 빠뜨리면 <b>타 회사 규정이 노출</b>된다.
+      코드 리뷰로만 막고 있는 상태다 — 전수 감사가 작업관리대장 <b>T-41</b>로 잡혀 있다.
+      상세는 <a href="../15_보안검토서/보안_검토서.md">15_보안 검토서</a> 참고.
+    </div>
+
+    <h3>플랜별 한도</h3>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>플랜</th><th>규정 개수 상한</th><th>사용자 수 상한</th></tr></thead>
+      <tbody>
+        <tr><td><code>starter</code></td><td>5</td><td>10</td></tr>
+        <tr><td><code>pro</code></td><td>10,000</td><td>50</td></tr>
+        <tr><td><code>enterprise</code></td><td>1,000,000</td><td>1,000,000</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:14px;color:var(--text-muted)">
+      출처: <code>apps/api/src/common/plan-limits.ts</code>.
+      <code>enterprise</code>의 1,000,000은 실질적 무제한을 뜻하는 관용값이다.
+    </p>
+
+    <h3>결제</h3>
+    <p>
+      <code>BillingCustomer</code> / <code>BillingSubscription</code> / <code>BillingPayment</code> 모델이 있고
+      체크아웃·웹훅 경로도 존재하지만, 현재는 <b>mock 프로바이더만 동작</b>한다. 실 PG 미연동.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s12">
+    <h2 class="sec"><span class="n">12</span>품질 · CI</h2>
+
+    <p>
+      GitHub Actions가 <code>main</code>·<code>develop</code>에 대한 push / PR마다 두 개의 job을 돌린다.
+      같은 브랜치에 연속 push하면 앞선 실행은 취소된다.
+    </p>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Job</th><th>단계</th><th>목적</th></tr></thead>
+      <tbody>
+        <tr>
+          <td rowspan="2"><code>verify</code></td>
+          <td><code>npm ci</code> → <code>prisma generate</code></td>
+          <td>Dockerfile과 동일한 재현 설치 방식</td>
+        </tr>
+        <tr>
+          <td><code>typecheck</code> → <code>test</code> → <code>build</code></td>
+          <td>API·Web 양쪽 타입·테스트·빌드 회귀 차단</td>
+        </tr>
+        <tr>
+          <td><code>pdf-renderer</code></td>
+          <td>한글 PDF를 실제로 렌더링하고 텍스트를 되읽음</td>
+          <td>파이썬 렌더러는 빌드는 통과하고 <b>런타임에만</b> 터지므로 별도 검증</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>테스트 범위</h3>
+    <p>
+      Vitest, <code>tests/**/*.test.ts</code>, node 환경. 현재는 <b>DB·브라우저 없이 도는 순수 로직</b>만 대상이다.
+    </p>
+    <ul>
+      <li><code>fullViewGroups.test.ts</code> — 규정 전문 조·항·목 그룹 계산</li>
+      <li><code>legalArticleLabel.test.ts</code> — 법령식 조문 라벨 표기</li>
+      <li><code>regulationTreeBuilder.test.ts</code> — 업로드 문서 → 파싱 트리 구성</li>
+      <li><code>dateOnly.test.ts</code> — 날짜 전용 값 처리</li>
+      <li><code>secretsGuard.test.ts</code> — 운영 시크릿 검증 규칙</li>
+    </ul>
+    <p style="font-size:14px;color:var(--text-muted)">2026-08-13 기준 5개 파일 · 34개 테스트 통과.</p>
+
+    <div class="note warn">
+      <b class="tag">잔여</b>
+      DB가 필요한 플로우 테스트(로그인, 규정 CRUD, 버전 승인, <b>테넌트 격리</b>)는 컨테이너를 띄워야 해서
+      아직 없다 — 작업관리대장 <b>T-30</b> 잔여분.
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s13">
+    <h2 class="sec"><span class="n">13</span>구조적 부채</h2>
+    <p>기능 부족이 아니라 <b>아키텍처 차원에서 남아 있는</b> 항목만 정리한다. 전체 목록은 <a href="../13_기술부채대장/기술부채_대장.md">13_기술부채 대장</a>.</p>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>항목</th><th>내용</th><th>영향</th><th>추적</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>테넌트 격리가 앱 레벨에만 존재</td>
+          <td>DB RLS 미적용, 쿼리마다 <code>tenantId</code> 조건에 의존</td>
+          <td><span class="badge bad">높음</span></td>
+          <td>T-41</td>
+        </tr>
+        <tr>
+          <td>파싱이 이벤트 루프를 블로킹</td>
+          <td><code>regulation-parse</code>가 <code>spawnSync</code> 사용</td>
+          <td><span class="badge warn">중간</span></td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td><code>ExportModule</code> 빈 셸 + <code>ExportJob</code> 미사용 테이블</td>
+          <td>등록만 돼 있고 구현 없음. 실제 내보내기는 <code>policies</code>에 있음</td>
+          <td><span class="badge warn">중간</span></td>
+          <td>T-16</td>
+        </tr>
+        <tr>
+          <td>DB 연동 테스트 부재</td>
+          <td>순수 로직만 검증, 격리·권한·워크플로는 수동 확인</td>
+          <td><span class="badge warn">중간</span></td>
+          <td>T-30</td>
+        </tr>
+        <tr>
+          <td>마이그레이션 down 전략 없음</td>
+          <td>스키마 롤백 자동화 불가, <code>pg_dump</code> 백업에 의존</td>
+          <td><span class="badge warn">중간</span></td>
+          <td>WBS WP2</td>
+        </tr>
+        <tr>
+          <td>Redis 미사용</td>
+          <td>컨테이너는 뜨지만 애플리케이션 사용처가 없음</td>
+          <td><span class="badge info">낮음</span></td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>무중단 배포·이미지 태그 롤백 없음</td>
+          <td>재빌드 후 재기동 방식, 짧은 다운타임 발생</td>
+          <td><span class="badge info">낮음</span></td>
+          <td>WBS WP2</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <footer class="doc">
+    <p>
+      <b>근거</b> — 실제 코드(<code>apps/api</code>, <code>apps/web</code>, <code>docker-compose.yml</code>,
+      <code>apps/api/prisma/schema.prisma</code>, <code>.github/workflows/ci.yml</code>) 및
+      <code>docs/policy_manager_개발정의서.docx</code>, <code>docs/VEDA_FeatureList.docx</code>.
+    </p>
+    <p>
+      <b>관련 문서</b> —
+      <a href="../03_SRS_요구사항명세/SRS_요구사항명세.md">03_SRS</a> ·
+      <a href="../08_ERD_테이블명세서/ERD_테이블명세서.md">08_ERD</a> ·
+      <a href="../09_API명세서/API명세서.md">09_API 명세서</a> ·
+      <a href="../10_ADR_의사결정기록/ADR.md">10_ADR</a> ·
+      <a href="../13_기술부채대장/기술부채_대장.md">13_기술부채</a> ·
+      <a href="../15_보안검토서/보안_검토서.md">15_보안 검토서</a> ·
+      <a href="../16_Runbook_배포롤백/Runbook_배포롤백.md">16_Runbook</a> ·
+      <a href="../17_작업관리대장/작업관리대장.md">17_작업관리대장</a>
+    </p>
+    <p>구버전(Markdown)은 <code>구버전/</code> 폴더 및 git 이력에서 확인할 수 있다.</p>
+  </footer>
+
+</div>
+</body>
+</html>

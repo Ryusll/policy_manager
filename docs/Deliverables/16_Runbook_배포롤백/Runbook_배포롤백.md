@@ -89,9 +89,49 @@ api 컨테이너 헬스체크는 `/api/health`를 5초 간격, start_period 60�
    - 문제 발생 시 복원: `docker compose exec -T postgres psql -U postgres policy_manager < backup_YYYYMMDD.sql`
 3. **볼륨 데이터**: `postgres_data`, `minio_data`, `api_uploads` 볼륨은 `docker compose down`으로는 삭제되지 않음. `down -v`는 볼륨까지 삭제하므로 **운영에서 절대 사용 금지**
 
+## 7-1. 시크릿 교체 (운영 배포 전 필수)
+
+`docker-compose.yml`의 기본 시크릿은 **리포에 그대로 적혀 있어 공개된 값과 같다.** 운영에 그대로 올라가면 JWT 위조·DB 직접 접근이 가능하다. 그래서 `NODE_ENV=production`에서 기본값이 감지되면 **API가 기동을 거부한다**([`secrets-guard.ts`](../../../apps/api/src/common/config/secrets-guard.ts)).
+
+### 교체 대상
+
+| 변수 | 용도 | 조건 |
+|---|---|---|
+| `JWT_SECRET` | 액세스 토큰 서명 | 32자 이상, `JWT_REFRESH_SECRET`와 **다른 값** |
+| `JWT_REFRESH_SECRET` | 갱신 토큰 서명 | 32자 이상 |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | DB 계정 (compose가 `DATABASE_URL`을 조립) | `postgres:postgres` 금지 |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | 오브젝트 스토리지 | minio 서비스와 api가 같은 값을 공유 |
+
+### 절차
+
+```bash
+# 1) 값 생성 (각각 따로 실행 — 같은 값 재사용 금지)
+openssl rand -base64 48   # JWT_SECRET
+openssl rand -base64 48   # JWT_REFRESH_SECRET
+openssl rand -base64 24   # POSTGRES_PASSWORD
+openssl rand -base64 24   # MINIO_SECRET_KEY
+
+# 2) .env에 기입 (.env는 .gitignore 대상 — 커밋 금지)
+cp .env.example .env && ${EDITOR:-vi} .env
+
+# 3) 기동 전 치환 결과 확인 (실제 값이 들어갔는지, ${...}가 남지 않았는지)
+docker compose config | grep -E "JWT_SECRET|POSTGRES_PASSWORD|MINIO_SECRET_KEY"
+
+# 4) 기동 — 기본값이 남아 있으면 여기서 API가 부팅에 실패한다
+docker compose up -d --build
+docker compose logs api | head -30
+```
+
+### 주의
+
+- **DB·MinIO 시크릿은 첫 기동 때 볼륨에 굳는다.** 이미 뜬 적 있는 환경에서 `POSTGRES_PASSWORD`만 바꾸면 기존 볼륨의 계정과 어긋나 접속이 실패한다. 운영 중 교체는 `ALTER USER ... PASSWORD`로 DB 안에서 바꾸고 `.env`를 맞추는 순서로 한다(볼륨 삭제 금지).
+- **JWT 시크릿을 바꾸면 기존 토큰이 전부 무효**가 된다. 전 사용자 재로그인이 필요하므로 공지 후 교체한다.
+- 장애 중 기동만 급히 되살려야 하면 `ALLOW_DEFAULT_SECRETS=1`로 가드를 우회할 수 있다. **우회한 기동은 그 자체로 사고 대응 대상**이며, 즉시 정상 교체 후 재기동한다.
+
 ## 8. 운영 체크리스트
 
-- [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가
+- [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가 (→ 7-1. `docker compose config`로 확인)
+- [ ] `ALLOW_DEFAULT_SECRETS`가 설정돼 있지 않은가
 - [ ] `PUBLIC_URL`과 Google OAuth 콜백 URL이 일치하는가
 - [ ] 배포 전 DB 백업(`pg_dump`)을 수행했는가
 - [ ] 마이그레이션이 `migrate deploy`로 정상 적용되었는가 (기동 로그에서 `migrate deploy completed.` 확인)
