@@ -6,6 +6,7 @@ import RegisterPage from './pages/RegisterPage';
 import OAuthCallbackPage from './pages/OAuthCallbackPage';
 import DashboardPage from './pages/DashboardPage';
 import PoliciesPage from './pages/PoliciesPage';
+import PolicyImportPage from './pages/PolicyImportPage';
 import PolicyDetailPage from './pages/PolicyDetailPage';
 import SearchPage from './pages/SearchPage';
 import VariablesPage from './pages/VariablesPage';
@@ -55,6 +56,8 @@ export default function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="policies" element={<PoliciesPage />} />
+          {/* :id보다 먼저 둬야 "import"가 규정 ID로 잡히지 않는다 */}
+          <Route path="policies/import" element={<PolicyImportPage />} />
           <Route path="policies/:id" element={<PolicyDetailPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="variables" element={<VariablesPage />} />

@@ -22,6 +22,13 @@ export type FullViewDepth = 0 | 1 | 2;
 
 export type FullViewRenderRow = { article: any; depth: FullViewDepth };
 
+/**
+ * 장 본문을 이루는 블록. 절 미소속 조 묶음과 절 블록이 **조 번호 순서로** 번갈아 나온다.
+ */
+export type FullViewChapterBlock =
+  | { kind: 'groups'; groups: FullViewJoGroup[] }
+  | { kind: 'section'; id: string; number: number; title: string; groups: FullViewJoGroup[] };
+
 function toJoGroups(articles: any[]): FullViewJoGroup[] {
   return groupArticlesByJo(articles || []).map((g) => ({
     articleNumber: g.jo,
@@ -36,24 +43,56 @@ function toJoGroups(articles: any[]): FullViewJoGroup[] {
  * 장 목록(policy.chapters)을 전문 보기 그룹으로 변환.
  *
  * 절(節)은 선택 계층이라 한 장 안에 "절에 속하지 않는 조"와 "절에 속한 조"가 공존한다.
- * 절 미소속 조를 먼저 두고, 이어서 절 단위 블록(`sectionBlocks`)을 번호순으로 싣는다.
+ * **조 번호는 절 소속 여부와 무관하게 문서 전체에서 이어지므로**, 절 미소속 조를 전부 앞에
+ * 몰아두면 제4조가 제1절의 제3조보다 먼저 나오는 역전이 생긴다. 그래서 조 번호 순으로
+ * 훑으면서 소속 절이 바뀌는 지점에 절 블록을 연다.
+ *
+ * - `blocks`: 렌더 순서 그대로의 블록 목록 (화면·인쇄·PDF가 이걸 쓴다)
+ * - `allGroups`: 절 소속 여부와 무관한 전체 조 그룹(조 번호 순) — 텍스트 내보내기·검색 집계용
  */
 export function buildFullViewGroups(chapters: any[] | undefined | null): any[] {
   return (chapters || []).map((chapter: any) => {
     const articles: any[] = chapter.articles || [];
-    const sections: any[] = [...(chapter.sections || [])].sort(
-      (a, b) => (Number(a?.number) || 0) - (Number(b?.number) || 0),
-    );
+    const sectionById = new Map<string, any>();
+    for (const section of chapter.sections || []) {
+      if (section?.id) sectionById.set(String(section.id), section);
+    }
 
-    const groups = toJoGroups(articles.filter((a) => !a?.sectionId));
-    const sectionBlocks = sections.map((section: any) => ({
-      id: section.id,
-      number: section.number,
-      title: section.title,
-      groups: toJoGroups(articles.filter((a) => a?.sectionId === section.id)),
-    }));
+    // 조 그룹 단위로 소속 절을 정한다(같은 조의 항·목은 조와 같은 절에 있다고 본다).
+    const allGroups = toJoGroups(articles);
+    const sectionIdOfGroup = new Map<number, string | null>();
+    for (const group of allGroups) {
+      const rows = joGroupRenderRows(group);
+      const owner = rows.find((r) => r.article?.sectionId != null)?.article?.sectionId ?? null;
+      sectionIdOfGroup.set(group.articleNumber, owner ? String(owner) : null);
+    }
 
-    return { ...chapter, groups, sectionBlocks };
+    const blocks: FullViewChapterBlock[] = [];
+    for (const group of allGroups) {
+      const sectionId = sectionIdOfGroup.get(group.articleNumber) ?? null;
+      const last = blocks[blocks.length - 1];
+
+      if (sectionId == null) {
+        if (last?.kind === 'groups') last.groups.push(group);
+        else blocks.push({ kind: 'groups', groups: [group] });
+        continue;
+      }
+
+      if (last?.kind === 'section' && last.id === sectionId) {
+        last.groups.push(group);
+        continue;
+      }
+      const section = sectionById.get(sectionId);
+      blocks.push({
+        kind: 'section',
+        id: sectionId,
+        number: Number(section?.number) || 0,
+        title: String(section?.title ?? ''),
+        groups: [group],
+      });
+    }
+
+    return { ...chapter, blocks, allGroups };
   });
 }
 

@@ -153,27 +153,29 @@ export function buildEnterprisePolicyBodyHtml(fullViewGroups: any[], highlightQu
       out.push('</header>');
     }
     out.push('<div class="tmpl-chapter-body">');
-    const groups = Array.isArray(chapter?.groups) ? chapter.groups : [];
-    for (const group of groups) {
-      appendJoGroupHtml(out, group, highlightQuery);
-    }
-    // 절(선택 계층) 블록 — 절 미소속 조문 뒤에 번호순으로 이어 붙인다
-    const sectionBlocks = Array.isArray(chapter?.sectionBlocks) ? chapter.sectionBlocks : [];
-    for (const section of sectionBlocks) {
-      const sn = Number(section?.number) || 0;
-      out.push(`<section class="tmpl-section tmpl-section-${sn}" data-section="${sn}">`);
-      out.push('<header class="tmpl-section-head">');
-      const secTitle = wrapSearchHighlightsInEscapedHtml(
-        escapeHtmlText(String(section?.title ?? '')),
-        highlightQuery ?? '',
-      );
-      out.push(`<h3 class="tmpl-section-title">제${sn}절 ${secTitle}</h3>`);
-      out.push('</header>');
-      out.push('<div class="tmpl-section-body">');
-      for (const group of section?.groups || []) {
+    // 블록은 조 번호 순서로 이미 정렬돼 있다(절 헤더는 그 절의 첫 조 앞에 열린다)
+    const blocks = Array.isArray(chapter?.blocks) ? chapter.blocks : [];
+    for (const block of blocks) {
+      if (block?.kind === 'section') {
+        const sn = Number(block?.number) || 0;
+        out.push(`<section class="tmpl-section tmpl-section-${sn}" data-section="${sn}">`);
+        out.push('<header class="tmpl-section-head">');
+        const secTitle = wrapSearchHighlightsInEscapedHtml(
+          escapeHtmlText(String(block?.title ?? '')),
+          highlightQuery ?? '',
+        );
+        out.push(`<h3 class="tmpl-section-title">제${sn}절 ${secTitle}</h3>`);
+        out.push('</header>');
+        out.push('<div class="tmpl-section-body">');
+        for (const group of block?.groups || []) {
+          appendJoGroupHtml(out, group, highlightQuery);
+        }
+        out.push('</div></section>');
+        continue;
+      }
+      for (const group of block?.groups || []) {
         appendJoGroupHtml(out, group, highlightQuery);
       }
-      out.push('</div></section>');
     }
     out.push('</div></section>');
   }

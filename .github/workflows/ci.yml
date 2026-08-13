@@ -1,0 +1,92 @@
+name: CI
+
+# T-31. push/PR마다 타입체크·테스트·빌드를 돌려 회귀를 막는다.
+# DB가 필요한 플로우 테스트는 아직 없다(T-30 잔여) — 지금은 순수 로직 테스트만 돈다.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# 같은 브랜치에 연속 push하면 앞선 실행을 취소한다
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # 워크스페이스 락파일 기준 재현 설치 (Dockerfile과 같은 방식)
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      # 타입체크·빌드가 Prisma Client 타입을 필요로 한다
+      - name: Generate Prisma client
+        run: npx prisma generate --schema apps/api/prisma/schema.prisma
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # PDF 내보내기(T-76)는 파이썬 렌더러에 의존한다. 파이썬 쪽이 깨지면
+  # 빌드는 통과하는데 런타임에만 터지므로 여기서 따로 확인한다.
+  pdf-renderer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PDF deps
+        # 따옴표 필수: `:all: -r`의 콜론+공백을 YAML이 중첩 매핑으로 읽는다
+        run: 'pip install --only-binary=:all: -r apps/api/scripts/requirements.txt'
+
+      - name: Render a Korean PDF and read the text back
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          import pymupdf as fitz
+
+          payload = json.dumps({
+              "html": '<div class="tmpl-article-block">'
+                      '<div class="tmpl-article-label">제1조</div>'
+                      '<article class="tmpl-article tmpl-row-jo">'
+                      '<div class="tmpl-article-head"><span class="tmpl-article-name">목적</span></div>'
+                      '<div class="tmpl-article-body">이 규정은 정보자산을 보호함을 목적으로 한다.</div>'
+                      '</article></div>',
+              "title": "정보보안 관리규정",
+              "metaLine": "코드: SEC-001",
+              "pageNumbers": True,
+          })
+          out = subprocess.run(
+              [sys.executable, "apps/api/scripts/pdf_render.py"],
+              input=payload.encode("utf-8"), capture_output=True,
+          )
+          assert out.returncode == 0, out.stderr.decode("utf-8")
+          assert out.stdout[:4] == b"%PDF", "PDF 매직이 아님"
+
+          text = fitz.open("pdf", out.stdout)[0].get_text()
+          for needed in ("정보보안 관리규정", "제1조", "목적", "이 규정은 정보자산을 보호함을 목적으로 한다."):
+              assert needed in text, f"PDF에서 {needed!r}를 찾지 못했습니다:\n{text}"
+          print(f"OK — {len(out.stdout)} bytes, 한글 텍스트 정상")
+          PY

@@ -64,33 +64,36 @@ export function DefaultPolicyRenderer({
               {highlightText(`제${chapter.number}장 ${chapter.title}`, highlightQuery)}
             </header>
           )}
+          {/* 블록은 조 번호 순서로 이미 정렬돼 있다(절 헤더는 그 절의 첫 조 앞에 열린다) */}
           <div className="p-3 space-y-2">
-            {chapter.groups.map((group: any) => (
-              <JoGroupBlock
-                key={`${chapter.id}-${group.articleNumber}`}
-                group={group}
-                highlightQuery={highlightQuery}
-                showArticleTitle={showArticleTitle}
-              />
-            ))}
-            {/* 절(선택 계층) — 절 미소속 조문 뒤에 번호순으로 표시 */}
-            {(chapter.sectionBlocks || []).map((section: any) => (
-              <section key={section.id} className="border border-gray-200 rounded">
-                <header className="px-2.5 py-1.5 bg-gray-50/80 border-b border-gray-200 text-xs font-semibold text-gray-700">
-                  {highlightText(`제${section.number}절 ${section.title}`, highlightQuery)}
-                </header>
-                <div className="p-2 space-y-2">
-                  {(section.groups || []).map((group: any) => (
-                    <JoGroupBlock
-                      key={`${section.id}-${group.articleNumber}`}
-                      group={group}
-                      highlightQuery={highlightQuery}
-                      showArticleTitle={showArticleTitle}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+            {(chapter.blocks || []).map((block: any, blockIdx: number) =>
+              block.kind === 'section' ? (
+                <section key={`s-${block.id}`} className="border border-gray-200 rounded">
+                  <header className="px-2.5 py-1.5 bg-gray-50/80 border-b border-gray-200 text-xs font-semibold text-gray-700">
+                    {highlightText(`제${block.number}절 ${block.title}`, highlightQuery)}
+                  </header>
+                  <div className="p-2 space-y-2">
+                    {block.groups.map((group: any) => (
+                      <JoGroupBlock
+                        key={`${block.id}-${group.articleNumber}`}
+                        group={group}
+                        highlightQuery={highlightQuery}
+                        showArticleTitle={showArticleTitle}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ) : (
+                block.groups.map((group: any) => (
+                  <JoGroupBlock
+                    key={`${chapter.id}-${blockIdx}-${group.articleNumber}`}
+                    group={group}
+                    highlightQuery={highlightQuery}
+                    showArticleTitle={showArticleTitle}
+                  />
+                ))
+              ),
+            )}
           </div>
         </section>
         );

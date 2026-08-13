@@ -31,6 +31,11 @@ interface FlatSection {
   treeDepth: number;
 }
 
+/** 목(目) 표기에 실제로 쓰이는 한글 — 가나다 순 14자. 그 밖의 글자는 본문으로 본다. */
+const HANGUL_ITEM_MARKERS = new Set(
+  ['가', '나', '다', '라', '마', '바', '사', '아', '자', '차', '카', '타', '파', '하'],
+);
+
 const CIRCLED_MAP: Record<string, number> = {};
 for (let i = 0; i < 20; i += 1) {
   CIRCLED_MAP[String.fromCharCode(0x2460 + i)] = i + 1;
@@ -98,8 +103,12 @@ export function matchHeader(line: string): { norm: string; title: string } | nul
     return { norm: `C${CIRCLED_MAP[c0]}`, title: rest || `항목 ${CIRCLED_MAP[c0]}` };
   }
 
-  m = s.match(/^([가-힣])[\s.)．:：]+(\S.*)$/);
-  if (m && m[1].length === 1) {
+  // 가·나·다 목 표기. 구분 문자로 공백을 허용하면 안 된다 —
+  // "이 규정은 …", "그 밖에 …" 처럼 한 글자 + 공백으로 시작하는 평범한 본문이
+  // 전부 목 마커로 잡혀 조 본문이 통째로 하위 노드로 빨려 들어간다.
+  // 실제 목 표기는 언제나 구두점을 동반한다(가. 나) 다:).
+  m = s.match(/^([가-힣])[.)．:：]\s*(\S.*)$/);
+  if (m && HANGUL_ITEM_MARKERS.has(m[1])) {
     return { norm: `H${m[1]}`, title: (m[2] || '').trim() || m[1] };
   }
 

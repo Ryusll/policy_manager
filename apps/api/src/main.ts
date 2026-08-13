@@ -4,8 +4,12 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { assertProductionSecrets } from './common/config/secrets-guard';
 
 async function bootstrap() {
+  // 개발용 기본 시크릿이 운영에 올라가면 여기서 기동이 멈춘다(모듈 로드 전에 확인)
+  assertProductionSecrets();
+
   const app = await NestFactory.create(AppModule);
 
   const expressApp = app.getHttpAdapter().getInstance();

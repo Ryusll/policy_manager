@@ -1,9 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { IsArray, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateRegulationParseTreeDto {
   @ApiProperty({ description: '수정된 조항 트리 (루트 노드 배열)' })
   @IsArray()
+  // `@Type(() => Object)`가 없으면 전역 ValidationPipe의 enableImplicitConversion이
+  // 각 원소를 필드의 반영 타입(Array)으로 변환해 노드가 통째로 `[]`가 된다.
+  // 그 상태로 커밋하면 조문이 "[undefined] undefined"로 만들어진다.
+  @Type(() => Object)
   roots: unknown[];
 }
 

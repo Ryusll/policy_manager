@@ -352,6 +352,7 @@ export class PoliciesController {
   }
 
   @Post(':id/export/pdf')
+  @HttpCode(200) // 리소스를 만드는 게 아니라 파일을 돌려주므로 201이 아니다
   @ApiOperation({ summary: '전문 PDF 내보내기 (전문 보기 렌더 결과를 그대로 PDF로)' })
   async exportPdf(
     @Request() req: any,

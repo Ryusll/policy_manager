@@ -14,6 +14,13 @@ import io
 import json
 import sys
 
+# PyMuPDF는 1.24.3에서 주 모듈명을 fitz → pymupdf 로 바꿨다(fitz는 별칭으로 유지).
+# requirements.txt가 >=1.24.0 이라 두 이름 모두 나올 수 있어 양쪽을 받아준다.
+try:
+    import pymupdf as fitz
+except ImportError:  # PyMuPDF < 1.24.3
+    import fitz
+
 
 def build_css(font_name: str) -> str:
     return f"""
@@ -38,8 +45,6 @@ p {{ margin: 0 0 4pt 0; }}
 
 
 def render(payload: dict) -> bytes:
-    import fitz
-
     html = payload.get("html") or ""
     title = payload.get("title") or ""
     footer_text = (payload.get("footerText") or "").strip()

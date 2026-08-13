@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { policiesApi } from '../api/policies';
-import { Plus, FileText, Trash2, Search, ChevronDown } from 'lucide-react';
+import { Plus, FileText, FileUp, Trash2, Search, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -469,9 +469,15 @@ export default function PoliciesPage() {
         title={t('policies.title')}
         description={t('policies.subtitle', { n: policies.length })}
         actions={
-          <button type="button" onClick={() => setShowCreate(true)} className="btn-primary text-sm">
-            <Plus size={15} /> {t('policies.register')}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {/* PDF는 서버 추출(조항 계층 인식)이 정확해 별도 화면으로 보낸다 */}
+            <Link to="/policies/import" className="btn-secondary text-sm">
+              <FileUp size={15} /> PDF 가져오기
+            </Link>
+            <button type="button" onClick={() => setShowCreate(true)} className="btn-primary text-sm">
+              <Plus size={15} /> {t('policies.register')}
+            </button>
+          </div>
         }
       />
 

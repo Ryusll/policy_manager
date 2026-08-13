@@ -1053,7 +1053,8 @@ export default function PolicyDetailPage() {
     let count = 0;
     for (const ch of fullViewGroups) {
       count += countIn(String(ch.title ?? ''));
-      for (const g of ch.groups || []) {
+      // allGroups는 절 소속 조문까지 포함한다(절 미소속만 보는 blocks로 세면 매치 수가 모자란다)
+      for (const g of ch.allGroups || []) {
         for (const a of g.items || []) {
           count += countIn(String(a.title ?? ''));
           count += countIn(String(a.versions?.[0]?.content ?? ''));
@@ -1240,7 +1241,8 @@ export default function PolicyDetailPage() {
     for (const ch of fullViewGroups) {
       lines.push('');
       lines.push(`===== 제${ch.number}장 ${ch.title} =====`);
-      for (const g of ch.groups || []) {
+      // 절 소속 조문도 빠짐없이 담는다
+      for (const g of ch.allGroups || []) {
         for (const a of g.items || []) {
           lines.push('');
           lines.push(`${articleShortLabel(a)} ${a.title || ''}`);
