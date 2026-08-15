@@ -31,6 +31,7 @@ import TemplateRenderer from '../components/policy-template/TemplateRenderer';
 import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
 import { buildEnterprisePolicyBodyHtml } from '../components/policy-template/templateUtils';
 import RevisionReasonsModal from '../components/RevisionReasonsModal';
+import ComparisonTableModal from '../components/ComparisonTableModal';
 import { canManagePolicyTemplates } from '../lib/planFeatures';
 import { escapeRegExp } from '../lib/searchRegex';
 import { highlightText } from '../lib/highlightSearch';
@@ -494,6 +495,7 @@ export default function PolicyDetailPage() {
   const [asOfDate, setAsOfDate] = useState('');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [showRevisionReasons, setShowRevisionReasons] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
   const [relationNotesDraft, setRelationNotesDraft] = useState({
     relatedPrecedentNote: '',
     relatedLawNote: '',
@@ -2590,10 +2592,22 @@ export default function PolicyDetailPage() {
           >
             제정·개정이유
           </button>
+          <button
+            type="button"
+            onClick={() => setShowComparison(true)}
+            disabled={effectiveDates.length === 0}
+            title={
+              effectiveDates.length === 0
+                ? '시행일이 기록된 개정이 없어 대비할 시점이 없습니다.'
+                : undefined
+            }
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50 disabled:border-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed"
+          >
+            신구조문대비표
+          </button>
           {(
             [
               '3단비교',
-              '신구조문대비표',
               '규정체계도',
               '규정 간 비교',
               '음성지원',
@@ -3700,6 +3714,14 @@ export default function PolicyDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showComparison && id && (
+        <ComparisonTableModal
+          policyId={id}
+          effectiveDates={effectiveDates}
+          onClose={() => setShowComparison(false)}
+        />
       )}
 
       {showRevisionReasons && id && (

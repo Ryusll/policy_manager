@@ -57,6 +57,12 @@ export function DefaultPolicyRenderer({
     <div className="space-y-3">
       {fullViewGroups.map((chapter: any) => {
         const hideHead = isChapterHeaderHidden(chapter);
+        // 조문이 하나도 없는 장은 그리지 않는다 — 빈 테두리 상자만 남아 읽기·인쇄를 어지럽힌다.
+        // (편집은 왼쪽 목차에서 하므로 빈 장이 사라져도 접근 경로는 유지된다)
+        const chapterHasContent = (chapter.blocks || []).some(
+          (block: any) => (block?.groups?.length ?? 0) > 0,
+        );
+        if (!chapterHasContent) return null;
         return (
         <section key={chapter.id} className={`border border-gray-200 rounded ${chapter.className || ''}`}>
           {!hideHead && (

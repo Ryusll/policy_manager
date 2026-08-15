@@ -139,6 +139,17 @@ export class PoliciesController {
     return this.policiesService.listEffectiveDates(req.user.tenantId, id);
   }
 
+  @Get(':id/compare')
+  @ApiOperation({ summary: '신구조문대비표 — 두 시점의 본문을 조문 단위로 대비' })
+  compareAsOf(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+  ) {
+    return this.policiesService.compareAsOf(req.user.tenantId, id, from, to);
+  }
+
   @Get(':id/as-of')
   @ApiOperation({ summary: '시점 조회 — 기준일에 시행 중이던 본문' })
   findOneAsOf(@Request() req: any, @Param('id') id: string, @Query('date') date: string) {

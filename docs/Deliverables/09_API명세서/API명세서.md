@@ -57,6 +57,7 @@
 | DELETE | :id/revision-reasons/:reasonId | admin, editor | 제정·개정 이유 삭제 |
 | GET | :id/effective-dates | admin, editor | **시점 조회용** — 본문이 바뀐 시행일 목록(내림차순) |
 | GET | :id/as-of | admin, editor | **시점 조회** — 기준일에 시행 중이던 본문. Query: `date`(YYYY-MM-DD) |
+| GET | :id/compare | admin, editor | **신구조문대비표** — 두 시점 본문을 조문 단위로 대비. Query: `from`, `to`(YYYY-MM-DD) |
 | POST | :id/export/pdf | admin, editor | **전문 PDF 내보내기.** Body는 전문 보기 렌더 HTML, 응답은 `application/pdf` |
 | POST | :id/files | admin, editor | 첨부파일 업로드 (MinIO) |
 | GET | :id/files | admin, editor | 첨부파일 목록 |
@@ -130,13 +131,13 @@
 | PATCH | :id | admin | 팀명·멤버 수정 |
 | DELETE | :id | admin | 팀 삭제 |
 
-## regulation-parse (`/api/regulation-parse`) — UI 미연결(API만)
+## regulation-parse (`/api/regulation-parse`) — 화면: `/policies/import` (T-12, 8/12)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | upload | admin, editor | 파일 업로드 → 텍스트 추출(Python pdfplumber/pymupdf). ⚠️ 해당 Python 설치가 현재 이미지 빌드를 막음, [13_기술부채대장](../13_기술부채대장/기술부채_대장.md) #7 |
+| POST | upload | admin, editor | PDF 업로드 → 텍스트 추출(Python pdfplumber/pymupdf). 최대 30MB. (빌드 블로커는 T-01에서 해소됨) |
 | GET | :id | admin, editor, viewer | 파싱 세션 조회 |
-| PATCH | :id/tree | admin, editor | 파싱 트리 수정 |
-| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 커밋 |
+| PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14) |
+| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 커밋. 응답 `{policyId, sessionId, articleCount}`. **현재 트리를 전부 조(條)로 평탄화** — 항·목 매핑은 T-88 |
 
 ## admin (`/api/admin`) — UI 미연결(API만)
 | Method | Path | 인증 | 설명 |
@@ -208,6 +209,14 @@
 **CreateRevisionReasonDto** — `kind?`(enactment=제정|amendment=일부개정|full_amendment=전부개정|repeal=폐지, 기본 amendment), `label`(≤200, 예 "제3차 일부개정"), `reason`(≤100000), `summary?`(≤100000), `promulgatedDate?`(YYYY-MM-DD), `effectiveDate?`(YYYY-MM-DD)
 **UpdateRevisionReasonDto** — 위 필드 전부 optional
 **ExportPolicyPdfDto** — `html`(전문 보기 렌더 결과, ≤4MB — 서버에서 sanitize 후 변환), `title?`(≤300), `metaLine?`(≤500), `footerText?`(≤500), `pageNumbers?`(기본 true)
+
+### 신구조문대비표(compare) 응답 규칙
+- 두 시점의 as-of 스냅샷을 **`articleId` 기준**으로 짝짓는다. 조 번호는 개정으로 바뀔 수 있어 번호로 맞추면 엉뚱한 조문끼리 비교된다.
+- `kind`: `added`(신설) / `removed`(삭제) / `changed`(개정) / `same`(변동없음). 본문이 같아도 **제목이 바뀌면 `changed`**.
+- 비교 전 공백·줄바꿈을 정규화하므로 서식 차이만으로는 개정이 되지 않는다(표시는 원문 그대로).
+- `diff`는 `changed`일 때만 채우며 낱말 단위(`diffWords`) `{value, added?, removed?}` 배열이다.
+- 표기 위치(`number`/`clauseNumber`/`itemNumber`)는 신조문 기준, 삭제된 조문만 구조문 기준.
+- `from > to`면 400.
 
 ### 시점 조회(as-of) 응답 규칙
 - 조문별로 **시행일 ≤ 기준일인 `published`/`archived` 버전 중 가장 나중** 것을 고른다.

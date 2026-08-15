@@ -29,6 +29,7 @@
     "cookie-parser": "^1.4.6",
     "diff": "^5.1.0",
     "helmet": "^7.1.0",
+    "ioredis": "^5.11.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",

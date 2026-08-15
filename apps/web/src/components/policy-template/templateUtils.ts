@@ -142,6 +142,9 @@ export function buildEnterprisePolicyBodyHtml(fullViewGroups: any[], highlightQu
   for (const chapter of fullViewGroups) {
     const cn = Number(chapter?.number) || 0;
     const hideHead = isChapterHeaderHidden(chapter);
+    // 조문 없는 장은 건너뛴다(화면 렌더러와 같은 규칙 — 인쇄·PDF에 빈 장이 남지 않도록)
+    const chapterBlocks = Array.isArray(chapter?.blocks) ? chapter.blocks : [];
+    if (!chapterBlocks.some((block: any) => (block?.groups?.length ?? 0) > 0)) continue;
     out.push(`<section class="tmpl-chapter tmpl-chapter-${cn}" data-chapter="${cn}">`);
     if (!hideHead) {
       out.push('<header class="tmpl-chapter-head">');
@@ -154,8 +157,7 @@ export function buildEnterprisePolicyBodyHtml(fullViewGroups: any[], highlightQu
     }
     out.push('<div class="tmpl-chapter-body">');
     // 블록은 조 번호 순서로 이미 정렬돼 있다(절 헤더는 그 절의 첫 조 앞에 열린다)
-    const blocks = Array.isArray(chapter?.blocks) ? chapter.blocks : [];
-    for (const block of blocks) {
+    for (const block of chapterBlocks) {
       if (block?.kind === 'section') {
         const sn = Number(block?.number) || 0;
         out.push(`<section class="tmpl-section tmpl-section-${sn}" data-section="${sn}">`);

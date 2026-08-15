@@ -64,6 +64,10 @@ export const policiesApi = {
   getAsOf: (policyId: string, date: string) =>
     client.get('/policies/' + policyId + '/as-of', { params: { date } }).then((r) => r.data),
 
+  /** 신구조문대비표 — 두 시점 본문을 조문 단위로 대비 */
+  compare: (policyId: string, from: string, to: string): Promise<PolicyComparison> =>
+    client.get('/policies/' + policyId + '/compare', { params: { from, to } }).then((r) => r.data),
+
   exportPdf: (policyId: string, data: ExportPdfInput): Promise<Blob> =>
     client
       .post('/policies/' + policyId + '/export/pdf', data, { responseType: 'blob' })
@@ -90,6 +94,32 @@ export type PolicyRevisionReason = {
   promulgatedDate: string | null;
   effectiveDate: string | null;
   createdAt: string;
+};
+
+export type CompareKind = 'added' | 'removed' | 'changed' | 'same';
+
+export type CompareDiffPart = { value: string; added?: boolean; removed?: boolean };
+
+export type CompareSide = { title: string; content: string; effectiveDate: string | null };
+
+export type CompareRow = {
+  articleId: string;
+  number: number;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+  kind: CompareKind;
+  before: CompareSide | null;
+  after: CompareSide | null;
+  diff: CompareDiffPart[] | null;
+  titleChanged: boolean;
+};
+
+export type PolicyComparison = {
+  policy: { id: string; code: string; title: string };
+  from: string;
+  to: string;
+  summary: { added: number; removed: number; changed: number; same: number };
+  rows: CompareRow[];
 };
 
 export type ExportPdfInput = {

@@ -115,3 +115,16 @@ describe('buildFullViewGroups — 절(節) 순서', () => {
     expect(rowCount).toBe(6); // 조 5건 + 항 1건
   });
 });
+
+describe('빈 장(章) 처리', () => {
+  it('조문 없는 장은 blocks가 비어 있다 (렌더러가 건너뛸 수 있도록)', () => {
+    const chapters = [
+      { id: 'c1', number: 1, title: '총칙', sections: [], articles: [article({ id: 'a1', number: 1 })] },
+      { id: 'c2', number: 2, title: '', sections: [], articles: [] },
+      { id: 'c3', number: 3, title: '보안', sections: [], articles: [article({ id: 'a2', number: 2 })] },
+    ];
+    const built = buildFullViewGroups(chapters);
+    const hasContent = (ch: any) => (ch.blocks || []).some((b: any) => (b.groups?.length ?? 0) > 0);
+    expect(built.map(hasContent)).toEqual([true, false, true]);
+  });
+});

@@ -10,6 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
+import { buildComparisonRows, type CompareArticleInput } from './policy-compare';
 import {
   CreatePolicyDto,
   UpdatePolicyDto,
@@ -156,6 +157,72 @@ export class PoliciesService {
         hasEffectiveDates: await this.hasAnyEffectiveDate(id),
       },
     };
+  }
+
+  /**
+   * 신구조문대비표 — 두 시점 스냅샷을 조문 단위로 맞댄다.
+   * 국가법령정보센터의 신구법비교에 해당하되 대상이 우리 규정이라 외부 데이터가 필요 없다.
+   */
+  async compareAsOf(tenantId: string, id: string, from: string, to: string) {
+    const fromDate = parseDateOnly(from);
+    const toDate = parseDateOnly(to);
+    if (!fromDate || !toDate) {
+      throw new BadRequestException('비교 시점(from·to)은 YYYY-MM-DD 형식이어야 합니다.');
+    }
+    if (fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException('from은 to보다 앞선 날짜여야 합니다.');
+    }
+
+    const policy = await this.prisma.policy.findFirst({
+      where: { id, tenantId },
+      select: { id: true, code: true, title: true },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    const [beforeRows, afterRows] = await Promise.all([
+      this.articlesAsOf(id, fromDate),
+      this.articlesAsOf(id, toDate),
+    ]);
+
+    const { rows, summary } = buildComparisonRows(beforeRows, afterRows);
+    return { policy, from, to, summary, rows };
+  }
+
+  /** 특정 시점에 시행 중이던 조문을 비교용 평탄 목록으로 */
+  private async articlesAsOf(policyId: string, asOfDate: Date): Promise<CompareArticleInput[]> {
+    const articles = await this.prisma.article.findMany({
+      where: { chapter: { policyId } },
+      include: {
+        versions: {
+          where: {
+            status: { in: ['published', 'archived'] },
+            effectiveDate: { not: null, lte: asOfDate },
+          },
+          orderBy: [{ effectiveDate: 'desc' }, { versionNum: 'desc' }],
+          take: 1,
+        },
+      },
+      orderBy: [
+        { number: 'asc' },
+        { clauseNumber: { sort: 'asc', nulls: 'first' } },
+        { itemNumber: { sort: 'asc', nulls: 'first' } },
+      ],
+    });
+
+    return articles
+      .filter((article) => article.versions.length > 0)
+      .map((article) => {
+        const version = article.versions[0];
+        return {
+          id: article.id,
+          number: article.number,
+          clauseNumber: article.clauseNumber,
+          itemNumber: article.itemNumber,
+          title: article.title ?? '',
+          content: version.content ?? '',
+          effectiveDate: version.effectiveDate ? toDateOnlyString(version.effectiveDate) : null,
+        };
+      });
   }
 
   private async hasAnyEffectiveDate(policyId: string): Promise<boolean> {

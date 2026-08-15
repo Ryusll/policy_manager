@@ -67,6 +67,9 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
       MINIO_BUCKET: policy-files
+      # 법제처 국가법령정보 공동활용 OPEN API 인증값. 비우면 연동만 꺼진다(다른 기능 영향 없음).
+      # 인증값과 함께 이 서버의 공인 IP도 open.law.go.kr에 등록돼 있어야 한다.
+      LAW_GO_KR_OC: ${LAW_GO_KR_OC:-}
     depends_on:
       postgres:
         condition: service_healthy

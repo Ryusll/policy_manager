@@ -128,6 +128,68 @@ docker compose logs api | head -30
 - **JWT 시크릿을 바꾸면 기존 토큰이 전부 무효**가 된다. 전 사용자 재로그인이 필요하므로 공지 후 교체한다.
 - 장애 중 기동만 급히 되살려야 하면 `ALLOW_DEFAULT_SECRETS=1`로 가드를 우회할 수 있다. **우회한 기동은 그 자체로 사고 대응 대상**이며, 즉시 정상 교체 후 재기동한다.
 
+## 7-2. 오래된 서버에 재배포 (모르는 서버 인수인계용)
+
+2026-08-15 실측: 운영 서버는 **웹·API 모두 2026-06-15 빌드**다.
+(이 저장소는 공개이므로 서버 주소는 적지 않는다 — 인프라 담당자에게 확인할 것.)
+리포 최초 커밋이 6-25이므로 **git 이력에 없는 코드로 배포돼 있다.** git만 보고 서버 상태를
+추정하지 말고 반드시 먼저 조사한다.
+
+### 0단계. 조사 (읽기 전용)
+```bash
+ssh <서버>            # 접속 경로는 인프라 담당자에게 확인
+cd <프로젝트 디렉터리>   # docker-compose.yml 이 있는 곳
+sh scripts/server-recon.sh
+```
+이 출력으로 ① 소스 위치 ② 기본 시크릿 사용 여부 ③ DB 마이그레이션 이력 ④ 실데이터 규모가 확정된다.
+
+### 위험 1 — 스키마 드리프트 (가장 위험)
+6월 DB에는 `sections`(절, 8-02 도입)가 없는데, **baseline `00000000000000_init` 안에는 있다.**
+기동 스크립트의 자동 baseline 처리는 baseline을 *실행하지 않고* "적용됨"으로 표시하므로,
+그대로 두면 **`sections` 테이블이 없는 채로 적용 완료 표시**가 되어 런타임에 깨진다.
+
+→ 자동 경로에 맡기지 말고, 배포 전에 실제 차이를 뽑아 적용한다:
+```bash
+# 서버 DB와 현재 스키마의 차이를 SQL로 생성 (읽기 전용, 적용 안 함)
+npx prisma migrate diff   --from-url "$DATABASE_URL"   --to-schema-datamodel apps/api/prisma/schema.prisma   --script > /tmp/drift.sql
+less /tmp/drift.sql       # DROP 문이 있으면 반드시 사람이 검토
+```
+`DROP TABLE`/`DROP COLUMN`이 보이면 **적용하지 말고** 원인을 먼저 규명한다(6월 이후 서버에서만 만들어진 것일 수 있다).
+
+### 위험 2 — 시크릿 가드로 API 부팅 거부
+재배포하면 `secrets-guard.ts`가 들어간다. 기본값(공개된 JWT 키, `minioadmin123`, `postgres:postgres`)이
+남아 있으면 **운영 모드에서 API가 뜨지 않는다.** 조사 6번 항목이 0이 아니면 먼저 7-1을 수행한다.
+DB·MinIO 시크릿은 볼륨에 굳어 있으므로 `.env`만 바꾸면 접속이 깨진다(7-1 주의 참고).
+
+### 절차
+```bash
+# 1) 백업 (필수)
+docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup_$(date +%F).sql
+ls -lh backup_$(date +%F).sql          # 0바이트가 아닌지 확인
+
+# 2) 소스 갱신
+git fetch origin && git checkout develop && git pull origin develop
+
+# 3) 시크릿 정리 (7-1)  — 조사 6번이 0이 될 때까지
+docker compose config | grep -cE 'your-super-secret|minioadmin123|postgres:postgres@'
+
+# 4) 스키마 드리프트 해소 (위험 1)
+
+# 5) 재배포
+docker compose up -d --build
+docker compose logs -f api      # 'migrate deploy completed.' 와 기동 로그 확인
+
+# 6) 확인 — 새 엔드포인트가 401(있음)이어야 한다. 404면 옛 빌드가 그대로다
+curl -s -o /dev/null -w '%{http_code}\n' "http://<호스트>/api/policies/0/as-of?date=2026-01-01"
+```
+
+### 롤백
+문제 시 `git checkout <직전 커밋> && docker compose up -d --build` 후 필요하면 1)의 덤프를 복원한다.
+
+### 별건 — 즉시 조치 권장
+- `/api/docs`(Swagger)가 **인증 없이 공개**돼 있다(실측 200). 운영에서는 차단하거나 인증 뒤로 옮긴다.
+- 서비스가 평문 HTTP다. 로그인 토큰이 평문으로 오간다.
+
 ## 8. 운영 체크리스트
 
 - [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가 (→ 7-1. `docker compose config`로 확인)

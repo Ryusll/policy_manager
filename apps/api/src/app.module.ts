@@ -21,6 +21,7 @@ import { CommentsModule } from './comments/comments.module';
 import { TemplatesModule } from './templates/templates.module';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { RegulationParseModule } from './regulation-parse/regulation-parse.module';
+import { LawGoKrModule } from './lawgokr/lawgokr.module';
 import { PlatformBrandingModule } from './platform-branding/platform-branding.module';
 import { NotificationsModule } from './notifications/notifications.module';
 
@@ -44,6 +45,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     TemplatesModule,
     PlatformAdminModule,
     RegulationParseModule,
+    LawGoKrModule,
     PlatformBrandingModule,
     NotificationsModule,
   ],
