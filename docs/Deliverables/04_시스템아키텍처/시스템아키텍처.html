@@ -31,6 +31,17 @@
     --bad: #a32d2d;
     --bad-soft: #fbe9e9;
     --code-bg: #eef1f6;
+    --iso-slab: #e4eef9;
+    --iso-slab-side: #cddcec;
+    --iso-slab-edge: #b7cae1;
+    --iso-top: #ffffff;
+    --iso-left: #e7ecf3;
+    --iso-right: #d8e0ea;
+    --iso-edge: #a8b6c9;
+    --iso-arrow: #63748c;
+    --ic-green: #2f8f52;
+    --ic-blue: #2a6ba8;
+    --ic-red: #b8443c;
     --radius: 10px;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "D2Coding", monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
@@ -56,6 +67,17 @@
       --bad-soft: #331919;
       --code-bg: #1e2839;
       --navy-300: #6f8db4;
+      --iso-slab: #1c2c45;
+      --iso-slab-side: #16233a;
+      --iso-slab-edge: #33507a;
+      --iso-top: #26344a;
+      --iso-left: #1d2938;
+      --iso-right: #16202e;
+      --iso-edge: #44566f;
+      --iso-arrow: #8496ae;
+      --ic-green: #56c891;
+      --ic-blue: #63a6e0;
+      --ic-red: #e88a8a;
     }
   }
 
@@ -181,6 +203,59 @@
   .s-label { fill: var(--text-muted); font-size: 11px; }
   .s-dash { stroke-dasharray: 5 4; }
 
+  /* ── 조감도(아이소메트릭) ───────────────────── */
+  .iso-wrap { overflow-x: auto; padding: 4px 0 2px; }
+  .iso-wrap svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+
+  .iso-slab      { fill: var(--iso-slab); stroke: var(--iso-slab-edge); stroke-width: 1.5; }
+  .iso-slab-side { fill: var(--iso-slab-side); }
+  .iso-slab-label {
+    fill: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: .06em;
+  }
+
+  .iso-f-t { fill: var(--iso-top);   stroke: var(--iso-edge); stroke-width: 1.3; }
+  .iso-f-l { fill: var(--iso-left);  stroke: var(--iso-edge); stroke-width: 1.3; }
+  .iso-f-r { fill: var(--iso-right); stroke: var(--iso-edge); stroke-width: 1.3; }
+
+  .iso-icon      { stroke: currentColor; fill: currentColor; stroke-linejoin: round; }
+  .iso-icon [fill="none"] { fill: none; }
+
+  .iso-navy  { color: var(--accent); }
+  .iso-green { color: var(--ic-green); }
+  .iso-blue  { color: var(--ic-blue); }
+  .iso-red   { color: var(--ic-red); }
+  .iso-gold  { color: var(--gold-600); }
+  .iso-edge  { color: var(--text-muted); }
+  .iso-mute  { color: var(--iso-edge); }
+
+  .iso-label { fill: var(--text); font-size: 13.5px; font-weight: 600; }
+  .iso-sub   { fill: var(--text-muted); font-size: 11.5px; }
+  .iso-edge-label {
+    fill: var(--text-muted); font-size: 11px; font-weight: 600;
+    paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round;
+  }
+
+  .iso-arrow { stroke: var(--iso-arrow); stroke-width: 1.8; fill: none; }
+  .iso-arrow-dash { stroke-dasharray: 5 4; opacity: .75; }
+  .iso-head  { fill: var(--iso-arrow); }
+
+  .iso-off { opacity: .5; }
+  .iso-off .iso-f-t, .iso-off .iso-f-l, .iso-off .iso-f-r { stroke-dasharray: 4 3; }
+
+  /* 범례 */
+  .iso-legend {
+    display: flex; flex-wrap: wrap; gap: 6px 20px;
+    margin: 14px 0 0; padding: 12px 0 0; border-top: 1px dashed var(--border);
+    font-size: 12.5px; color: var(--text-muted);
+  }
+  .iso-legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .iso-key { width: 26px; height: 0; border-top: 2px solid var(--iso-arrow); flex: none; }
+  .iso-key.dash { border-top-style: dashed; }
+  .iso-key.box {
+    height: 12px; width: 12px; border: 1.5px dashed var(--iso-edge);
+    background: var(--iso-top); border-radius: 2px; opacity: .6;
+  }
+
   /* ── 콜아웃 ─────────────────────────────── */
   .note {
     margin: 18px 0; padding: 13px 16px; border-radius: var(--radius);
@@ -248,6 +323,7 @@
     h2.sec { break-after: avoid; }
     figure, table, .note { break-inside: avoid; }
     a { color: #000; text-decoration: none; }
+    .iso-wrap svg { max-width: 100%; }
   }
 
   @media (max-width: 640px) {
@@ -277,25 +353,68 @@
   <nav class="toc">
     <h2>목차</h2>
     <ol>
-      <li><a href="#s1"><span class="num">01</span>개요</a></li>
-      <li><a href="#s2"><span class="num">02</span>구성도</a></li>
-      <li><a href="#s3"><span class="num">03</span>요청 처리 경로</a></li>
-      <li><a href="#s4"><span class="num">04</span>백엔드</a></li>
-      <li><a href="#s5"><span class="num">05</span>프론트엔드</a></li>
-      <li><a href="#s6"><span class="num">06</span>도메인 모델</a></li>
-      <li><a href="#s7"><span class="num">07</span>데이터베이스·마이그레이션</a></li>
-      <li><a href="#s8"><span class="num">08</span>외부 프로세스 연동</a></li>
-      <li><a href="#s9"><span class="num">09</span>인프라·배포</a></li>
-      <li><a href="#s10"><span class="num">10</span>인증·권한</a></li>
-      <li><a href="#s11"><span class="num">11</span>멀티테넌시·플랜</a></li>
-      <li><a href="#s12"><span class="num">12</span>품질·CI</a></li>
-      <li><a href="#s13"><span class="num">13</span>구조적 부채</a></li>
+      <li><a href="#s1"><span class="num">01</span>한눈에 보기</a></li>
+      <li><a href="#s2"><span class="num">02</span>개요</a></li>
+      <li><a href="#s3"><span class="num">03</span>구성도</a></li>
+      <li><a href="#s4"><span class="num">04</span>요청 처리 경로</a></li>
+      <li><a href="#s5"><span class="num">05</span>백엔드</a></li>
+      <li><a href="#s6"><span class="num">06</span>프론트엔드</a></li>
+      <li><a href="#s7"><span class="num">07</span>도메인 모델</a></li>
+      <li><a href="#s8"><span class="num">08</span>데이터베이스·마이그레이션</a></li>
+      <li><a href="#s9"><span class="num">09</span>외부 프로세스 연동</a></li>
+      <li><a href="#s10"><span class="num">10</span>인프라·배포</a></li>
+      <li><a href="#s11"><span class="num">11</span>인증·권한</a></li>
+      <li><a href="#s12"><span class="num">12</span>멀티테넌시·플랜</a></li>
+      <li><a href="#s13"><span class="num">13</span>품질·CI</a></li>
+      <li><a href="#s14"><span class="num">14</span>구조적 부채</a></li>
     </ol>
   </nav>
 
   <!-- ══════════════════════════════════════ -->
   <section id="s1">
-    <h2 class="sec"><span class="n">01</span>개요</h2>
+    <h2 class="sec"><span class="n">01</span>한눈에 보기</h2>
+    <p>
+      전체 시스템을 한 장으로 본 그림이다. 파란 판 위가 <b>서버 한 대</b>이고,
+      그 위의 타일 하나가 각각 <b>컨테이너 하나</b>다. 판 바깥은 외부 주체다.
+    </p>
+
+    <figure>
+      <div class="iso-wrap"><svg viewBox="-514 -234 869 650" width="869" role="img" aria-label="VEDA 시스템 조감도 — 사용자·개발자부터 컨테이너 5종까지 한 장"><defs><marker id="isoHead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="iso-head"/></marker></defs><polygon class="iso-slab-side" points="-494.4,113.9 -80.0,353.1 334.4,113.9 334.4,126.9 -80.0,366.1 -494.4,126.9"/><polygon class="iso-slab" points="-80.0,-125.4 334.4,113.9 -80.0,353.1 -494.4,113.9"/><text class="iso-slab-label" x="-80.0" y="388.1" text-anchor="middle">단일 호스트 · Docker Compose</text><g class="iso-tile"><polygon class="iso-f-l" points="-145.8,-175.9 -80.0,-137.9 -80.0,-115.5 -145.8,-153.5"/><polygon class="iso-f-r" points="-14.3,-175.9 -80.0,-137.9 -80.0,-115.5 -14.3,-153.5"/><polygon class="iso-f-t" points="-80.0,-213.8 -14.3,-175.9 -80.0,-137.9 -145.8,-175.9"/><g class="iso-icon iso-edge" transform="translate(-80.0,-175.9)"><path d="M-3 -6 L-9 0 L-3 6" fill="none" stroke-width="2.2"/><path d="M3 -6 L9 0 L3 6" fill="none" stroke-width="2.2"/></g><text class="iso-label" x="-80.0" y="-91.5" text-anchor="middle">개발자</text><text class="iso-sub" x="-80.0" y="-75.5" text-anchor="middle">git push</text></g><g class="iso-tile"><polygon class="iso-f-l" points="14.3,-175.9 80.0,-137.9 80.0,-115.5 14.3,-153.5"/><polygon class="iso-f-r" points="145.8,-175.9 80.0,-137.9 80.0,-115.5 145.8,-153.5"/><polygon class="iso-f-t" points="80.0,-213.8 145.8,-175.9 80.0,-137.9 14.3,-175.9"/><g class="iso-icon iso-edge" transform="translate(80.0,-175.9)"><circle cx="0" cy="0" r="7" fill="none" stroke-width="2.2"/><path d="M0 -7 L0 0 L4.5 3.5" fill="none" stroke-width="2.2"/></g><text class="iso-label" x="80.0" y="-91.5" text-anchor="middle">GitHub Actions</text><text class="iso-sub" x="80.0" y="-75.5" text-anchor="middle">타입체크·테스트·빌드</text></g><g class="iso-tile"><polygon class="iso-f-l" points="-477.3,15.5 -411.5,53.5 -411.5,75.9 -477.3,37.9"/><polygon class="iso-f-r" points="-345.8,15.5 -411.5,53.5 -411.5,75.9 -345.8,37.9"/><polygon class="iso-f-t" points="-411.5,-22.4 -345.8,15.5 -411.5,53.5 -477.3,15.5"/><g class="iso-icon iso-edge" transform="translate(-411.5,15.5)"><circle cx="0" cy="-4" r="4"/><path d="M-7 8 a7 7 0 0 1 14 0z"/></g><text class="iso-label" x="-411.5" y="99.9" text-anchor="middle">사용자</text><text class="iso-sub" x="-411.5" y="115.9" text-anchor="middle">브라우저</text></g><g class="iso-tile"><polygon class="iso-f-l" points="-305.8,15.5 -240.1,53.5 -240.1,75.9 -305.8,37.9"/><polygon class="iso-f-r" points="-174.3,15.5 -240.1,53.5 -240.1,75.9 -174.3,37.9"/><polygon class="iso-f-t" points="-240.1,-22.4 -174.3,15.5 -240.1,53.5 -305.8,15.5"/><g class="iso-icon iso-green" transform="translate(-240.1,15.5)"><rect x="-8" y="-6.5" width="16" height="13" rx="2" fill="none" stroke-width="2"/><path d="M-8 -2.2 H8" stroke-width="2"/></g><text class="iso-label" x="-240.1" y="99.9" text-anchor="middle">web</text><text class="iso-sub" x="-240.1" y="115.9" text-anchor="middle">nginx · React SPA</text></g><g class="iso-tile"><polygon class="iso-f-l" points="-145.8,15.5 -80.0,53.5 -80.0,75.9 -145.8,37.9"/><polygon class="iso-f-r" points="-14.3,15.5 -80.0,53.5 -80.0,75.9 -14.3,37.9"/><polygon class="iso-f-t" points="-80.0,-22.4 -14.3,15.5 -80.0,53.5 -145.8,15.5"/><g class="iso-icon iso-navy" transform="translate(-80.0,15.5)"><path d="M0 -8 L7 -4 L7 4 L0 8 L-7 4 L-7 -4 Z" fill="none" stroke-width="2.2"/><circle cx="0" cy="0" r="2.3"/></g><text class="iso-label" x="-80.0" y="99.9" text-anchor="middle">api</text><text class="iso-sub" x="-80.0" y="115.9" text-anchor="middle">NestJS · Prisma</text></g><g class="iso-tile"><polygon class="iso-f-l" points="14.3,15.5 80.0,53.5 80.0,75.9 14.3,37.9"/><polygon class="iso-f-r" points="145.8,15.5 80.0,53.5 80.0,75.9 145.8,37.9"/><polygon class="iso-f-t" points="80.0,-22.4 145.8,15.5 80.0,53.5 14.3,15.5"/><g class="iso-icon iso-blue" transform="translate(80.0,15.5)"><ellipse cx="0" cy="-5" rx="7" ry="2.8" fill="none" stroke-width="2"/><path d="M-7 -5 V5 a7 2.8 0 0 0 14 0 V-5" fill="none" stroke-width="2"/><path d="M-7 0 a7 2.8 0 0 0 14 0" fill="none" stroke-width="1.6"/></g><text class="iso-label" x="80.0" y="99.9" text-anchor="middle">postgres 15</text><text class="iso-sub" x="80.0" y="115.9" text-anchor="middle">pg_bigm 한글검색</text></g><g class="iso-tile"><polygon class="iso-f-l" points="-305.8,167.3 -240.1,205.3 -240.1,227.7 -305.8,189.8"/><polygon class="iso-f-r" points="-174.3,167.3 -240.1,205.3 -240.1,227.7 -174.3,189.8"/><polygon class="iso-f-t" points="-240.1,129.4 -174.3,167.3 -240.1,205.3 -305.8,167.3"/><g class="iso-icon iso-gold" transform="translate(-240.1,167.3)"><path d="M-5.5 -8 H2.5 L6 -4.5 V8 H-5.5 Z" fill="none" stroke-width="2"/><path d="M-2.5 1 H3 M-2.5 4.2 H3" stroke-width="1.8"/></g><text class="iso-label" x="-240.1" y="251.7" text-anchor="middle">python3</text><text class="iso-sub" x="-240.1" y="267.7" text-anchor="middle">PDF 생성·추출</text></g><g class="iso-tile"><polygon class="iso-f-l" points="14.3,167.3 80.0,205.3 80.0,227.7 14.3,189.8"/><polygon class="iso-f-r" points="145.8,167.3 80.0,205.3 80.0,227.7 145.8,189.8"/><polygon class="iso-f-t" points="80.0,129.4 145.8,167.3 80.0,205.3 14.3,167.3"/><g class="iso-icon iso-red" transform="translate(80.0,167.3)"><path d="M0 -8 L7.5 -4 V4 L0 8 L-7.5 4 V-4 Z" fill="none" stroke-width="2"/><path d="M-7.5 -4 L0 0 L7.5 -4 M0 0 V8" fill="none" stroke-width="1.8"/></g><text class="iso-label" x="80.0" y="251.7" text-anchor="middle">minio</text><text class="iso-sub" x="80.0" y="267.7" text-anchor="middle">첨부파일 · S3 호환</text></g><g class="iso-tile iso-off"><polygon class="iso-f-l" points="-145.8,167.3 -80.0,205.3 -80.0,227.7 -145.8,189.8"/><polygon class="iso-f-r" points="-14.3,167.3 -80.0,205.3 -80.0,227.7 -14.3,189.8"/><polygon class="iso-f-t" points="-80.0,129.4 -14.3,167.3 -80.0,205.3 -145.8,167.3"/><g class="iso-icon iso-mute" transform="translate(-80.0,167.3)"><path d="M0 -8 L8 -4 L0 0 L-8 -4 Z" fill="none" stroke-width="1.9"/><path d="M-8 0 L0 4 L8 0" fill="none" stroke-width="1.9"/><path d="M-8 4 L0 8 L8 4" fill="none" stroke-width="1.9"/></g><text class="iso-label" x="-80.0" y="251.7" text-anchor="middle">redis 7</text><text class="iso-sub" x="-80.0" y="267.7" text-anchor="middle">연결된 코드 없음</text></g><line class="iso-arrow" x1="-338.8" y1="15.5" x2="-312.8" y2="15.5" marker-end="url(#isoHead)"/><text class="iso-edge-label" x="-325.8" y="6.5" text-anchor="middle">HTTPS</text><line class="iso-arrow" x1="-167.3" y1="15.5" x2="-152.8" y2="15.5" marker-end="url(#isoHead)"/><text class="iso-edge-label" x="-160.0" y="6.5" text-anchor="middle">/api/ 프록시</text><line class="iso-arrow" x1="-7.3" y1="15.5" x2="7.3" y2="15.5" marker-end="url(#isoHead)"/><text class="iso-edge-label" x="0.0" y="6.5" text-anchor="middle">Prisma</text><line class="iso-arrow" x1="-50.1" y1="43.9" x2="50.1" y2="138.9" marker-end="url(#isoHead)"/><text class="iso-edge-label" x="0.9" y="78.4" text-anchor="middle">첨부파일</text><line class="iso-arrow" x1="-110.0" y1="43.9" x2="-210.1" y2="138.9" marker-end="url(#isoHead)"/><text class="iso-edge-label" x="-161.0" y="78.4" text-anchor="middle">spawn</text><line class="iso-arrow" x1="-7.3" y1="-175.9" x2="7.3" y2="-175.9" marker-end="url(#isoHead)"/><line class="iso-arrow iso-arrow-dash" x1="54.1" y1="-144.9" x2="-54.1" y2="-15.5" marker-end="url(#isoHead)"/><text class="iso-edge-label" x="-33.8" y="-56.0" text-anchor="middle">검증만</text></svg></div>
+      <div class="iso-legend">
+        <span><i class="iso-key"></i>런타임 호출</span>
+        <span><i class="iso-key dash"></i>CI 검증 — 배포는 하지 않는다</span>
+        <span><i class="iso-key box"></i>기동은 되지만 쓰이지 않음</span>
+        <span>파란 판 = 단일 호스트 경계</span>
+      </div>
+      <figcaption>VEDA 시스템 조감도 (2026-08-13 기준)</figcaption>
+    </figure>
+
+    <p>이 그림에서 바로 읽어야 할 것 세 가지:</p>
+    <ul>
+      <li><b>브라우저는 <code>web</code>만 직접 만난다.</b> <code>api</code>는 nginx 뒤에 있고,
+          외부에서 오는 모든 요청은 <code>/api/</code> 프록시를 거친다.</li>
+      <li><b><code>python3</code>는 별도 컨테이너가 아니라 <code>api</code> 안에 같이 산다.</b>
+          PDF 생성·추출을 위해 Node가 자식 프로세스로 부른다 (<a href="#s9">08절</a>).</li>
+      <li><b>CI는 검증까지만 한다.</b> 점선이 배포가 아니라는 뜻이다 — 실제 배포는
+          아직 사람이 <code>docker compose build</code>로 한다.</li>
+    </ul>
+
+    <div class="note warn">
+      <b class="tag">눈에 띄는 것</b>
+      <code>redis</code>는 컨테이너로 떠 있는데 <b>들어오는 화살표가 없다</b>.
+      애플리케이션 코드에 참조가 0건이라 그림에도 그대로 비워 뒀다
+      (<a href="#s14">13절 구조적 부채</a>).
+    </div>
+
+    <p style="font-size:14px;color:var(--text-muted)">
+      인증(Google OAuth)·플랜 게이팅·버전 워크플로처럼 그림 한 장에 넣으면 오히려
+      읽기 어려워지는 것들은 아래 각 절에서 따로 다룬다.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section id="s2">
+    <h2 class="sec"><span class="n">02</span>개요</h2>
     <p>
       policy_manager는 <b>회사(테넌트) 단위 멀티테넌트 SaaS</b>다. 하나의 백엔드·DB를 여러 테넌트가
       공유하고 모든 핵심 테이블의 <code>tenantId</code> 컬럼으로 데이터를 격리한다.
@@ -338,8 +457,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s2">
-    <h2 class="sec"><span class="n">02</span>구성도</h2>
+  <section id="s3">
+    <h2 class="sec"><span class="n">03</span>구성도</h2>
 
     <figure>
       <div class="svg-scroll">
@@ -430,8 +549,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s3">
-    <h2 class="sec"><span class="n">03</span>요청 처리 경로</h2>
+  <section id="s4">
+    <h2 class="sec"><span class="n">04</span>요청 처리 경로</h2>
     <p>
       모든 요청은 <code>AppModule</code>에 등록된 <b>전역 가드 4단</b>을 통과한다. 순서가 곧 의미다 —
       먼저 신원을 확인하고, 요금제 한도를 보고, 역할을 보고, 마지막에 호출량을 본다.
@@ -508,8 +627,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s4">
-    <h2 class="sec"><span class="n">04</span>백엔드 <span style="font-size:14px;font-weight:400;color:var(--text-muted)">apps/api</span></h2>
+  <section id="s5">
+    <h2 class="sec"><span class="n">05</span>백엔드 <span style="font-size:14px;font-weight:400;color:var(--text-muted)">apps/api</span></h2>
 
     <h3>기술 구성</h3>
     <div class="table-scroll">
@@ -572,8 +691,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s5">
-    <h2 class="sec"><span class="n">05</span>프론트엔드 <span style="font-size:14px;font-weight:400;color:var(--text-muted)">apps/web</span></h2>
+  <section id="s6">
+    <h2 class="sec"><span class="n">06</span>프론트엔드 <span style="font-size:14px;font-weight:400;color:var(--text-muted)">apps/web</span></h2>
 
     <div class="cards">
       <div class="card">
@@ -632,8 +751,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s6">
-    <h2 class="sec"><span class="n">06</span>도메인 모델</h2>
+  <section id="s7">
+    <h2 class="sec"><span class="n">07</span>도메인 모델</h2>
     <p>
       규정 문서 구조가 이 시스템의 핵심이다. 법령은 <b>편 &gt; 장 &gt; 절 &gt; 조 &gt; 항 &gt; 목</b> 체계를 따르지만,
       사내 규정은 이 체계를 <b>반드시 다 쓰지는 않는다</b>. 그래서 상위 계층을 모두 선택(nullable)으로 뒀다.
@@ -724,8 +843,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s7">
-    <h2 class="sec"><span class="n">07</span>데이터베이스 · 마이그레이션</h2>
+  <section id="s8">
+    <h2 class="sec"><span class="n">08</span>데이터베이스 · 마이그레이션</h2>
 
     <ul>
       <li>PostgreSQL 15, 확장 <code>pg_bigm</code> (한국어 2-gram 검색 성능)</li>
@@ -756,8 +875,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s8">
-    <h2 class="sec"><span class="n">08</span>외부 프로세스 연동 (Node ↔ Python)</h2>
+  <section id="s9">
+    <h2 class="sec"><span class="n">09</span>외부 프로세스 연동 (Node ↔ Python)</h2>
     <p>
       PDF 입출력은 Node 생태계보다 파이썬 쪽이 압도적으로 낫다. 그래서 <code>api</code> 컨테이너 안에
       python3와 <code>PyMuPDF</code>·<code>pdfplumber</code>를 함께 설치하고, Node가 자식 프로세스로 호출한다.
@@ -809,8 +928,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s9">
-    <h2 class="sec"><span class="n">09</span>인프라 · 배포</h2>
+  <section id="s10">
+    <h2 class="sec"><span class="n">10</span>인프라 · 배포</h2>
 
     <h3>이미지 빌드</h3>
     <ul>
@@ -841,8 +960,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s10">
-    <h2 class="sec"><span class="n">10</span>인증 · 권한</h2>
+  <section id="s11">
+    <h2 class="sec"><span class="n">11</span>인증 · 권한</h2>
 
     <div class="cards">
       <div class="card">
@@ -877,8 +996,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s11">
-    <h2 class="sec"><span class="n">11</span>멀티테넌시 · 플랜</h2>
+  <section id="s12">
+    <h2 class="sec"><span class="n">12</span>멀티테넌시 · 플랜</h2>
 
     <p>
       모든 핵심 테이블에 <code>tenantId</code> FK를 두어 격리한다.
@@ -916,8 +1035,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s12">
-    <h2 class="sec"><span class="n">12</span>품질 · CI</h2>
+  <section id="s13">
+    <h2 class="sec"><span class="n">13</span>품질 · CI</h2>
 
     <p>
       GitHub Actions가 <code>main</code>·<code>develop</code>에 대한 push / PR마다 두 개의 job을 돌린다.
@@ -967,8 +1086,8 @@
   </section>
 
   <!-- ══════════════════════════════════════ -->
-  <section id="s13">
-    <h2 class="sec"><span class="n">13</span>구조적 부채</h2>
+  <section id="s14">
+    <h2 class="sec"><span class="n">14</span>구조적 부채</h2>
     <p>기능 부족이 아니라 <b>아키텍처 차원에서 남아 있는</b> 항목만 정리한다. 전체 목록은 <a href="../13_기술부채대장/기술부채_대장.md">13_기술부채 대장</a>.</p>
 
     <div class="table-scroll">
