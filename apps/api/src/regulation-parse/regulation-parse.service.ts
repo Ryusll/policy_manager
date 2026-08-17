@@ -16,6 +16,7 @@ import {
   RegulationArticleNode,
   RegulationParseLine,
 } from './regulation-tree.builder';
+import { buildCommitRows } from './commit-rows';
 
 interface PdfExtractJson {
   ok: boolean;
@@ -25,19 +26,6 @@ interface PdfExtractJson {
   error?: string;
   fallback_error?: string;
   fallback_from?: string;
-}
-
-function flattenNodes(roots: RegulationArticleNode[]): RegulationArticleNode[] {
-  const out: RegulationArticleNode[] = [];
-  const walk = (nodes: RegulationArticleNode[]) => {
-    for (const n of nodes) {
-      const { children, ...rest } = n;
-      out.push(rest as RegulationArticleNode);
-      if (children?.length) walk(children);
-    }
-  };
-  walk(roots);
-  return out;
 }
 
 function assertTree(roots: unknown): RegulationArticleNode[] {
@@ -267,7 +255,12 @@ export class RegulationParseService {
       );
     }
 
-    const flat = flattenNodes(tree.roots);
+    // 트리를 조·항·목 행으로 변환한다(T-88). 예전엔 전부 조로 평탄화했다.
+    const commitRows = buildCommitRows(tree.roots);
+    if (!commitRows.length) {
+      throw new BadRequestException('커밋할 조문이 없습니다.');
+    }
+    const isLawGoKr = (session.extractMeta as { source?: string } | null)?.source === 'lawgokr';
     const policy = await this.policiesService.create(
       tenantId,
       {
@@ -285,14 +278,14 @@ export class RegulationParseService {
       userId,
     );
 
-    let n = 0;
-    for (const node of flat) {
-      n += 1;
-      const title = `[${node.articleNumber}] ${node.articleTitle}`.slice(0, 500);
+    const changeNote = isLawGoKr ? '법제처 가져오기 커밋 자동 게시' : 'PDF 파싱 커밋 자동 게시';
+    for (const row of commitRows) {
       const createdArticle = await this.policiesService.createArticle(tenantId, policy.id, chapter.id, {
-        number: n,
-        title,
-        content: node.content || '',
+        number: row.number,
+        title: row.title,
+        content: row.content,
+        clauseNumber: row.clauseNumber ?? undefined,
+        itemNumber: row.itemNumber ?? undefined,
       });
       await this.prisma.articleVersion.updateMany({
         where: { articleId: createdArticle.id, versionNum: 1, status: 'draft' },
@@ -300,7 +293,7 @@ export class RegulationParseService {
           status: 'published',
           approvedBy: userId,
           approvedAt: new Date(),
-          changeNote: 'PDF 파싱 커밋 자동 게시',
+          changeNote,
         },
       });
     }
@@ -313,6 +306,6 @@ export class RegulationParseService {
       },
     });
 
-    return { policyId: policy.id, sessionId: id, articleCount: flat.length };
+    return { policyId: policy.id, sessionId: id, articleCount: commitRows.length };
   }
 }
