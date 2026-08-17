@@ -31,3 +31,11 @@ export class CommitRegulationParseDto {
   @MaxLength(4000)
   description?: string;
 }
+
+export class CreateFromLawGoKrDto {
+  @ApiProperty({ description: '법제처 법령일련번호(MST). 검색 결과의 `mst` 값' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(40)
+  mst: string;
+}

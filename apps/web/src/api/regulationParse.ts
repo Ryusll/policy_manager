@@ -48,6 +48,12 @@ export const regulationParseApi = {
     client.get('/regulation-parse/' + id).then((r) => r.data),
   updateTree: (id: string, roots: ParseTreeNode[]): Promise<ParseSession> =>
     client.patch('/regulation-parse/' + id + '/tree', { roots }).then((r) => r.data),
+  /**
+   * 법제처 법령으로 세션을 만든다 (T-55). 응답은 `upload`와 같은 세션이라
+   * 이후 미리보기·수정·커밋 절차가 완전히 동일하다.
+   */
+  createFromLawGoKr: (mst: string): Promise<ParseSession> =>
+    client.post('/regulation-parse/from-lawgokr', { mst }).then((r) => r.data),
   commit: (
     id: string,
     data: { code: string; title: string; description?: string },

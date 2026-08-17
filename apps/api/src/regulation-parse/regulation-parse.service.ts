@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { PoliciesService } from '../policies/policies.service';
+import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import {
   buildRegulationTreeFromLines,
@@ -64,6 +65,7 @@ export class RegulationParseService {
   constructor(
     private prisma: PrismaService,
     private policiesService: PoliciesService,
+    private lawGoKrService: LawGoKrService,
   ) {}
 
   private scriptPath(): string {
@@ -180,6 +182,38 @@ export class RegulationParseService {
     }
 
     return this.prisma.regulationParseSession.findUniqueOrThrow({ where: { id: session.id } });
+  }
+
+  /**
+   * 법제처 법령 본문으로 파싱 세션을 만든다 (T-55).
+   *
+   * 업로드 경로와 **같은 세션**을 만드는 것이 요점이다. 그래야 미리보기·수동수정
+   * (`PATCH :id/tree`)·커밋(`POST :id/commit`)을 그대로 재사용하고, 화면도 한 벌로 끝난다.
+   * 법제처 매퍼가 내보내는 `tree.roots`는 PDF 파서와 동일한 `RegulationArticleNode` 형식이다.
+   *
+   * 서지사항(법령ID·공포일자·시행일자·원문링크·제개정이유)은 `extractMeta`에 남긴다.
+   * 커밋 시점에 규정 메타로 옮겨쓸 수 있고, 나중에 출처를 되짚을 때도 필요하다.
+   */
+  async createFromLawGoKr(tenantId: string, userId: string, mst: string) {
+    const { meta, tree } = await this.lawGoKrService.getLaw(mst);
+    if (!tree.roots.length) {
+      throw new BadRequestException(
+        `법제처 응답에 조문이 없습니다 (${meta.title}). 다른 법령을 선택해 주세요.`,
+      );
+    }
+
+    return this.prisma.regulationParseSession.create({
+      data: {
+        tenantId,
+        userId,
+        // 업로드가 아니므로 확장자를 붙이지 않는다. 목록에서 출처가 바로 읽히도록 법령명을 쓴다.
+        fileName: meta.title,
+        mimeType: 'application/vnd.lawgokr+json',
+        status: 'ready',
+        parseTree: tree as unknown as object,
+        extractMeta: { source: 'lawgokr', ...meta } as unknown as object,
+      },
+    });
   }
 
   async findOne(tenantId: string, id: string) {

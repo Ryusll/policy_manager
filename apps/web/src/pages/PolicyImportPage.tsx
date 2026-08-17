@@ -1,5 +1,9 @@
 /**
- * 규정 PDF 가져오기 (T-12) — 업로드 → 조항 트리 미리보기·수정 → 규정 커밋.
+ * 규정 가져오기 (T-12 PDF · T-55 법제처) — 원문 확보 → 조항 트리 미리보기·수정 → 규정 커밋.
+ *
+ * 원문 소스는 둘이다: PDF 업로드와 법제처 OPEN API. 둘 다 서버에서 같은 파싱 세션
+ * (`RegulationParseSession`)을 만들기 때문에, 2·3단계(미리보기·수정·커밋)는 완전히 같은
+ * 코드를 탄다. 소스가 늘어도 갈라지는 곳은 1단계뿐이다.
  *
  * 규정 목록의 "기존 규정 가져오기"는 브라우저에서 텍스트를 뽑아 클라이언트가 파싱하는 경로다
  * (TXT·DOCX·붙여넣기에 적합). 이 화면은 서버의 `regulation-parse` 모듈을 쓴다.
@@ -9,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Upload, FileText, Trash2, ChevronRight, RotateCcw, Check } from 'lucide-react';
+import { Upload, FileText, Trash2, ChevronRight, RotateCcw, Check, Scale, ExternalLink } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
   regulationParseApi,
@@ -23,15 +27,19 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
+import { LawGoKrSearchPanel } from '../components/LawGoKrSearchPanel';
+import type { LawGoKrSessionMeta } from '../api/lawgokr';
 
 const MAX_PDF_BYTES = 30 * 1024 * 1024; // 서버 FileInterceptor 제한과 동일
 
 type Step = 'upload' | 'review' | 'done';
+type Source = 'pdf' | 'lawgokr';
 
 export default function PolicyImportPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [source, setSource] = useState<Source>('pdf');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [roots, setRoots] = useState<ParseTreeNode[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -107,6 +115,9 @@ export default function PolicyImportPage() {
   });
 
   const flat = useMemo(() => flattenParseTree(roots), [roots]);
+  // 법제처 세션이면 서지사항이 extractMeta 에 실려 온다(출처를 되짚을 때 필요하다)
+  const lawMeta: LawGoKrSessionMeta | null =
+    session?.extractMeta?.source === 'lawgokr' ? (session.extractMeta as LawGoKrSessionMeta) : null;
   const step: Step = createdPolicyId ? 'done' : sessionId ? 'review' : 'upload';
   const status = session?.status ?? 'pending';
   const isBusy = status === 'pending' || status === 'processing';
@@ -127,6 +138,7 @@ export default function PolicyImportPage() {
   };
 
   const resetAll = () => {
+    // source는 일부러 되돌리지 않는다 — 같은 소스로 연달아 가져오는 편이 흔하다
     setSessionId(null);
     setRoots([]);
     setDirty(false);
@@ -139,8 +151,8 @@ export default function PolicyImportPage() {
   return (
     <div className="page-shell space-y-4">
       <PageHeader
-        title="규정 PDF 가져오기"
-        description="PDF를 올리면 서버가 조항 계층을 추출합니다. 미리보기에서 고친 뒤 규정으로 등록하세요."
+        title="규정 가져오기"
+        description="PDF를 올리거나 법제처에서 법령을 찾아오면, 서버가 조항 계층을 추출합니다. 미리보기에서 고친 뒤 규정으로 등록하세요."
         actions={
           sessionId ? (
             <button type="button" className="btn-secondary text-sm" onClick={resetAll}>
@@ -153,7 +165,7 @@ export default function PolicyImportPage() {
       <ol className="flex flex-wrap items-center gap-2 text-xs">
         {(
           [
-            ['upload', '1. PDF 업로드'],
+            ['upload', '1. 원문 가져오기'],
             ['review', '2. 조항 미리보기·수정'],
             ['done', '3. 규정 등록'],
           ] as const
@@ -175,7 +187,44 @@ export default function PolicyImportPage() {
       </ol>
 
       {step === 'upload' && (
-        <section className="bg-white border border-gray-300 shadow-sm p-5 space-y-3">
+        <section className="bg-white border border-gray-300 shadow-sm p-5 space-y-4">
+          <div className="flex gap-1 border-b border-gray-200 -mx-1 px-1">
+            {(
+              [
+                ['pdf', 'PDF 업로드', FileText],
+                ['lawgokr', '법제처에서 가져오기', Scale],
+              ] as const
+            ).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSource(key)}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 -mb-px transition-colors',
+                  source === key
+                    ? 'border-navy-700 text-navy-800 font-medium'
+                    : 'border-transparent text-gray-500 hover:text-gray-700',
+                )}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {source === 'lawgokr' && (
+            <LawGoKrSearchPanel
+              onSessionCreated={(created) => {
+                setSessionId(created.id);
+                setRoots(created.parseTree?.roots || []);
+                setDirty(false);
+                setUploadError('');
+              }}
+            />
+          )}
+
+          {source === 'pdf' && (
+          <div className="space-y-3">
           <input
             ref={fileInputRef}
             type="file"
@@ -216,6 +265,8 @@ export default function PolicyImportPage() {
             TXT·DOCX·본문 붙여넣기는 규정 목록의 &quot;기존 규정 가져오기&quot;를 이용하세요. PDF는 서버가 글꼴
             정보까지 보고 조·항 계층을 잡아 이 경로가 더 정확합니다.
           </p>
+          </div>
+          )}
         </section>
       )}
 
@@ -228,8 +279,29 @@ export default function PolicyImportPage() {
                 <p className="text-[11px] text-gray-500 mt-0.5">
                   상태: {status}
                   {session?.extractMeta?.engine ? ` · 추출 엔진: ${session.extractMeta.engine}` : ''}
+                  {lawMeta ? ' · 출처: 법제처' : ''}
                   {` · 조항 ${flat.length}건`}
                 </p>
+                {lawMeta && (
+                  <p className="text-[11px] text-gray-500 mt-0.5 tabular-nums">
+                    {[lawMeta.lawType, lawMeta.revisionType].filter(Boolean).join(' · ')}
+                    {lawMeta.promulgationDate ? ` · 공포 ${lawMeta.promulgationDate}` : ''}
+                    {lawMeta.effectiveDate ? ` · 시행 ${lawMeta.effectiveDate}` : ''}
+                    {lawMeta.sourceUrl && (
+                      <>
+                        {' · '}
+                        <a
+                          href={lawMeta.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-navy-700 underline inline-flex items-center gap-0.5"
+                        >
+                          원문 <ExternalLink size={10} />
+                        </a>
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
               {dirty && (
                 <button
