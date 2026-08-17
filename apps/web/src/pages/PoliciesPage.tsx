@@ -15,6 +15,7 @@ import { defaultImportRefineOptions, refineImportRawText, type ImportRefineOptio
 import {
   countInferredHierarchy,
   expandChaptersWithHierarchy,
+  renumberChapters,
   type HierarchyArticleRow,
 } from '../lib/policyImportHierarchy';
 import { extractPolicyText } from '../lib/policyTextExtract';
@@ -123,16 +124,6 @@ export default function PoliciesPage() {
       if (!chaptersToCreate.length) {
         chaptersToCreate = buildRawFallbackDraft(rawText).chapters;
       }
-      if (cleanupOptions.renumber) {
-        chaptersToCreate = chaptersToCreate.map((chapter, chapterIdx) => ({
-          ...chapter,
-          number: chapterIdx + 1,
-          articles: chapter.articles.map((article, articleIdx) => ({
-            ...article,
-            number: articleIdx + 1,
-          })),
-        }));
-      }
       if (cleanupOptions.trimEmptyArticles) {
         chaptersToCreate = chaptersToCreate
           .map((chapter) => ({
@@ -140,6 +131,10 @@ export default function PoliciesPage() {
             articles: chapter.articles.filter((a) => (a.title || '').trim() || (a.content || '').trim()),
           }))
           .filter((chapter) => chapter.articles.length > 0);
+      }
+      // 빈 조를 걷어낸 뒤에 번호를 매겨야 1, 2, 4… 처럼 구멍이 남지 않는다
+      if (cleanupOptions.renumber) {
+        chaptersToCreate = renumberChapters(chaptersToCreate);
       }
       // 항(①②…)·목(1. 2. …) 자동 추론: 조 번호를 유지하므로 renumber 이후에 적용해야 한다
       const chaptersForCreate: { number: number; title?: string; articles: HierarchyArticleRow[] }[] =

@@ -154,6 +154,31 @@ export function inferArticleHierarchy(article: SourceArticle): HierarchyArticleR
 }
 
 /**
+ * 장·조 번호를 다시 매긴다.
+ *
+ * 조 번호는 **장이 바뀌어도 문서 전체에서 이어진다** — 제1장이 제1·2조면 제2장은 제3조부터다.
+ * 법령과 사내 규정의 공통 표기이고 시드 데이터도 같은 규칙을 쓴다(`seed.ts`).
+ * 장마다 1로 되돌리면 목차에 "제1조"가 여러 번 나와 조문을 특정할 수 없다.
+ *
+ * 호출 순서가 중요하다:
+ * - 빈 조 제거(trimEmptyArticles) **뒤에** 불러야 번호에 구멍이 안 생긴다(1, 2, 4…).
+ * - 항·목 추론(expandChaptersWithHierarchy) **앞에** 불러야 추론이 확정된 조 번호를 쓴다.
+ */
+export function renumberChapters<C extends { number: number; articles: { number: number }[] }>(
+  chapters: C[],
+): C[] {
+  let nextArticleNumber = 1;
+  return chapters.map((chapter, chapterIdx) => ({
+    ...chapter,
+    number: chapterIdx + 1,
+    articles: chapter.articles.map((article) => ({
+      ...article,
+      number: nextArticleNumber++,
+    })),
+  }));
+}
+
+/**
  * 장 목록 전체에 항·목 추론을 적용한다.
  * 조 번호(number)는 그대로 유지되므로, 재번호(renumber) 처리 뒤에 호출해야 한다.
  */
