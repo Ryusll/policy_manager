@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   matchHeader,
+  buildRegulationTreeFromLines,
   buildRegulationTreeFromPlainText,
 } from '../apps/api/src/regulation-parse/regulation-tree.builder';
 
@@ -69,5 +70,43 @@ describe('buildRegulationTreeFromPlainText', () => {
     const markers = flat.map((n) => n.articleNumber);
     expect(markers.join(' ')).toMatch(/가/);
     expect(markers.join(' ')).toMatch(/나/);
+  });
+});
+
+describe('편·장·절 헤더 인식 (T-89)', () => {
+  const lines = (...texts: string[]) => texts.map((text) => ({ text, page: 1 }));
+
+  it('장 제목이 직전 조 본문에 눌어붙지 않는다', () => {
+    // 회귀 방지: 예전에는 matchHeader 에 장 패턴이 없어 "제2장 …" 줄이
+    // 제1조 본문 끝에 그대로 들어갔다.
+    const { roots } = buildRegulationTreeFromLines(
+      lines('제1장 총칙', '제1조(목적) 이 규정은 …', '제2장 보안 운영', '제2조(정의) 용어의 뜻은 …'),
+    );
+
+    expect(roots.map((r) => r.articleNumber)).toEqual(['CH1', 'CH2']);
+    const first = roots[0].children ?? [];
+    expect(first.map((c) => c.articleNumber)).toEqual(['L1']);
+    expect(first[0].content).not.toContain('제2장');
+  });
+
+  it('절·관도 자기 코드로 잡히고 조가 그 아래 붙는다', () => {
+    const { roots } = buildRegulationTreeFromLines(
+      lines('제1장 총칙', '제1절 통칙', '제1조(목적) 본문'),
+    );
+    expect(roots.map((r) => r.articleNumber)).toEqual(['CH1']);
+    const section = (roots[0].children ?? [])[0];
+    expect(section.articleNumber).toBe('S1');
+    expect((section.children ?? []).map((c) => c.articleNumber)).toEqual(['L1']);
+  });
+
+  it('"제3장의2" 가지번호를 살린다', () => {
+    const { roots } = buildRegulationTreeFromLines(lines('제3장의2 특례', '제1조(목적) 본문'));
+    expect(roots[0].articleNumber).toBe('CH3-2');
+    expect(roots[0].articleTitle).toBe('특례');
+  });
+
+  it('조는 장으로 오인되지 않는다', () => {
+    const { roots } = buildRegulationTreeFromLines(lines('제1조(목적) 본문'));
+    expect(roots[0].articleNumber).toBe('L1');
   });
 });

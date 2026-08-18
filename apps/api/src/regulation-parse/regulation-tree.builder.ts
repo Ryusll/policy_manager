@@ -41,8 +41,28 @@ for (let i = 0; i < 20; i += 1) {
   CIRCLED_MAP[String.fromCharCode(0x2460 + i)] = i + 1;
 }
 
+/**
+ * 편·장·절·관 표기 → norm 코드. 법제처 매퍼(`lawgokr.mapper.ts`)와 같은 어휘를 쓴다.
+ * 커밋 단계(`commit-rows.ts`)가 이 코드로 실제 Chapter/Section을 만든다.
+ */
+const HEADING_CODE: Record<string, string> = { 편: 'P', 장: 'CH', 절: 'S', 관: 'SS' };
+
+/**
+ * 헤딩은 조(0)보다 **얕아야** 조가 그 아래로 중첩된다. 그래서 음수를 쓴다.
+ * 미리보기 들여쓰기는 `Math.max(depth, 0)`으로 클램프하므로 화면에는 영향이 없다.
+ */
+const HEADING_DEPTH: Record<string, number> = { P: -4, CH: -3, S: -2, SS: -1 };
+
+/** 헤딩 norm이면 그 깊이를, 아니면 null */
+function headingDepth(norm: string): number | null {
+  const m = norm.match(/^(SS|CH|S|P)\d/);
+  return m ? HEADING_DEPTH[m[1]] : null;
+}
+
 /** 조항 번호 문자열로부터 기본 깊이 (법·소수점 계층). 보조 항목은 collect 단계에서 treeDepth로 보정 */
 export function depthFromNorm(norm: string): number {
+  const h = headingDepth(norm);
+  if (h != null) return h;
   if (norm.startsWith('L')) {
     return norm.includes('-') ? 1 : 0;
   }
@@ -54,6 +74,8 @@ export function depthFromNorm(norm: string): number {
 
 function structuralBaseDepth(norm: string): number {
   if (norm === 'PREAMBLE') return 0;
+  const h = headingDepth(norm);
+  if (h != null) return h;
   if (norm.startsWith('L')) {
     return norm.includes('-') ? 1 : 0;
   }
@@ -79,7 +101,20 @@ export function matchHeader(line: string): { norm: string; title: string } | nul
   const s = line.trim();
   if (!s) return null;
 
-  let m = s.match(/^제\s*(\d+)\s*조(?:의\s*(\d+))?[\s.:：\-）)]*(.*)$/);
+  // 편·장·절·관을 조보다 먼저 본다. 이게 없으면 "제1장 총칙"이 헤더로 안 잡혀
+  // 직전 조의 본문 끝에 그대로 눌어붙는다(T-89 ②).
+  let m = s.match(/^제\s*(\d+)\s*(편|장|절|관)(?:\s*의\s*(\d+))?[\s.:：\-）)]*(.*)$/);
+  if (m) {
+    const [, number, kind, branch, rest] = m;
+    const code = HEADING_CODE[kind];
+    const label = branch ? `제${number}${kind}의${branch}` : `제${number}${kind}`;
+    return {
+      norm: branch ? `${code}${number}-${branch}` : `${code}${number}`,
+      title: (rest || '').trim() || label,
+    };
+  }
+
+  m = s.match(/^제\s*(\d+)\s*조(?:의\s*(\d+))?[\s.:：\-）)]*(.*)$/);
   if (m) {
     const base = m[1];
     const sub = m[2];

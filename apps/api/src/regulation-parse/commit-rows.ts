@@ -17,11 +17,16 @@ import { RegulationArticleNode } from './regulation-tree.builder';
  * | `1`, `1.2`      | 호            | 목 (`itemNumber`)        |
  * | `H가`, `Hp가`   | 가. / (가)    | 목                       |
  * | `PN1`           | (1)           | 목                       |
- * | `P/CH/S/SS`+숫자 | 편·장·절·관   | 조 (T-89에서 실제 장으로) |
+ * | `P/CH/S/SS`+숫자 | 편·장·절·관   | 실제 Chapter / Section   |
  * | `T…`, `PREAMBLE` | 표, 머리말    | 조                       |
  *
  * 우리 모델은 조·항·목 3단인데 법령은 조>항>호>목 4단이다. 남는 한 단(호 아래 목)은
  * 행을 더 만들지 않고 **부모 행 본문에 이어 붙인다** — 가짜 조문을 만드는 것보다 낫다.
+ *
+ * 편·장·절·관도 마찬가지다. 우리 모델은 장>절 2단이라 편(編)에 해당하는 자리가 없다.
+ * 편·장은 Chapter, 절·관은 Section으로 보내고, 조문을 하나도 못 받은 장·절은 버린다.
+ * 그래서 "편 > 장 > 조"인 법령은 편이 사라지고 장이 최상위가 되며, 편만 있는 법령은
+ * 편이 그대로 장이 된다 (T-89).
  */
 
 export type CommitRow = {
@@ -30,15 +35,31 @@ export type CommitRow = {
   itemNumber: number | null;
   title: string;
   content: string;
+  /** `CommitPlan.chapters` 인덱스 */
+  chapterIndex: number;
+  /** 소속 장의 `sections` 인덱스. 절에 속하지 않으면 null */
+  sectionIndex: number | null;
 };
 
-type Kind = 'jo' | 'hang' | 'mok';
+export type CommitPlan = {
+  chapters: {
+    number: number;
+    title: string;
+    /** 원문에 장 표기가 없어 우리가 만든 장이면 true (화면에서 숨긴다) */
+    suppressHeader: boolean;
+    sections: { number: number; title: string }[];
+  }[];
+  rows: CommitRow[];
+};
+
+type Kind = 'jo' | 'hang' | 'mok' | 'chapter' | 'section';
 
 /** norm 문자열이 무엇인지 판정한다. 모르는 것은 조로 둔다(현재 동작 유지). */
 export function classifyNorm(norm: string): Kind {
   const s = (norm || '').trim();
   // 편·장·절·관이 먼저다. `CH1`(장)은 `C…`(항)와, `P1`(편)은 `PN1`(괄호번호)과 앞글자가 겹친다.
-  if (/^(P|CH|S|SS)\d/.test(s)) return 'jo';
+  if (/^(P|CH)\d/.test(s)) return 'chapter';
+  if (/^(SS|S)\d/.test(s)) return 'section';
   if (/^L\d/.test(s)) return 'jo';
   // 원문자 번호를 못 읽으면 매퍼가 `C①`처럼 라벨을 그대로 붙인다. 그래도 항이다.
   if (/^C/.test(s)) return 'hang';
@@ -69,17 +90,23 @@ function appendTo(row: CommitRow, node: RegulationArticleNode): void {
   row.content = row.content ? `${row.content}\n${line}` : line;
 }
 
-export function buildCommitRows(roots: RegulationArticleNode[]): CommitRow[] {
+export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
+  const chapters: CommitPlan['chapters'] = [];
   const rows: CommitRow[] = [];
   let joNumber = 0;
+  let chapterIndex = -1;
+  let sectionIndex: number | null = null;
 
-  /**
-   * @param jo      현재 조 번호
-   * @param hang    현재 항 번호(없으면 null)
-   * @param inMok   이미 목 안이라 더 깊이 들어갈 자리가 없는 상태
-   * @param counters 이 조의 항 카운터 / 현재 항의 목 카운터
-   * @param owner   자리를 못 받은 텍스트를 붙일 행
-   */
+  /** 조문이 나왔는데 열린 장이 없으면 원문에 장 표기가 없는 것이다. 숨김 장을 만든다. */
+  const ensureChapter = (): number => {
+    if (chapterIndex < 0) {
+      chapters.push({ number: chapters.length + 1, title: '본문', suppressHeader: true, sections: [] });
+      chapterIndex = chapters.length - 1;
+      sectionIndex = null;
+    }
+    return chapterIndex;
+  };
+
   const visit = (
     nodes: RegulationArticleNode[],
     ctx: {
@@ -95,7 +122,32 @@ export function buildCommitRows(roots: RegulationArticleNode[]): CommitRow[] {
       const kind = classifyNorm(node.articleNumber);
       const children = node.children || [];
 
+      if (kind === 'chapter') {
+        chapters.push({
+          number: chapters.length + 1,
+          title: (node.articleTitle || '').trim() || `제${chapters.length + 1}장`,
+          suppressHeader: false,
+          sections: [],
+        });
+        chapterIndex = chapters.length - 1;
+        sectionIndex = null;
+        visit(children, { jo: 0, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
+        continue;
+      }
+
+      if (kind === 'section') {
+        const ci = ensureChapter();
+        chapters[ci].sections.push({
+          number: chapters[ci].sections.length + 1,
+          title: (node.articleTitle || '').trim() || `제${chapters[ci].sections.length + 1}절`,
+        });
+        sectionIndex = chapters[ci].sections.length - 1;
+        visit(children, { jo: 0, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
+        continue;
+      }
+
       if (kind === 'jo') {
+        const ci = ensureChapter();
         joNumber += 1;
         const row: CommitRow = {
           number: joNumber,
@@ -103,6 +155,8 @@ export function buildCommitRows(roots: RegulationArticleNode[]): CommitRow[] {
           itemNumber: null,
           title: titleFor(node, 'jo'),
           content: (node.content || '').trim(),
+          chapterIndex: ci,
+          sectionIndex,
         };
         rows.push(row);
         visit(children, {
@@ -131,15 +185,11 @@ export function buildCommitRows(roots: RegulationArticleNode[]): CommitRow[] {
           itemNumber: null,
           title: '',
           content: (node.content || '').trim(),
+          chapterIndex: ensureChapter(),
+          sectionIndex,
         };
         rows.push(row);
-        visit(children, {
-          ...ctx,
-          hang: ctx.hangCount.n,
-          inMok: false,
-          mokCount: { n: 0 },
-          owner: row,
-        });
+        visit(children, { ...ctx, hang: ctx.hangCount.n, inMok: false, mokCount: { n: 0 }, owner: row });
         continue;
       }
 
@@ -158,19 +208,53 @@ export function buildCommitRows(roots: RegulationArticleNode[]): CommitRow[] {
         itemNumber: ctx.mokCount.n,
         title: '',
         content: (node.content || '').trim(),
+        chapterIndex: ensureChapter(),
+        sectionIndex,
       };
       rows.push(row);
       visit(children, { ...ctx, inMok: true, owner: row });
     }
   };
 
-  visit(roots, {
-    jo: 0,
-    hang: null,
-    inMok: false,
-    hangCount: { n: 0 },
-    mokCount: { n: 0 },
-    owner: null,
+  visit(roots, { jo: 0, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
+
+  return dropEmpty({ chapters, rows });
+}
+
+/**
+ * 조문을 하나도 못 받은 장·절을 버리고 번호를 다시 매긴다.
+ *
+ * 편·장이 함께 있는 법령에서 편은 조문을 직접 갖지 않으므로 여기서 사라진다.
+ * 우리 모델에 편 자리가 없어 생기는 손실이고, 대신 가짜 빈 장은 만들지 않는다.
+ */
+function dropEmpty(plan: CommitPlan): CommitPlan {
+  const usedChapters = new Set(plan.rows.map((r) => r.chapterIndex));
+  const usedSections = new Set(
+    plan.rows.filter((r) => r.sectionIndex != null).map((r) => `${r.chapterIndex}:${r.sectionIndex}`),
+  );
+
+  const chapterMap = new Map<number, number>();
+  const sectionMap = new Map<string, number>();
+  const chapters: CommitPlan['chapters'] = [];
+
+  plan.chapters.forEach((chapter, ci) => {
+    if (!usedChapters.has(ci)) return;
+    const sections: { number: number; title: string }[] = [];
+    chapter.sections.forEach((section, si) => {
+      if (!usedSections.has(`${ci}:${si}`)) return;
+      sectionMap.set(`${ci}:${si}`, sections.length);
+      sections.push({ ...section, number: sections.length + 1 });
+    });
+    chapterMap.set(ci, chapters.length);
+    chapters.push({ ...chapter, number: chapters.length + 1, sections });
   });
-  return rows;
+
+  const rows = plan.rows.map((row) => ({
+    ...row,
+    chapterIndex: chapterMap.get(row.chapterIndex) ?? 0,
+    sectionIndex:
+      row.sectionIndex == null ? null : sectionMap.get(`${row.chapterIndex}:${row.sectionIndex}`) ?? null,
+  }));
+
+  return { chapters, rows };
 }

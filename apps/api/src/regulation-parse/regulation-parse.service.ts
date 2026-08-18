@@ -16,7 +16,7 @@ import {
   RegulationArticleNode,
   RegulationParseLine,
 } from './regulation-tree.builder';
-import { buildCommitRows } from './commit-rows';
+import { buildCommitPlan } from './commit-rows';
 
 interface PdfExtractJson {
   ok: boolean;
@@ -255,9 +255,9 @@ export class RegulationParseService {
       );
     }
 
-    // 트리를 조·항·목 행으로 변환한다(T-88). 예전엔 전부 조로 평탄화했다.
-    const commitRows = buildCommitRows(tree.roots);
-    if (!commitRows.length) {
+    // 트리를 장·절·조·항·목 구조로 변환한다(T-88·T-89). 예전엔 전부 조로 평탄화했다.
+    const plan = buildCommitPlan(tree.roots);
+    if (!plan.rows.length) {
       throw new BadRequestException('커밋할 조문이 없습니다.');
     }
     const isLawGoKr = (session.extractMeta as { source?: string } | null)?.source === 'lawgokr';
@@ -271,21 +271,44 @@ export class RegulationParseService {
       userId,
     );
 
-    const chapter = await this.policiesService.createChapter(
-      tenantId,
-      policy.id,
-      { number: 1, title: '본문', suppressHeader: true },
-      userId,
-    );
+    // 원문의 장·절을 실제 Chapter/Section 으로 만든다. 장 표기가 없는 문서면
+    // buildCommitPlan 이 숨김 장 한 개(`본문`)만 넣어 주므로 예전과 같은 결과가 된다.
+    const chapterIds: string[] = [];
+    const sectionIds: (string | null)[][] = [];
+    for (const ch of plan.chapters) {
+      const created = await this.policiesService.createChapter(
+        tenantId,
+        policy.id,
+        { number: ch.number, title: ch.title, suppressHeader: ch.suppressHeader },
+        userId,
+      );
+      chapterIds.push(created.id);
+      const ids: (string | null)[] = [];
+      for (const sec of ch.sections) {
+        const createdSection = await this.policiesService.createSection(
+          tenantId,
+          policy.id,
+          created.id,
+          { number: sec.number, title: sec.title },
+          userId,
+        );
+        ids.push(createdSection.id);
+      }
+      sectionIds.push(ids);
+    }
 
     const changeNote = isLawGoKr ? '법제처 가져오기 커밋 자동 게시' : 'PDF 파싱 커밋 자동 게시';
-    for (const row of commitRows) {
-      const createdArticle = await this.policiesService.createArticle(tenantId, policy.id, chapter.id, {
+    for (const row of plan.rows) {
+      const chapterId = chapterIds[row.chapterIndex];
+      const sectionId =
+        row.sectionIndex == null ? undefined : sectionIds[row.chapterIndex]?.[row.sectionIndex] ?? undefined;
+      const createdArticle = await this.policiesService.createArticle(tenantId, policy.id, chapterId, {
         number: row.number,
         title: row.title,
         content: row.content,
         clauseNumber: row.clauseNumber ?? undefined,
         itemNumber: row.itemNumber ?? undefined,
+        sectionId: sectionId ?? undefined,
       });
       await this.prisma.articleVersion.updateMany({
         where: { articleId: createdArticle.id, versionNum: 1, status: 'draft' },
@@ -306,6 +329,6 @@ export class RegulationParseService {
       },
     });
 
-    return { policyId: policy.id, sessionId: id, articleCount: commitRows.length };
+    return { policyId: policy.id, sessionId: id, articleCount: plan.rows.length };
   }
 }
