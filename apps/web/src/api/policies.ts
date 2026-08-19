@@ -1,8 +1,23 @@
 import client from './client';
 
+/** 규정 체계도 노드 (T-71). 규정 > 세칙 > 지침을 자기참조 트리로 표현한다. */
+export type PolicyTreeNode = {
+  id: string;
+  code: string;
+  title: string;
+  isActive: boolean;
+  parentId: string | null;
+  effectiveDate: string | null;
+  _count?: { chapters: number };
+  children: PolicyTreeNode[];
+};
+
 export const policiesApi = {
   list: () => client.get('/policies').then((r) => r.data),
   get: (id: string) => client.get('/policies/' + id).then((r) => r.data),
+  /** 규정 체계도 — 상위·하위 트리 (T-71) */
+  hierarchy: (): Promise<{ roots: PolicyTreeNode[]; total: number }> =>
+    client.get('/policies/hierarchy').then((r) => r.data),
   create: (data: any) => client.post('/policies', data).then((r) => r.data),
   update: (id: string, data: any) => client.put('/policies/' + id, data).then((r) => r.data),
   delete: (id: string) => client.delete('/policies/' + id),

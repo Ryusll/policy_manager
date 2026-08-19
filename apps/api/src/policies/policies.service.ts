@@ -9,6 +9,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
+import { buildPolicyForest } from './policy-hierarchy';
 import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
 import { buildComparisonRows, type CompareArticleInput } from './policy-compare';
 import {
@@ -34,6 +35,62 @@ export class PoliciesService {
     private audit: AuditService,
     private variablesService: VariablesService,
   ) {}
+
+  /**
+   * 상위 규정 지정을 검증한다 (T-71).
+   *
+   * 순환(A→B→A)이 생기면 체계도를 그리는 쪽이 무한루프에 빠진다. DB 제약으로는 막을 수
+   * 없어서 여기서 조상 사슬을 거슬러 올라가며 확인한다. 사슬 길이는 규정 수를 넘지 않으므로
+   * 안전장치로 상한을 둔다(데이터가 이미 순환이면 루프를 못 빠져나온다).
+   */
+  private async assertParentAllowed(tenantId: string, policyId: string, parentId: string) {
+    if (parentId === policyId) {
+      throw new BadRequestException('규정을 자기 자신의 하위로 둘 수 없습니다.');
+    }
+    const parent = await this.prisma.policy.findFirst({
+      where: { id: parentId, tenantId },
+      select: { id: true },
+    });
+    if (!parent) throw new NotFoundException('상위 규정을 찾을 수 없습니다.');
+
+    const total = await this.prisma.policy.count({ where: { tenantId } });
+    let cursor: string | null = parentId;
+    for (let hops = 0; cursor && hops <= total; hops += 1) {
+      if (cursor === policyId) {
+        throw new BadRequestException('상위 규정으로 지정하면 체계가 순환합니다.');
+      }
+      const row = await this.prisma.policy.findFirst({
+        where: { id: cursor, tenantId },
+        select: { parentId: true },
+      });
+      cursor = row?.parentId ?? null;
+    }
+  }
+
+  /**
+   * 규정 체계도 (T-71). 상위·하위를 트리로 돌려준다.
+   *
+   * 한 번의 조회로 전부 받아 메모리에서 엮는다. 테넌트당 규정 수가 많아야 수천이고,
+   * 재귀 쿼리를 쓰면 Prisma 밖으로 나가야 해서 얻는 것보다 잃는 게 많다.
+   */
+  async findHierarchy(tenantId: string) {
+    const policies = await this.prisma.policy.findMany({
+      where: { tenantId },
+      select: {
+        id: true,
+        code: true,
+        title: true,
+        isActive: true,
+        parentId: true,
+        effectiveDate: true,
+        _count: { select: { chapters: true } },
+      },
+      orderBy: [{ code: 'asc' }],
+    });
+
+    const roots = buildPolicyForest(policies);
+    return { roots, total: policies.length };
+  }
 
   async findAll(tenantId: string) {
     return this.prisma.policy.findMany({
@@ -323,6 +380,9 @@ export class PoliciesService {
     }
     if (dto.templateId === null) {
       (dto as any).templateId = null;
+    }
+    if (dto.parentId) {
+      await this.assertParentAllowed(tenantId, id, dto.parentId);
     }
     const nextDto = { ...dto } as any;
     const hasDepartment = Object.prototype.hasOwnProperty.call(nextDto, 'department');

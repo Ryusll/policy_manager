@@ -37,6 +37,15 @@ export class PoliciesController {
     return this.policiesService.findAll(req.user.tenantId);
   }
 
+  @Get('hierarchy')
+  @ApiOperation({
+    summary: '규정 체계도 (상·하위 트리)',
+    description: '규정 > 세칙 > 지침 관계를 트리로 돌려준다. 상위가 지워진 규정은 최상위로 올라온다.',
+  })
+  findHierarchy(@Request() req: any) {
+    return this.policiesService.findHierarchy(req.user.tenantId);
+  }
+
   @Get('import-logs')
   @Roles('admin', 'editor')
   @ApiOperation({ summary: '규정 가져오기 이력 조회' })

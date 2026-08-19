@@ -6,6 +6,7 @@ import { policiesApi } from '../api/policies';
 import { Plus, FileText, FileUp, Trash2, Search, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
+import { PolicyHierarchyPanel } from '../components/PolicyHierarchyPanel';
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
 import { useI18n } from '../i18n/useI18n';
@@ -36,6 +37,8 @@ export default function PoliciesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [showCreate, setShowCreate] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [view, setView] = useState<'list' | 'tree'>('list');
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [showImportAdvanced, setShowImportAdvanced] = useState(false);
   const [createMode, setCreateMode] = useState<'manual' | 'import'>('manual');
   const [form, setForm] = useState({
@@ -465,6 +468,23 @@ export default function PoliciesPage() {
         description={t('policies.subtitle', { n: policies.length })}
         actions={
           <div className="flex flex-wrap gap-2">
+            <div className="flex rounded border border-gray-300 overflow-hidden" role="tablist">
+              {([['list', '목록'], ['tree', '체계도']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === key}
+                  onClick={() => setView(key)}
+                  className={clsx(
+                    'px-3 py-1.5 text-sm transition-colors',
+                    view === key ? 'bg-navy-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             {/* PDF는 서버 추출(조항 계층 인식)이 정확해 별도 화면으로 보낸다 */}
             <Link to="/policies/import" className="btn-secondary text-sm">
               <FileUp size={15} /> PDF 가져오기
@@ -959,6 +979,10 @@ export default function PoliciesPage() {
         </div>
       )}
 
+      {view === 'tree' && <PolicyHierarchyPanel canEdit={canEdit} />}
+
+      {view === 'list' && (
+        <>
       <div className="card px-4 py-3 flex flex-wrap items-center gap-3">
         <Search size={15} className="text-gray-400 flex-shrink-0" />
         <input
@@ -1110,6 +1134,8 @@ export default function PoliciesPage() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -127,11 +127,16 @@ model Policy {
   revisionDate   DateTime? @map("revision_date") @db.Date
   effectiveDate  DateTime? @map("effective_date") @db.Date
   templateId     String?   @map("template_id")
+  /// 상위 규정. 규정 > 세칙 > 지침 체계를 자기참조 트리로 표현한다(T-71).
+  /// 최상위는 null. 상위가 지워져도 하위는 남아야 하므로 SetNull.
+  parentId       String?   @map("parent_id")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
   tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   template PolicyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  parent   Policy?  @relation("PolicyHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Policy[] @relation("PolicyHierarchy")
   chapters   Chapter[]
   appendices PolicyAppendix[]
   revisionReasons PolicyRevisionReason[]
@@ -139,6 +144,7 @@ model Policy {
   committedParseSessions RegulationParseSession[] @relation("CommittedParsePolicy")
 
   @@unique([tenantId, code])
+  @@index([tenantId, parentId])
   @@map("policies")
 }
 

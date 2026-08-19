@@ -80,6 +80,15 @@ export class UpdatePolicyDto {
 
   @ApiProperty({
     required: false,
+    nullable: true,
+    description: '상위 규정 ID. 규정 > 세칙 > 지침 체계를 만든다. null이면 최상위 (T-71)',
+  })
+  @IsOptional()
+  @IsString()
+  parentId?: string | null;
+
+  @ApiProperty({
+    required: false,
     description: '시행 승인 시 알림 수신 설정(팀·개인)',
   })
   @IsOptional()
