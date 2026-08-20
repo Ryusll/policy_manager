@@ -133,3 +133,37 @@ export function joGroupRenderRows(group: any): FullViewRenderRow[] {
 
   return rows;
 }
+
+/**
+ * 선택한 조 번호만 남긴다 (T-74 선택 조문 인쇄).
+ *
+ * 조 단위로만 거른다 — 항·목은 조에 딸린 것이라 따로 빼면 문맥이 끊긴다.
+ * 조문이 하나도 안 남은 절·장 블록은 함께 지운다. 빈 장 제목만 인쇄되면
+ * 무엇을 뽑은 건지 알아볼 수 없다.
+ */
+export function filterFullViewGroupsByJo(chapters: any[], selected: Set<number>): any[] {
+  if (!selected.size) return chapters;
+  const keep = (group: any) => selected.has(group.articleNumber);
+
+  return (chapters || [])
+    .map((chapter: any) => {
+      const blocks = (chapter.blocks || [])
+        .map((block: FullViewChapterBlock) => ({ ...block, groups: block.groups.filter(keep) }))
+        .filter((block: FullViewChapterBlock) => block.groups.length > 0);
+      return {
+        ...chapter,
+        blocks,
+        allGroups: (chapter.allGroups || []).filter(keep),
+      };
+    })
+    .filter((chapter: any) => chapter.blocks.length > 0);
+}
+
+/** 전문 보기 그룹에 들어 있는 조 번호 전부 (전체 선택용) */
+export function collectJoNumbers(chapters: any[]): number[] {
+  const out = new Set<number>();
+  for (const chapter of chapters || []) {
+    for (const group of chapter.allGroups || []) out.add(group.articleNumber);
+  }
+  return [...out].sort((a, b) => a - b);
+}

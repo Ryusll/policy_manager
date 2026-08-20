@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildFullViewGroups,
+  collectJoNumbers,
+  filterFullViewGroupsByJo,
   joGroupRenderRows,
 } from '../apps/web/src/lib/fullViewGroups';
 
@@ -126,5 +128,48 @@ describe('빈 장(章) 처리', () => {
     const built = buildFullViewGroups(chapters);
     const hasContent = (ch: any) => (ch.blocks || []).some((b: any) => (b.groups?.length ?? 0) > 0);
     expect(built.map(hasContent)).toEqual([true, false, true]);
+  });
+});
+
+describe('filterFullViewGroupsByJo — 선택 조문 인쇄 (T-74)', () => {
+  const chapters = [
+    {
+      id: 'c1',
+      number: 1,
+      title: '총칙',
+      sections: [],
+      articles: [
+        article({ id: 'a1', number: 1, title: '목적' }),
+        article({ id: 'a2', number: 2, title: '정의' }),
+        article({ id: 'a3', number: 3, title: '적용' }),
+      ],
+    },
+  ];
+
+  it('선택이 비어 있으면 원본 그대로 (전체 인쇄)', () => {
+    const built = buildFullViewGroups(chapters);
+    expect(filterFullViewGroupsByJo(built, new Set())).toBe(built);
+  });
+
+  it('고른 조만 남긴다', () => {
+    const built = buildFullViewGroups(chapters);
+    const out = filterFullViewGroupsByJo(built, new Set([1, 3]));
+    expect(out[0].allGroups.map((g: any) => g.articleNumber)).toEqual([1, 3]);
+    expect(out[0].blocks[0].groups.map((g: any) => g.articleNumber)).toEqual([1, 3]);
+  });
+
+  it('조문이 안 남은 장은 통째로 뺀다', () => {
+    // 빈 장 제목만 인쇄되면 무엇을 뽑은 건지 알아볼 수 없다.
+    const two = [
+      ...chapters,
+      { id: 'c2', number: 2, title: '운영', sections: [], articles: [article({ id: 'b1', number: 9 })] },
+    ];
+    const out = filterFullViewGroupsByJo(buildFullViewGroups(two), new Set([1]));
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe('c1');
+  });
+
+  it('collectJoNumbers 는 조 번호를 정렬해 돌려준다', () => {
+    expect(collectJoNumbers(buildFullViewGroups(chapters))).toEqual([1, 2, 3]);
   });
 });

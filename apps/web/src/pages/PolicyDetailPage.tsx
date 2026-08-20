@@ -50,7 +50,11 @@ import {
   formatKoDate,
   sortArticlesForToc,
 } from '../lib/legalArticleLabel';
-import { buildFullViewGroups } from '../lib/fullViewGroups';
+import {
+  buildFullViewGroups,
+  collectJoNumbers,
+  filterFullViewGroupsByJo,
+} from '../lib/fullViewGroups';
 import {
   buildArticleCreateRequests,
   canSubmitNewArticleForm,
@@ -245,7 +249,13 @@ function TocArticleGroups({
   onSelect,
   canEdit,
   onAddHang,
+  selectMode,
+  printSelection,
+  onToggleJo,
 }: {
+  selectMode?: boolean;
+  printSelection?: Set<number>;
+  onToggleJo?: (jo: number) => void;
   articles: any[];
   query: string;
   plJo: string;
@@ -263,6 +273,16 @@ function TocArticleGroups({
         const joTitle = inferJoTitle(articles, group.jo);
         return (
         <div key={`jo-${group.jo}`} className="border-b border-gray-100/80 last:border-b-0">
+          {selectMode && onToggleJo && (
+            <label className="flex items-center gap-1.5 px-2 pt-1.5 text-[11px] text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={printSelection?.has(group.jo) ?? false}
+                onChange={() => onToggleJo(group.jo)}
+              />
+              인쇄에 포함
+            </label>
+          )}
           {group.main ? (
             <TocArticleButton
               article={group.main}
@@ -507,6 +527,9 @@ export default function PolicyDetailPage() {
   const [showRevisionReasons, setShowRevisionReasons] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
   const [showThreeWay, setShowThreeWay] = useState(false);
+  /** 선택 조문 인쇄 (T-74). 비어 있으면 전체를 뜻한다. */
+  const [printSelection, setPrintSelection] = useState<Set<number>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [relationNotesDraft, setRelationNotesDraft] = useState({
     relatedPrecedentNote: '',
     relatedLawNote: '',
@@ -1085,6 +1108,20 @@ export default function PolicyDetailPage() {
     });
   }, [diffResult]);
   const fullViewGroups = useMemo(() => buildFullViewGroups(viewPolicy?.chapters), [viewPolicy]);
+  /** 전문 보기·인쇄가 실제로 그리는 목록. 선택이 있으면 그 조만 (T-74) */
+  const printableGroups = useMemo(
+    () => filterFullViewGroupsByJo(fullViewGroups, printSelection),
+    [fullViewGroups, printSelection],
+  );
+  const allJoNumbers = useMemo(() => collectJoNumbers(fullViewGroups), [fullViewGroups]);
+  const toggleJo = useCallback((jo: number) => {
+    setPrintSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(jo)) next.delete(jo);
+      else next.add(jo);
+      return next;
+    });
+  }, []);
 
   const fullViewMatchCount = useMemo(() => {
     const q = fullViewSearchQuery.trim();
@@ -1837,6 +1874,9 @@ export default function PolicyDetailPage() {
                 return (
                   <div key={chapter.id} className="border-b border-gray-100">
                     <TocArticleGroups
+                      selectMode={selectMode}
+                      printSelection={printSelection}
+                      onToggleJo={toggleJo}
                       articles={chapter.articles || []}
                       query={tocQuery}
                       plJo="pl-3"
@@ -1885,6 +1925,9 @@ export default function PolicyDetailPage() {
                   <div className="bg-gray-50 border-t border-gray-100">
                     {/* 절에 속하지 않는 조문 먼저 (절은 선택 계층이므로 공존 가능) */}
                     <TocArticleGroups
+                      selectMode={selectMode}
+                      printSelection={printSelection}
+                      onToggleJo={toggleJo}
                       articles={articlesWithoutSection(chapter)}
                       query={tocQuery}
                       plJo="pl-3"
@@ -1918,6 +1961,9 @@ export default function PolicyDetailPage() {
                           )}
                         </div>
                         <TocArticleGroups
+                          selectMode={selectMode}
+                          printSelection={printSelection}
+                          onToggleJo={toggleJo}
                           articles={articlesInSection(chapter, section.id)}
                           query={tocQuery}
                           plJo="pl-5"
@@ -3759,7 +3805,51 @@ export default function PolicyDetailPage() {
             <div className="px-4 sm:px-6 py-4 overflow-auto print:overflow-visible print:p-0 print:min-h-0">
               <div className="hidden print:block border-b border-gray-300 pb-3 mb-4">
                 <h2 className="text-xl font-bold text-gray-900">{policy.title}</h2>
-                <p className="text-sm text-gray-600 mt-1">출력일: {new Date().toLocaleDateString('ko-KR')}</p>
+                <p className="text-sm text-gray-600 mt-1">
+                  출력일: {new Date().toLocaleDateString('ko-KR')}
+                  {printSelection.size > 0 && ` · 선택 조문 ${printSelection.size}건만 출력 (전문 아님)`}
+                </p>
+              </div>
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-xs print:hidden">
+                <button
+                  type="button"
+                  onClick={() => setSelectMode((v) => !v)}
+                  className={clsx(
+                    'px-2.5 py-1 rounded border',
+                    selectMode
+                      ? 'border-navy-600 bg-navy-700 text-white'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+                  )}
+                >
+                  {selectMode ? '조문 선택 중' : '조문 선택'}
+                </button>
+                {printSelection.size > 0 ? (
+                  <>
+                    <span className="text-navy-800 font-medium">
+                      선택 {printSelection.size}개 조문만 표시·인쇄합니다
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPrintSelection(new Set())}
+                      className="underline text-gray-600"
+                    >
+                      전체로 되돌리기
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-gray-500">
+                    전체 조문을 인쇄합니다. 좌측 목차에서 조문을 고르면 그 조만 인쇄됩니다.
+                  </span>
+                )}
+                {selectMode && (
+                  <button
+                    type="button"
+                    onClick={() => setPrintSelection(new Set(allJoNumbers))}
+                    className="underline text-gray-600"
+                  >
+                    전체 선택
+                  </button>
+                )}
               </div>
               <FullViewSearchToolbar
                 inputId="policy-full-view-search-modal"
@@ -3775,7 +3865,7 @@ export default function PolicyDetailPage() {
                 <TemplateRenderer
                   template={activeTemplate}
                   data={templateRenderData}
-                  fullViewGroups={fullViewGroups}
+                  fullViewGroups={printableGroups}
                   highlightQuery={fullViewSearchQuery}
                 />
               </div>
