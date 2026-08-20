@@ -22,6 +22,7 @@ import {
   Share2,
   BookOpen,
   Layers,
+  Link2 as LinkIcon,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuthStore } from '../stores/authStore';
@@ -64,7 +65,15 @@ import {
 import { parseRevisionNotify } from '../lib/policyRevisionNotify';
 import { notificationGroupsApi } from '../api/notificationGroups';
 import { usersApi } from '../api/users';
+import { toast } from '../stores/toastStore';
 import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
+import {
+  articleHash,
+  findByAnchor,
+  formatArticleAnchor,
+  parseArticleAnchor,
+  parseLegacyArticleId,
+} from '../lib/articleAnchor';
 
 const statusLabel: Record<string, string> = {
   draft: '초안',
@@ -609,20 +618,56 @@ export default function PolicyDetailPage() {
   /** 전문 보기가 실제로 그리는 규정 — 시점 조회 중이면 그 시점 스냅샷 */
   const viewPolicy = asOfDate && asOfPolicy ? asOfPolicy : policy;
   const asOfInfo = asOfDate && asOfPolicy ? asOfPolicy.asOf : null;
+  // 조문 딥링크 해석 (T-73). 번호 기준(`#제3조제1항`·`?jo=3&hang=1`)을 먼저 보고,
+  // 옛 `#article-<uuid>` 도 계속 받는다 — 이미 나간 링크를 깨뜨리지 않는다.
   useEffect(() => {
     if (!policy?.chapters?.length) return;
-    const hashId = window.location.hash.replace('#article-', '').trim();
-    if (!hashId) return;
-    for (const ch of policy.chapters) {
-      const hit = (ch.articles || []).find((a: any) => a.id === hashId);
-      if (hit) {
-        setSelectedArticle(hit);
-        setArticleViewMode('segment');
-        setExpandedChapters((prev) => new Set(prev).add(ch.id));
-        break;
+    const findChapterOf = (predicate: (a: any) => boolean) => {
+      for (const ch of policy.chapters) {
+        const hit = (ch.articles || []).find(predicate);
+        if (hit) return { ch, hit };
       }
+      return null;
+    };
+
+    const anchor = parseArticleAnchor({
+      hash: window.location.hash,
+      search: window.location.search,
+    });
+    let found: { ch: any; hit: any } | null = null;
+
+    if (anchor) {
+      for (const ch of policy.chapters) {
+        const hit = findByAnchor(ch.articles || [], anchor);
+        if (hit) {
+          found = { ch, hit };
+          break;
+        }
+      }
+    } else {
+      const legacyId = parseLegacyArticleId(window.location.hash);
+      if (legacyId) found = findChapterOf((a: any) => a.id === legacyId);
     }
+
+    if (!found) return;
+    setSelectedArticle(found.hit);
+    setArticleViewMode('segment');
+    setExpandedChapters((prev) => new Set(prev).add(found!.ch.id));
   }, [policy?.id]);
+
+  /** 현재 조문을 가리키는 안정 링크를 클립보드에 복사한다 */
+  const copyArticleLink = useCallback(async () => {
+    if (!selectedArticle) return;
+    const url = `${window.location.origin}${window.location.pathname}${articleHash(selectedArticle)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast(`링크를 복사했습니다 — ${formatArticleAnchor(selectedArticle)}`, 'success');
+    } catch {
+      // 클립보드 권한이 없으면(비 HTTPS 등) 주소만 바꿔 사용자가 직접 복사하게 한다
+      window.location.hash = articleHash(selectedArticle).slice(1);
+      toast('클립보드를 쓸 수 없어 주소창을 갱신했습니다. 주소를 복사하세요.', 'info');
+    }
+  }, [selectedArticle]);
   const { data: templates = [] } = useQuery({
     queryKey: ['policy-templates'],
     queryFn: () => templatesApi.list(),
@@ -2675,6 +2720,16 @@ export default function PolicyDetailPage() {
                     {selectedArticle?.hasRelatedLaw && <RelatedBadge label="법" />}
                     {selectedArticle?.hasRelatedRule && <RelatedBadge label="규" />}
                     {selectedArticle && <RevisionBadge article={selectedArticle} />}
+                    {selectedArticle && (
+                      <button
+                        onClick={copyArticleLink}
+                        title={`이 조문을 가리키는 링크 복사 (${formatArticleAnchor(selectedArticle)})`}
+                        className="text-xs bg-navy-700/60 hover:bg-navy-600 px-2.5 py-1.5 rounded flex items-center gap-1"
+                      >
+                        <LinkIcon size={12} />
+                        링크 복사
+                      </button>
+                    )}
                     {canEdit && (
                       <button
                         onClick={openVersionEditor}
