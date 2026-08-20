@@ -90,3 +90,49 @@ jobs:
               assert needed in text, f"PDF에서 {needed!r}를 찾지 못했습니다:\n{text}"
           print(f"OK — {len(out.stdout)} bytes, 한글 텍스트 정상")
           PY
+
+  # DB·API가 실제로 떠야 도는 플로우 테스트 (T-30 잔여). 단위 테스트가 못 잡는
+  # 가드·검증·테넌트 격리를 여기서 확인한다.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      - name: Start stack
+        # 운영 기본값 그대로면 시크릿 가드가 부팅을 막는다. CI 전용 값을 넣는다.
+        run: |
+          cat > .env <<'ENV'
+          JWT_SECRET=ci-only-jwt-secret-value-that-is-long-enough-32
+          JWT_REFRESH_SECRET=ci-only-refresh-secret-value-long-enough-32
+          POSTGRES_USER=ci_app
+          POSTGRES_PASSWORD=ci-postgres-password
+          POSTGRES_DB=policy_manager
+          MINIO_ACCESS_KEY=ciminioaccess
+          MINIO_SECRET_KEY=ci-minio-secret-key
+          ENV
+          docker compose up -d --build postgres redis minio api
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:3001/api/health > /dev/null; then echo "up"; exit 0; fi
+            sleep 5
+          done
+          echo "API가 뜨지 않았습니다"; docker compose logs api | tail -60; exit 1
+
+      - name: Integration tests
+        run: npm run test:int
+
+      - name: API logs on failure
+        if: failure()
+        run: docker compose logs api | tail -100

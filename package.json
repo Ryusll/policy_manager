@@ -16,7 +16,9 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "docker:build": "docker compose build"
+    "docker:build": "docker compose build",
+    "test:int": "vitest run --config vitest.integration.config.ts",
+    "test:int:clean": "sh scripts/clean-test-tenants.sh"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
