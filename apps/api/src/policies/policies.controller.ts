@@ -142,6 +142,17 @@ export class PoliciesController {
     return this.policiesService.removeRevisionReason(req.user.tenantId, id, reasonId, req.user.id);
   }
 
+  @Get(':id/three-way')
+  @ApiOperation({
+    summary: '3단비교 — 규정·세칙·지침을 나란히',
+    description:
+      '하위 2단계까지 본다. 짝짓기는 하위 조문 본문의 상위 규정 인용("규정 제5조")으로 하며, ' +
+      '짝을 못 찾은 조문은 unmatched 로 따로 나온다.',
+  })
+  threeWay(@Request() req: any, @Param('id') id: string) {
+    return this.policiesService.threeWay(req.user.tenantId, id);
+  }
+
   @Get(':id/effective-dates')
   @ApiOperation({ summary: '시점 조회용 — 본문이 바뀐 시행일 목록' })
   listEffectiveDates(@Request() req: any, @Param('id') id: string) {

@@ -13,6 +13,11 @@ import { buildPolicyForest } from './policy-hierarchy';
 import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
 import { buildComparisonRows, type CompareArticleInput } from './policy-compare';
 import {
+  buildThreeWayRows,
+  type ThreeWayArticle,
+  type ThreeWayPolicy,
+} from './policy-three-way';
+import {
   CreatePolicyDto,
   UpdatePolicyDto,
   CreateChapterDto,
@@ -243,6 +248,92 @@ export class PoliciesService {
 
     const { rows, summary } = buildComparisonRows(beforeRows, afterRows);
     return { policy, from, to, summary, rows };
+  }
+
+  /**
+   * 3단비교 (T-56). 기준 규정 아래 두 단계(세칙·지침)를 나란히 놓는다.
+   *
+   * 짝짓기는 하위 조문 본문의 **상위 규정 인용**으로 한다(`policy-three-way.ts`).
+   * 조 번호를 그냥 맞추는 방식은 쓰지 않았다 — 세칙 제1조가 규정 제1조와 관계있다는
+   * 보장이 전혀 없어서 표가 그럴듯하게 틀린다.
+   */
+  async threeWay(tenantId: string, id: string) {
+    const base = await this.prisma.policy.findFirst({
+      where: { id, tenantId },
+      select: { id: true, code: true, title: true },
+    });
+    if (!base) throw new NotFoundException('Policy not found');
+
+    // 하위 2단계까지만 본다. 3단비교라는 이름 그대로다.
+    const children = await this.prisma.policy.findMany({
+      where: { tenantId, parentId: id },
+      select: { id: true, code: true, title: true },
+      orderBy: { code: 'asc' },
+    });
+    const grandchildren = children.length
+      ? await this.prisma.policy.findMany({
+          where: { tenantId, parentId: { in: children.map((c) => c.id) } },
+          select: { id: true, code: true, title: true },
+          orderBy: { code: 'asc' },
+        })
+      : [];
+
+    const levels: ThreeWayPolicy[] = [
+      { ...base, level: 0 },
+      ...children.map((c) => ({ ...c, level: 1 })),
+      ...grandchildren.map((g) => ({ ...g, level: 2 })),
+    ];
+
+    const articlesByPolicy = new Map<string, ThreeWayArticle[]>();
+    for (const policy of levels) {
+      articlesByPolicy.set(policy.id, await this.publishedArticles(policy.id));
+    }
+
+    const { rows, unmatched, matchedCount } = buildThreeWayRows(
+      articlesByPolicy.get(base.id) || [],
+      levels
+        .filter((p) => p.level > 0)
+        .map((policy) => ({ policy, articles: articlesByPolicy.get(policy.id) || [] })),
+    );
+
+    return {
+      base,
+      levels,
+      rows,
+      unmatched,
+      summary: {
+        baseArticles: rows.length,
+        related: matchedCount,
+        unmatched: unmatched.reduce((n, row) => n + row.related.length, 0),
+      },
+    };
+  }
+
+  /** 현재 게시된 본문 기준 조문 목록 (3단비교용) */
+  private async publishedArticles(policyId: string): Promise<ThreeWayArticle[]> {
+    const articles = await this.prisma.article.findMany({
+      where: { chapter: { policyId } },
+      include: {
+        versions: {
+          where: { status: 'published' },
+          orderBy: { versionNum: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: [
+        { number: 'asc' },
+        { clauseNumber: { sort: 'asc', nulls: 'first' } },
+        { itemNumber: { sort: 'asc', nulls: 'first' } },
+      ],
+    });
+    return articles.map((a) => ({
+      id: a.id,
+      number: a.number,
+      clauseNumber: a.clauseNumber,
+      itemNumber: a.itemNumber,
+      title: a.title || '',
+      content: a.versions[0]?.content || '',
+    }));
   }
 
   /** 특정 시점에 시행 중이던 조문을 비교용 평탄 목록으로 */

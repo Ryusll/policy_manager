@@ -64,6 +64,7 @@ import {
 import { parseRevisionNotify } from '../lib/policyRevisionNotify';
 import { notificationGroupsApi } from '../api/notificationGroups';
 import { usersApi } from '../api/users';
+import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
 
 const statusLabel: Record<string, string> = {
   draft: '초안',
@@ -496,6 +497,7 @@ export default function PolicyDetailPage() {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [showRevisionReasons, setShowRevisionReasons] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
+  const [showThreeWay, setShowThreeWay] = useState(false);
   const [relationNotesDraft, setRelationNotesDraft] = useState({
     relatedPrecedentNote: '',
     relatedLawNote: '',
@@ -2605,10 +2607,21 @@ export default function PolicyDetailPage() {
           >
             신구조문대비표
           </button>
+          <button
+            type="button"
+            onClick={() => setShowThreeWay(true)}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            3단비교
+          </button>
+          <Link
+            to="/policies"
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            규정체계도
+          </Link>
           {(
             [
-              '3단비교',
-              '규정체계도',
               '규정 간 비교',
               '음성지원',
               '점자뷰어',
@@ -3711,6 +3724,26 @@ export default function PolicyDetailPage() {
                   highlightQuery={fullViewSearchQuery}
                 />
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showThreeWay && id && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-auto">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-6xl my-8">
+            <div className="bg-navy-800 text-white px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-medium">3단비교 — 규정 · 세칙 · 지침</span>
+              <button
+                type="button"
+                onClick={() => setShowThreeWay(false)}
+                className="text-white/80 hover:text-white text-sm"
+              >
+                닫기
+              </button>
+            </div>
+            <div className="p-4">
+              <ThreeWayComparePanel policyId={id} />
             </div>
           </div>
         </div>

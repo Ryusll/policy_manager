@@ -1,6 +1,29 @@
 import client from './client';
 
 /** 규정 체계도 노드 (T-71). 규정 > 세칙 > 지침을 자기참조 트리로 표현한다. */
+export type ThreeWayArticle = {
+  id: string;
+  number: number;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+  title: string;
+  content: string;
+};
+
+export type ThreeWayRow = {
+  number: number | null;
+  base: ThreeWayArticle | null;
+  related: { policyId: string; level: number; article: ThreeWayArticle }[];
+};
+
+export type ThreeWayResult = {
+  base: { id: string; code: string; title: string };
+  levels: { id: string; code: string; title: string; level: number }[];
+  rows: ThreeWayRow[];
+  unmatched: ThreeWayRow[];
+  summary: { baseArticles: number; related: number; unmatched: number };
+};
+
 export type PolicyTreeNode = {
   id: string;
   code: string;
@@ -15,6 +38,9 @@ export type PolicyTreeNode = {
 export const policiesApi = {
   list: () => client.get('/policies').then((r) => r.data),
   get: (id: string) => client.get('/policies/' + id).then((r) => r.data),
+  /** 3단비교 — 규정·세칙·지침 (T-56) */
+  threeWay: (id: string): Promise<ThreeWayResult> =>
+    client.get('/policies/' + id + '/three-way').then((r) => r.data),
   /** 규정 체계도 — 상위·하위 트리 (T-71) */
   hierarchy: (): Promise<{ roots: PolicyTreeNode[]; total: number }> =>
     client.get('/policies/hierarchy').then((r) => r.data),
