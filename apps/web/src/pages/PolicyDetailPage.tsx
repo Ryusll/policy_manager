@@ -71,6 +71,7 @@ import { notificationGroupsApi } from '../api/notificationGroups';
 import { usersApi } from '../api/users';
 import { toast } from '../stores/toastStore';
 import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
+import { FavoriteButton } from '../components/FavoriteButton';
 import {
   articleHash,
   findByAnchor,
@@ -2766,6 +2767,14 @@ export default function PolicyDetailPage() {
                     {selectedArticle?.hasRelatedLaw && <RelatedBadge label="법" />}
                     {selectedArticle?.hasRelatedRule && <RelatedBadge label="규" />}
                     {selectedArticle && <RevisionBadge article={selectedArticle} />}
+                    {selectedArticle && id && (
+                      <FavoriteButton
+                        policyId={id}
+                        articleId={selectedArticle.id}
+                        label={`${policy.title} ${formatArticleAnchor(selectedArticle)}`}
+                        className="text-gray-300 hover:text-gold-400"
+                      />
+                    )}
                     {selectedArticle && (
                       <button
                         onClick={copyArticleLink}

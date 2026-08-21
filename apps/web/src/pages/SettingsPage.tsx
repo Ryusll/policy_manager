@@ -31,6 +31,7 @@ import TemplateRenderer from '../components/policy-template/TemplateRenderer';
 import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
 import { buildFullViewGroups } from '../lib/fullViewGroups';
 import PlanModal from '../components/PlanModal';
+import { FavoritesPanel } from '../components/FavoritesPanel';
 
 const PRESET_IDS: ThemePresetId[] = ['forest', 'ocean', 'slate', 'wine'];
 
@@ -74,7 +75,7 @@ export default function SettingsPage() {
   const canManageTemplatesByPlan = canManagePolicyTemplates(user?.plan);
   const advancedTemplateEnabled = canUseAdvancedTemplateEditor(user?.plan);
   const canManageTeam = isAdmin && inviteEnabledByPlan;
-  const [activeTab, setActiveTab] = useState<'ui' | 'team' | 'templates'>('ui');
+  const [activeTab, setActiveTab] = useState<'ui' | 'favorites' | 'team' | 'templates'>('ui');
   const [invite, setInvite] = useState({ email: '', password: '', name: '', role: 'editor' as 'admin' | 'editor' | 'viewer' });
   const [inviteMsg, setInviteMsg] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -576,6 +577,7 @@ export default function SettingsPage() {
 
   const settingsTabs = [
     { id: 'ui' as const, label: t('settings.tabUi') },
+    { id: 'favorites' as const, label: '즐겨찾기' },
     { id: 'team' as const, label: t('settings.tabInvite'), disabled: !canManageTeam },
     { id: 'templates' as const, label: t('settings.tabTemplates'), disabled: !isAdmin || !canManageTemplatesByPlan },
   ];
@@ -609,6 +611,17 @@ export default function SettingsPage() {
         </nav>
 
         <div className={clsx('flex-1 min-w-0 space-y-6', activeTab === 'templates' ? 'max-w-none' : 'max-w-3xl')}>
+      {activeTab === 'favorites' && (
+        <div className="card p-5">
+          <h2 className="text-sm font-semibold text-gray-900 mb-1">즐겨찾기</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            규정 목록·조문 화면의 별로 담아둔 항목입니다. 조문은 조 번호 기준 링크라
+            규정을 다시 가져와도 살아 있습니다.
+          </p>
+          <FavoritesPanel />
+        </div>
+      )}
+
       {activeTab === 'ui' && (
         <>
       {/* 테마 */}

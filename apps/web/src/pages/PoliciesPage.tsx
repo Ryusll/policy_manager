@@ -7,6 +7,7 @@ import { Plus, FileText, FileUp, Trash2, Search, ChevronDown } from 'lucide-reac
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { PolicyHierarchyPanel } from '../components/PolicyHierarchyPanel';
+import { FavoriteButton } from '../components/FavoriteButton';
 import { INDEX_KEYS, compareKo, countByIndexKey, indexKeyOf } from '../lib/hangulIndex';
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
@@ -1111,9 +1112,12 @@ export default function PoliciesPage() {
                 <td className="text-center text-xs text-gray-400">{idx + 1}</td>
                 <td className="font-mono text-xs text-gray-500">{policy.code}</td>
                 <td>
-                  <Link to={'/policies/' + policy.id} className="text-navy-700 hover:underline font-medium text-sm">
-                    {policy.title}
-                  </Link>
+                  <span className="inline-flex items-center gap-1">
+                    <FavoriteButton policyId={policy.id} label={policy.title} />
+                    <Link to={'/policies/' + policy.id} className="text-navy-700 hover:underline font-medium text-sm">
+                      {policy.title}
+                    </Link>
+                  </span>
                   {policy.description && (
                     <div className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{policy.description}</div>
                   )}

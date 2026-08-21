@@ -24,6 +24,7 @@ import { RegulationParseModule } from './regulation-parse/regulation-parse.modul
 import { LawGoKrModule } from './lawgokr/lawgokr.module';
 import { PlatformBrandingModule } from './platform-branding/platform-branding.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { FavoritesModule } from './favorites/favorites.module';
 
 @Module({
   controllers: [HealthController],
@@ -48,6 +49,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     LawGoKrModule,
     PlatformBrandingModule,
     NotificationsModule,
+    FavoritesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
