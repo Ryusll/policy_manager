@@ -209,6 +209,11 @@ export const filesApi = {
     client.delete('/policies/' + policyId + '/files/' + filename),
 };
 
+export type SearchSuggestResult = {
+  policies: { id: string; code: string; title: string }[];
+  articles: { id: string; number: number; title: string; policyId: string; policyTitle: string }[];
+};
+
 export const searchApi = {
   search: (q: string, page = 1) =>
     client.get('/search', { params: { q, page } }).then((r) => r.data),
@@ -220,6 +225,9 @@ export const searchApi = {
     scope: 'title' | 'fulltext' = 'fulltext',
   ) =>
     client.get('/search/related-preview', { params: { type, q, limit, sort, scope } }).then((r) => r.data),
+  /** 자동완성 — 규정명·조 제목 (T-79) */
+  suggest: (q: string): Promise<SearchSuggestResult> =>
+    client.get('/search/suggest', { params: { q } }).then((r) => r.data),
 };
 
 export const commentsApi = {

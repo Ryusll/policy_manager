@@ -120,6 +120,52 @@ export class SearchService {
     }
   }
 
+  /**
+   * 검색 자동완성 (T-79) — 규정명과 조 제목에서 앞부분이 맞는 것을 준다.
+   *
+   * 본문은 대상에 넣지 않는다. 본문까지 넣으면 한 글자만 쳐도 수백 건이 걸려
+   * 목록이 쓸모없어지고, 그건 이미 통합검색이 하는 일이다.
+   * 제목만 보므로 인덱스로 충분히 빠르고 결과가 예측 가능하다.
+   */
+  async suggest(tenantId: string, query: string, limit = 8) {
+    const q = (query || '').trim();
+    if (q.length < 1) return { policies: [], articles: [] };
+
+    const [policies, articles] = await Promise.all([
+      this.prisma.policy.findMany({
+        where: { tenantId, title: { contains: q, mode: 'insensitive' } },
+        select: { id: true, code: true, title: true },
+        orderBy: { title: 'asc' },
+        take: limit,
+      }),
+      this.prisma.article.findMany({
+        where: {
+          title: { contains: q, mode: 'insensitive' },
+          chapter: { policy: { tenantId } },
+        },
+        select: {
+          id: true,
+          number: true,
+          title: true,
+          chapter: { select: { policy: { select: { id: true, title: true } } } },
+        },
+        orderBy: [{ number: 'asc' }],
+        take: limit,
+      }),
+    ]);
+
+    return {
+      policies,
+      articles: articles.map((a) => ({
+        id: a.id,
+        number: a.number,
+        title: a.title,
+        policyId: a.chapter.policy.id,
+        policyTitle: a.chapter.policy.title,
+      })),
+    };
+  }
+
   async search(tenantId: string, query: string, page = 1, limit = 20) {
     const q = query.trim();
     if (!q) {
