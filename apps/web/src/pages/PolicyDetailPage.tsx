@@ -72,6 +72,8 @@ import { usersApi } from '../api/users';
 import { toast } from '../stores/toastStore';
 import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
 import { FavoriteButton } from '../components/FavoriteButton';
+import { SpeechControls } from '../components/SpeechControls';
+import { buildPolicySpeech } from '../lib/speech';
 import {
   articleHash,
   findByAnchor,
@@ -528,6 +530,7 @@ export default function PolicyDetailPage() {
   const [showRevisionReasons, setShowRevisionReasons] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
   const [showThreeWay, setShowThreeWay] = useState(false);
+  const [showA11y, setShowA11y] = useState(false);
   /** 선택 조문 인쇄 (T-74). 비어 있으면 전체를 뜻한다. */
   const [printSelection, setPrintSelection] = useState<Set<number>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
@@ -1115,6 +1118,11 @@ export default function PolicyDetailPage() {
     [fullViewGroups, printSelection],
   );
   const allJoNumbers = useMemo(() => collectJoNumbers(fullViewGroups), [fullViewGroups]);
+  /** 음성 읽기용 문장 (T-81). 선택 인쇄 중이면 그 조만 읽는다 — 화면과 어긋나면 혼란스럽다. */
+  const speechChunks = useMemo(
+    () => buildPolicySpeech(printableGroups, policy?.title),
+    [printableGroups, policy?.title],
+  );
   const toggleJo = useCallback((jo: number) => {
     setPrintSelection((prev) => {
       const next = new Set(prev);
@@ -2712,11 +2720,17 @@ export default function PolicyDetailPage() {
           >
             규정체계도
           </Link>
+          <button
+            type="button"
+            onClick={() => setShowA11y((v) => !v)}
+            aria-expanded={showA11y}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            음성지원·접근성
+          </button>
           {(
             [
               '규정 간 비교',
-              '음성지원',
-              '점자뷰어',
             ] as const
           ).map((label) => (
             <button
@@ -2730,6 +2744,16 @@ export default function PolicyDetailPage() {
             </button>
           ))}
         </div>
+        {showA11y && (
+          <div className="px-4 py-3 border-t border-gray-200 bg-gray-50/70 space-y-2 print:hidden">
+            <SpeechControls chunks={speechChunks} label={policy.title} />
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              점자 정보 단말은 화면낭독기(NVDA·VoiceOver 등)를 통해 이 화면을 읽습니다.
+              별도 뷰어 없이 바로 읽히도록 전문 보기의 각 조문을 표제·본문 구조로 표시하고,
+              조·항·목 위치를 낭독용 설명으로 함께 제공합니다.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* 본문: 전문은 전폭, 분절 보기는 우측 비교 패널만 그리드 */}

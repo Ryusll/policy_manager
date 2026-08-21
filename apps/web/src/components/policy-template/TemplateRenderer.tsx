@@ -118,11 +118,16 @@ function JoGroupBlock({
   highlightQuery: string;
   showArticleTitle: boolean;
 }) {
+  // 화면낭독기·점자 단말이 조 단위를 하나의 덩어리로 인식하도록 article 로 감싸고
+  // 표제를 heading 으로 준다. 들여쓰기(시각)만으로는 구조가 전달되지 않는다. (T-81)
   return (
-    <div className="text-sm border border-gray-100 rounded p-2 bg-white">
-      <div className="font-semibold text-gray-800 mb-1">
+    <article
+      className="text-sm border border-gray-100 rounded p-2 bg-white"
+      aria-label={`제${group.articleNumber}조`}
+    >
+      <h3 className="font-semibold text-gray-800 mb-1">
         {highlightText(formatArticleJo(group.articleNumber), highlightQuery)}
-      </div>
+      </h3>
       <div className="space-y-2">
         {joGroupRenderRows(group).map(({ article, depth }, idx) => (
           <FullViewArticleRow
@@ -134,7 +139,7 @@ function JoGroupBlock({
           />
         ))}
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -160,8 +165,17 @@ function FullViewArticleRow({
   // HTML 템플릿·PDF 출력(`buildEnterprisePolicyBodyHtml`)과 같은 규칙이어야 화면과 인쇄물이 일치한다.
   const inlineSub = !!sub && !title;
   const headLine = sub ? `${sub}${title ? ` ${title}` : ''}` : title;
+  // 낭독용 위치 설명. 화면 표기(①)는 낭독기가 "동그라미 일" 로 읽거나 건너뛴다.
+  // 들여쓰기로만 표현된 계층을 말로 전달하려면 이 설명이 필요하다. (T-81)
+  const spokenPosition =
+    article.itemNumber != null
+      ? `제${article.number}조 제${article.clauseNumber ?? 0}항 제${article.itemNumber}목`
+      : article.clauseNumber != null
+        ? `제${article.number}조 제${article.clauseNumber}항`
+        : null;
   return (
     <div className={clsx(plClass, 'border-l-2 border-gray-100 pl-3')}>
+      {spokenPosition && <span className="sr-only">{spokenPosition}</span>}
       {headLine && !inlineSub ? (
         <div className="font-medium text-gray-800">{highlightText(headLine, highlightQuery)}</div>
       ) : null}
