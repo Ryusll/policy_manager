@@ -61,6 +61,9 @@ services:
       # Single browser-facing URL → CORS, OAuth redirect, Google callback path (${PUBLIC_URL}/api/auth/google/callback)
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
       TRUST_PROXY: "1"
+      # 데모 계정(admin@demo.com / password123) 생성 여부.
+      # 터널·상시 서버 등 외부에서 열리는 배포에서는 반드시 false 로 둔다.
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
       STORAGE_TYPE: minio
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000

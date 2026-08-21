@@ -7,6 +7,7 @@ import { Plus, FileText, FileUp, Trash2, Search, ChevronDown } from 'lucide-reac
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { PolicyHierarchyPanel } from '../components/PolicyHierarchyPanel';
+import { INDEX_KEYS, compareKo, countByIndexKey, indexKeyOf } from '../lib/hangulIndex';
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
 import { useI18n } from '../i18n/useI18n';
@@ -38,6 +39,8 @@ export default function PoliciesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [view, setView] = useState<'list' | 'tree'>('list');
+  /** 가나다 색인 (T-77). null 이면 전체 */
+  const [indexKey, setIndexKey] = useState<string | null>(null);
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [showImportAdvanced, setShowImportAdvanced] = useState(false);
   const [createMode, setCreateMode] = useState<'manual' | 'import'>('manual');
@@ -307,6 +310,8 @@ export default function PoliciesPage() {
     return Array.from(values).sort((a, b) => a.localeCompare(b, 'ko'));
   }, [policies]);
 
+  // 색인 칸의 건수는 색인 자체를 빼고 센다(다른 칸이 0으로 보이면 안 된다)
+  const indexCounts = countByIndexKey(policies as any[], (p: any) => p.title);
   const filtered = policies.filter((p: any) => {
     const { department, category } = getPolicyMeta(p);
     const q = search.trim().toLowerCase();
@@ -319,8 +324,14 @@ export default function PoliciesPage() {
       category.toLowerCase().includes(q);
     const matchedDepartment = selectedDepartment === 'all' || department === selectedDepartment;
     const matchedCategory = selectedCategory === 'all' || category === selectedCategory;
-    return matchedSearch && matchedDepartment && matchedCategory;
+    const matchedIndex = !indexKey || indexKeyOf(p.title) === indexKey;
+    return matchedSearch && matchedDepartment && matchedCategory && matchedIndex;
   });
+
+  // 색인으로 훑을 때는 사전처럼 가나다 순이어야 읽힌다. 평소에는 기존 순서를 유지한다.
+  const visible = indexKey
+    ? [...filtered].sort((a: any, b: any) => compareKo(a.title, b.title))
+    : filtered;
 
   useEffect(() => {
     const key = `policy-import-profile:${user?.tenantId || 'default'}`;
@@ -983,6 +994,46 @@ export default function PoliciesPage() {
 
       {view === 'list' && (
         <>
+      <div className="card px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[11px] text-gray-500 mr-1">가나다 색인</span>
+          <button
+            type="button"
+            onClick={() => setIndexKey(null)}
+            className={clsx(
+              'px-2 py-1 text-xs rounded border',
+              indexKey === null
+                ? 'border-navy-600 bg-navy-700 text-white'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+            )}
+          >
+            전체
+          </button>
+          {INDEX_KEYS.map((key) => {
+            const n = indexCounts[key] || 0;
+            return (
+              <button
+                key={key}
+                type="button"
+                disabled={n === 0}
+                onClick={() => setIndexKey(key === indexKey ? null : key)}
+                title={n === 0 ? '해당 규정 없음' : `${n}건`}
+                className={clsx(
+                  'px-2 py-1 text-xs rounded border tabular-nums',
+                  indexKey === key
+                    ? 'border-navy-600 bg-navy-700 text-white'
+                    : n === 0
+                      ? 'border-gray-200 bg-white text-gray-300 cursor-not-allowed'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+                )}
+              >
+                {key}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="card px-4 py-3 flex flex-wrap items-center gap-3">
         <Search size={15} className="text-gray-400 flex-shrink-0" />
         <input
@@ -1016,7 +1067,7 @@ export default function PoliciesPage() {
             </option>
           ))}
         </select>
-        {search && <span className="text-xs text-gray-500">{t('policies.countUnit', { n: filtered.length })}</span>}
+        {search && <span className="text-xs text-gray-500">{t('policies.countUnit', { n: visible.length })}</span>}
       </div>
 
       <div className="section-card">
@@ -1038,7 +1089,7 @@ export default function PoliciesPage() {
                 </td>
               </tr>
             )}
-            {!isLoading && filtered.length === 0 && (
+            {!isLoading && visible.length === 0 && (
               <tr>
                 <td colSpan={5}>
                   <EmptyState
@@ -1055,7 +1106,7 @@ export default function PoliciesPage() {
               </tr>
             )}
             {!isLoading &&
-              filtered.map((policy: any, idx: number) => (
+              visible.map((policy: any, idx: number) => (
               <tr key={policy.id}>
                 <td className="text-center text-xs text-gray-400">{idx + 1}</td>
                 <td className="font-mono text-xs text-gray-500">{policy.code}</td>

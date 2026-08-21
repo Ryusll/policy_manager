@@ -32,17 +32,25 @@ else
   fi
 fi
 
-echo "[startup] Seeding demo data (tenant: demo, admin@demo.com / password123)..."
-SEEDED=0
-if [ -f dist-seed/seed.js ] && node dist-seed/seed.js; then
-  SEEDED=1
-  echo "[startup] dist-seed/seed.js completed."
-elif npx prisma db seed; then
-  SEEDED=1
-  echo "[startup] prisma db seed completed."
-fi
-if [ "$SEEDED" != 1 ]; then
-  echo "[startup] WARNING: demo seed did not run. Fix with: docker compose exec api npx prisma db seed"
+# 데모 시드는 공개 주소로 공유하는 순간 위험해진다.
+# 시드가 만드는 admin@demo.com / password123 은 리포에 그대로 적혀 있어 공개된 것과 같다.
+# 터널·상시 서버 등 외부에서 접근 가능한 배포에서는 .env 에 SEED_DEMO_DATA=false 를 둔다.
+# (시드를 꺼도 최초 조직은 POST /api/auth/register 로 만들 수 있다.)
+if [ "${SEED_DEMO_DATA:-true}" = "true" ]; then
+  echo "[startup] Seeding demo data (tenant: demo, admin@demo.com / password123)..."
+  SEEDED=0
+  if [ -f dist-seed/seed.js ] && node dist-seed/seed.js; then
+    SEEDED=1
+    echo "[startup] dist-seed/seed.js completed."
+  elif npx prisma db seed; then
+    SEEDED=1
+    echo "[startup] prisma db seed completed."
+  fi
+  if [ "$SEEDED" != 1 ]; then
+    echo "[startup] WARNING: demo seed did not run. Fix with: docker compose exec api npx prisma db seed"
+  fi
+else
+  echo "[startup] SEED_DEMO_DATA=false -> skipping demo seed (no demo accounts will be created)."
 fi
 
 echo "[startup] Starting API server..."

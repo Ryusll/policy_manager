@@ -9,6 +9,9 @@ const ENACTED_ON = new Date(Date.UTC(2025, 0, 1)); // 2025-01-01 제정
 const AMENDED_ON = new Date(Date.UTC(2026, 2, 1)); // 2026-03-01 일부개정
 
 async function main() {
+  // 이 해시는 **계정 생성 시에만** 쓴다. upsert의 update에 넣으면 컨테이너가
+  // 재시작될 때마다 관리자가 바꿔 둔 비밀번호가 password123으로 되돌아간다
+  // (공개 주소로 공유하는 순간 누구나 관리자로 로그인 가능해진다).
   const passwordHash = await bcrypt.hash('password123', 10);
 
   const platformTenant = await prisma.tenant.upsert({
@@ -24,7 +27,6 @@ async function main() {
   await prisma.user.upsert({
     where: { tenantId_email: { tenantId: platformTenant.id, email: 'admin@astrum.com' } },
     update: {
-      passwordHash,
       name: 'Astrum Platform Admin',
       role: Role.admin,
       platformRole: 'global_admin',
@@ -52,7 +54,6 @@ async function main() {
   await prisma.user.upsert({
     where: { tenantId_email: { tenantId: tenant.id, email: 'admin@demo.com' } },
     update: {
-      passwordHash,
       name: 'Admin User',
       role: Role.admin,
       platformRole: 'none',
@@ -70,7 +71,6 @@ async function main() {
   await prisma.user.upsert({
     where: { tenantId_email: { tenantId: tenant.id, email: 'editor@demo.com' } },
     update: {
-      passwordHash,
       name: 'Editor User',
       role: Role.editor,
     },
@@ -86,7 +86,6 @@ async function main() {
   await prisma.user.upsert({
     where: { tenantId_email: { tenantId: tenant.id, email: 'viewer@demo.com' } },
     update: {
-      passwordHash,
       name: 'Viewer User',
       role: Role.viewer,
     },
