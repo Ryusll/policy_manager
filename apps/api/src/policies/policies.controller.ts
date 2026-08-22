@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Put, Delete, Param, Body, Query, Request, HttpCode,
-  UseInterceptors, UploadedFile, Res, NotFoundException,
+  UseInterceptors, UploadedFile, Res, NotFoundException, BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
@@ -21,6 +21,11 @@ import {
   ExportPolicyPdfDto,
 } from './policies.dto';
 import { Roles } from '../common/guards/decorators';
+import {
+  UnsafeUploadPathError,
+  policyUploadDir,
+  policyUploadFilePath,
+} from './upload-path';
 
 @ApiTags('policies')
 @ApiBearerAuth()
@@ -30,6 +35,21 @@ export class PoliciesController {
     private policiesService: PoliciesService,
     private policyPdfService: PolicyPdfService,
   ) {}
+
+  /**
+   * 경로 조립 실패를 400으로 바꾼다.
+   *
+   * `UnsafeUploadPathError` 를 그대로 두면 Nest 가 500으로 내보내고, 무엇이 걸렸는지가
+   * 스택과 함께 새어 나간다. 잘못 온 요청이지 서버 오류가 아니다.
+   */
+  private safe<T>(fn: () => T): T {
+    try {
+      return fn();
+    } catch (e) {
+      if (e instanceof UnsafeUploadPathError) throw new BadRequestException(e.message);
+      throw e;
+    }
+  }
 
   @Get()
   @ApiOperation({ summary: '규정 목록 조회' })
@@ -321,9 +341,14 @@ export class PoliciesController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req: any, file, cb) => {
-          const dir = join('/app/uploads', req.user?.tenantId || 'default', req.params.id);
-          if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-          cb(null, dir);
+          // multer 옵션은 DI 밖이라 여기서는 경로만 검증한다. 규정 소유 확인은 핸들러에서.
+          try {
+            const dir = policyUploadDir(req.user?.tenantId, req.params.id);
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+            cb(null, dir);
+          } catch (e) {
+            cb(e as Error, '');
+          }
         },
         filename: (req, file, cb) => {
           const unique = Date.now() + '-' + Math.round(Math.random() * 1e6);
@@ -348,12 +373,20 @@ export class PoliciesController {
       },
     }),
   )
-  uploadFile(
+  async uploadFile(
     @Request() req: any,
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file) throw new NotFoundException('파일이 없습니다.');
+    // multer 는 핸들러보다 먼저 디스크에 쓴다. 소유가 아니면 남기지 않고 지운다.
+    try {
+      await this.policiesService.findOne(req.user.tenantId, id);
+    } catch (e) {
+      const { unlinkSync } = require('fs');
+      try { unlinkSync(file.path); } catch { /* 이미 없으면 그만 */ }
+      throw e;
+    }
     return {
       id: file.filename,
       originalName: file.originalname,
@@ -366,9 +399,10 @@ export class PoliciesController {
 
   @Get(':id/files')
   @ApiOperation({ summary: '규정 파일 목록 조회' })
-  listFiles(@Request() req: any, @Param('id') id: string) {
+  async listFiles(@Request() req: any, @Param('id') id: string) {
+    await this.policiesService.findOne(req.user.tenantId, id);
     const { readdirSync, statSync } = require('fs');
-    const dir = join('/app/uploads', req.user.tenantId, id);
+    const dir = this.safe(() => policyUploadDir(req.user.tenantId, id));
     if (!existsSync(dir)) return [];
     return readdirSync(dir).map((filename: string) => {
       const stat = statSync(join(dir, filename));
@@ -416,13 +450,14 @@ export class PoliciesController {
 
   @Get(':id/files/:filename')
   @ApiOperation({ summary: '파일 다운로드' })
-  downloadFile(
+  async downloadFile(
     @Request() req: any,
     @Param('id') id: string,
     @Param('filename') filename: string,
     @Res() res: Response,
   ) {
-    const filePath = join('/app/uploads', req.user.tenantId, id, filename);
+    await this.policiesService.findOne(req.user.tenantId, id);
+    const filePath = this.safe(() => policyUploadFilePath(req.user.tenantId, id, filename));
     if (!existsSync(filePath)) throw new NotFoundException('파일을 찾을 수 없습니다.');
     res.download(filePath, filename.replace(/^\d+-\d+-/, ''));
   }
@@ -431,13 +466,14 @@ export class PoliciesController {
   @Roles('admin', 'editor')
   @HttpCode(204)
   @ApiOperation({ summary: '파일 삭제' })
-  deleteFile(
+  async deleteFile(
     @Request() req: any,
     @Param('id') id: string,
     @Param('filename') filename: string,
   ) {
+    await this.policiesService.findOne(req.user.tenantId, id);
     const { unlinkSync } = require('fs');
-    const filePath = join('/app/uploads', req.user.tenantId, id, filename);
+    const filePath = this.safe(() => policyUploadFilePath(req.user.tenantId, id, filename));
     if (!existsSync(filePath)) throw new NotFoundException('파일을 찾을 수 없습니다.');
     unlinkSync(filePath);
   }

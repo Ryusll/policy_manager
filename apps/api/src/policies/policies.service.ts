@@ -677,9 +677,7 @@ export class PoliciesService {
     chapterId: string,
     dto: CreateArticleDto,
   ) {
-    await this.findOne(tenantId, policyId);
-    const chapter = await this.prisma.chapter.findFirst({ where: { id: chapterId, policyId } });
-    if (!chapter) throw new NotFoundException('Chapter not found');
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
     const sectionId = await this.resolveSectionId(chapterId, dto.sectionId);
 
     const article = await this.prisma.article.create({
@@ -714,7 +712,8 @@ export class PoliciesService {
   }
 
   async updateArticle(tenantId: string, policyId: string, chapterId: string, articleId: string, dto: UpdateArticleDto) {
-    await this.findOne(tenantId, policyId);
+    // 장이 이 규정 소속인지까지 확인한다. 규정만 보면 남의 장·조문을 고칠 수 있다(T-41).
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
     const article = await this.prisma.article.findFirst({
       where: { id: articleId, chapterId },
     });
@@ -734,7 +733,7 @@ export class PoliciesService {
   }
 
   async removeArticle(tenantId: string, policyId: string, chapterId: string, articleId: string) {
-    await this.findOne(tenantId, policyId);
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
     const article = await this.prisma.article.findFirst({
       where: { id: articleId, chapterId },
     });
