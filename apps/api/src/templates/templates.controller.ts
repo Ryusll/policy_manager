@@ -1,7 +1,12 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { MinPlan, Roles } from '../common/guards/decorators';
-import { CloneTemplateDto, CreateTemplateDto, UpdateTemplateDto } from './templates.dto';
+import {
+  CloneTemplateDto,
+  CreateTemplateDto,
+  RestoreTemplateDto,
+  UpdateTemplateDto,
+} from './templates.dto';
 import { TemplatesService } from './templates.service';
 
 @ApiTags('templates')
@@ -63,5 +68,13 @@ export class TemplatesController {
   @ApiOperation({ summary: '기본 템플릿 지정' })
   setDefault(@Request() req: any, @Param('id') id: string) {
     return this.templatesService.setDefault(req.user.tenantId, id, req.user.id);
+  }
+
+  @Post(':id/restore')
+  @Roles('admin') // 수정(PUT)과 같은 권한 — 복원도 결국 템플릿을 덮어쓴다
+  @HttpCode(200) // 새 리소스를 만드는 게 아니라 기존 템플릿을 되돌린다
+  @ApiOperation({ summary: '템플릿을 지정한 이력 시점으로 복원' })
+  restore(@Request() req: any, @Param('id') id: string, @Body() dto: RestoreTemplateDto) {
+    return this.templatesService.restore(req.user.tenantId, id, dto.revisionId, req.user.id);
   }
 }

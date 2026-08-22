@@ -417,6 +417,7 @@ export default function SettingsPage() {
     'template.clone': '템플릿 복제',
     'template.setDefault': '기본 템플릿 지정',
     'template.delete': '템플릿 삭제',
+    'template.restore': '이력 복원',
   };
   const fieldLabelMap: Record<string, string> = {
     name: '템플릿 이름',
@@ -1816,20 +1817,14 @@ export default function SettingsPage() {
                   type="button"
                   className="btn-primary text-sm"
                   onClick={async () => {
-                    const snap = restoreCandidate.details?.after || restoreCandidate.details?.snapshot;
-                    if (!selectedTemplateId || !snap) {
+                    if (!selectedTemplateId) {
                       setRestoreCandidate(null);
                       return;
                     }
                     try {
-                      await templatesApi.update(selectedTemplateId, {
-                        name: snap.name,
-                        description: snap.description || '',
-                        isDefault: !!snap.isDefault,
-                        isActive: snap.isActive !== false,
-                        layoutJson: snap.layoutJson || {},
-                        cssText: snap.cssText || '',
-                      });
+                      // 스냅샷은 서버가 이력에서 직접 읽는다 (T-58). 화면이 보내면
+                      // 복원 기록에 적힌 시점과 실제로 들어간 내용이 어긋날 수 있다.
+                      await templatesApi.restore(selectedTemplateId, restoreCandidate.id);
                       await loadTemplates();
                       await loadTemplateRevisions(selectedTemplateId);
                       setTemplateMsg('선택한 이력으로 복원했습니다.');

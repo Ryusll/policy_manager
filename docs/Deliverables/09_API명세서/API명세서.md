@@ -114,6 +114,16 @@
 | DELETE | :id | admin | 템플릿 삭제 |
 | POST | :id/clone | admin | 템플릿 복제 |
 | POST | :id/set-default | admin | 테넌트 기본 템플릿 지정 |
+| POST | :id/restore | admin | 지정한 이력 시점으로 복원. Body: `revisionId`(=`:id/revisions` 의 `id`). 감사 로그에 `template.restore` 로 남아 일반 수정과 구분된다(T-58) |
+
+## tenant-branding (`/api/tenant-branding`)
+
+> 회사(테넌트) 브랜딩. 플랫폼(운영사) 브랜딩인 `/platform-branding` 과 다르다.
+
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | (root) | JWT | 회사 로고·배지 문자 조회. **플랜·역할 제한 없음** — 헤더는 모든 구성원이 그린다. 저장된 적 없으면 기본값 + `updatedAt: null` |
+| PUT | (root) | admin (Pro+) | 저장. Body: `brandMark`(2자로 잘림), `logoDataUrl`(`data:image/…` 만, 350KB 이하), `logoWidth`·`logoHeight`(16~96) |
 
 ## notifications (`/api/notifications`)
 | Method | Path | 인증 | 설명 |

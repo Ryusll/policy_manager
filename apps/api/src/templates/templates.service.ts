@@ -247,7 +247,20 @@ export class TemplatesService {
     return created;
   }
 
-  async update(tenantId: string, id: string, dto: UpdateTemplateDto, userId: string) {
+  /**
+   * 편집과 복원이 공유하는 실제 적용부.
+   *
+   * 검증(모양·플랜·이름 중복)을 여기 모아 둔 이유는 복원이 그 검사를 건너뛰기 쉬워서다.
+   * 예전 스냅샷에는 지금 플랜으로는 만들 수 없는 자유 HTML 이 들어 있을 수 있고,
+   * 그때의 이름을 지금 다른 템플릿이 쓰고 있을 수도 있다.
+   */
+  private async applyTemplateChange(
+    tenantId: string,
+    id: string,
+    dto: UpdateTemplateDto,
+    userId: string,
+    audit: { action: string; details?: Record<string, unknown> },
+  ) {
     validateTemplateShape(dto);
     const plan = await this.getTenantPlan(tenantId);
     this.ensureAdvancedTemplateAllowed(plan, dto.layoutJson, dto.cssText);
@@ -275,12 +288,67 @@ export class TemplatesService {
     await this.audit.log({
       tenantId,
       userId,
-      action: 'template.update',
+      action: audit.action,
       entityType: 'PolicyTemplate',
       entityId: id,
-      details: { fields: Object.keys(dto), before: this.snapshot(before), after: this.snapshot(updated) },
+      details: {
+        ...(audit.details ?? {}),
+        fields: Object.keys(dto),
+        before: this.snapshot(before),
+        after: this.snapshot(updated),
+      },
     });
     return updated;
+  }
+
+  async update(tenantId: string, id: string, dto: UpdateTemplateDto, userId: string) {
+    return this.applyTemplateChange(tenantId, id, dto, userId, { action: 'template.update' });
+  }
+
+  /**
+   * 이력 복원 (T-58).
+   *
+   * 예전에는 화면이 감사 로그에서 스냅샷을 읽어 `update` 를 호출했다. 그래서 감사 로그에
+   * `template.update` 로만 남아 **평범한 편집과 구분되지 않았다** — 누가 언제 어느 시점으로
+   * 되돌렸는지 추적할 수 없었다는 뜻이다.
+   *
+   * 스냅샷을 클라이언트가 보내는 대신 **서버가 이력에서 직접 읽는다**. 무엇을 복원할지
+   * 화면이 정하면, 복원 기록에 적힌 시점과 실제로 들어간 내용이 어긋날 수 있다.
+   */
+  async restore(tenantId: string, id: string, revisionId: string, userId: string) {
+    await this.findOne(tenantId, id);
+    const revision = await this.prisma.auditLog.findFirst({
+      where: { id: revisionId, tenantId, entityType: 'PolicyTemplate', entityId: id },
+    });
+    if (!revision) throw new NotFoundException('복원할 이력을 찾을 수 없습니다.');
+
+    const details = (revision.details ?? {}) as Record<string, any>;
+    const snap = details.after ?? details.snapshot;
+    if (!snap || typeof snap !== 'object') {
+      throw new BadRequestException('이 이력에는 복원할 내용이 없습니다.');
+    }
+
+    return this.applyTemplateChange(
+      tenantId,
+      id,
+      {
+        name: snap.name,
+        description: snap.description ?? '',
+        isDefault: !!snap.isDefault,
+        isActive: snap.isActive !== false,
+        layoutJson: snap.layoutJson ?? {},
+        cssText: snap.cssText ?? '',
+      },
+      userId,
+      {
+        action: 'template.restore',
+        details: {
+          restoredFromRevisionId: revisionId,
+          restoredFromAction: revision.action,
+          restoredFromAt: revision.createdAt.toISOString(),
+        },
+      },
+    );
   }
 
   async remove(tenantId: string, id: string, userId: string) {
