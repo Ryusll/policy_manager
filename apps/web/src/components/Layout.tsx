@@ -1,5 +1,6 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
 import { policiesApi } from '../api/policies';
 import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield } from 'lucide-react';
@@ -34,6 +35,7 @@ function isPlanTier(value: string): value is PlanTier {
 export default function Layout() {
   const { t, locale } = useI18n();
   const { user, logout } = useAuthStore();
+  useTenantBrandingSync();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);

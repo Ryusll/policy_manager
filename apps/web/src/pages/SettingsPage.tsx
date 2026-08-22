@@ -166,9 +166,14 @@ export default function SettingsPage() {
     setCAcc(customAccentHex);
   }, [customPrimaryHex, customAccentHex]);
 
-  const setBrandMark = useBrandStore((s) => s.setBrandMark);
-  const setBrandLogoDataUrl = useBrandStore((s) => s.setBrandLogoDataUrl);
-  const setBrandLogoSize = useBrandStore((s) => s.setBrandLogoSize);
+  const saveBrandToServer = useBrandStore((s) => s.saveToServer);
+  const brandLoaded = useBrandStore((s) => s.loaded);
+  const [brandSaving, setBrandSaving] = useState(false);
+  /**
+   * 브랜딩은 T-57에서 서버 저장으로 바뀌면서 **회사 전체에 반영**된다.
+   * localStorage 시절에는 각자 자기 브라우저만 바뀌어 아무나 만져도 그만이었다.
+   */
+  const brandEditable = customizationEnabled && isAdmin;
 
   type BrandDraft = {
     mark: string;
@@ -196,7 +201,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (activeTab !== 'ui') return;
     setBrandDraft(readBrandDraftFromStore());
-  }, [activeTab]);
+    // `brandLoaded` 를 넣은 이유: 서버 응답이 화면을 연 뒤에 오면 초안이 캐시 값에 머문다
+  }, [activeTab, brandLoaded]);
 
   const loadNotifyTeams = async () => {
     if (!isAdmin) return;
@@ -224,7 +230,7 @@ export default function SettingsPage() {
     Math.min(LOGO_SIZE_MAX, Math.max(LOGO_SIZE_MIN, Math.round(Number.isFinite(n) ? n : DEFAULT_LOGO_WIDTH)));
 
   const onPickLogo = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!customizationEnabled) {
+    if (!brandEditable) {
       e.target.value = '';
       return;
     }
@@ -719,11 +725,17 @@ export default function SettingsPage() {
       <div className="bg-white border border-gray-300 shadow-sm p-5 space-y-5">
         <h2 className="text-sm font-semibold text-gray-800">{t('settings.brandSectionTitle')}</h2>
 
+        {customizationEnabled && !isAdmin && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+            브랜딩은 <strong>회사 전체</strong>에 적용되는 설정이라 관리자만 바꿀 수 있습니다. 현재 적용된 값은 아래에서 확인할 수 있습니다.
+          </p>
+        )}
+
         <div>
           <h3 className="text-xs font-medium text-gray-700 mb-2">{t('settings.logoTitle')}</h3>
           <p className="text-xs text-gray-500 mb-3">{t('settings.logoHint')}</p>
           <p className="text-xs text-navy-700 bg-navy-50 border border-navy-200 rounded px-2 py-1.5 mb-3">
-            로고·크기·텍스트 배지는 아래에서만 미리보기로 바뀝니다. <strong>저장</strong>을 눌러야 헤더·규정 인쇄 양식 등에 반영됩니다.
+            로고·크기·텍스트 배지는 아래에서만 미리보기로 바뀝니다. <strong>저장</strong>을 눌러야 헤더·규정 인쇄 양식 등에 반영되며, <strong>회사 구성원 모두</strong>의 화면에 적용됩니다.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickLogo} />
@@ -731,7 +743,7 @@ export default function SettingsPage() {
               type="button"
               className="btn-secondary text-sm"
               onClick={() => fileRef.current?.click()}
-              disabled={!customizationEnabled}
+              disabled={!brandEditable}
             >
               {t('settings.logoUpload')}
             </button>
@@ -743,7 +755,7 @@ export default function SettingsPage() {
                   setBrandDraft((prev) => ({ ...prev, logo: null }));
                   setBrandMsg('미리보기에서 로고를 뺐습니다. 저장하면 적용됩니다.');
                 }}
-                disabled={!customizationEnabled}
+                disabled={!brandEditable}
               >
                 {t('settings.logoRemove')}
               </button>
@@ -769,7 +781,7 @@ export default function SettingsPage() {
                     h: prev.h,
                   }))
                 }
-                disabled={!customizationEnabled}
+                disabled={!brandEditable}
                 className="input w-24"
               />
             </div>
@@ -787,7 +799,7 @@ export default function SettingsPage() {
                     h: clampLogoDim(+e.target.value),
                   }))
                 }
-                disabled={!customizationEnabled}
+                disabled={!brandEditable}
                 className="input w-24"
               />
             </div>
@@ -818,7 +830,7 @@ export default function SettingsPage() {
               maxLength={2}
               value={brandDraft.mark}
               onChange={(e) => setBrandDraft((prev) => ({ ...prev, mark: e.target.value }))}
-              disabled={!customizationEnabled}
+              disabled={!brandEditable}
               className="input w-32 font-medium"
               placeholder={DEFAULT_BRAND_MARK}
               aria-label={t('settings.brandMark')}
@@ -836,17 +848,30 @@ export default function SettingsPage() {
           <button
             type="button"
             className="btn-primary text-sm"
-            onClick={() => {
-              const mark = brandDraft.mark.trim().slice(0, 2) || DEFAULT_BRAND_MARK;
-              setBrandMark(mark);
-              setBrandLogoDataUrl(brandDraft.logo);
-              setBrandLogoSize(brandDraft.w, brandDraft.h);
-              setBrandDraft(readBrandDraftFromStore());
-              setBrandMsg('브랜드 설정을 저장했습니다. 헤더·인쇄에 반영되었습니다.');
+            onClick={async () => {
+              setLogoError('');
+              setBrandSaving(true);
+              try {
+                await saveBrandToServer({
+                  brandMark: brandDraft.mark,
+                  brandLogoDataUrl: brandDraft.logo,
+                  brandLogoWidth: brandDraft.w,
+                  brandLogoHeight: brandDraft.h,
+                });
+                setBrandDraft(readBrandDraftFromStore());
+                setBrandMsg('브랜드 설정을 저장했습니다. 회사 구성원 모두의 화면·인쇄에 반영됩니다.');
+              } catch (e: any) {
+                setBrandMsg('');
+                setLogoError(
+                  e?.response?.data?.message || '브랜드 설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+                );
+              } finally {
+                setBrandSaving(false);
+              }
             }}
-            disabled={!customizationEnabled}
+            disabled={!brandEditable || brandSaving}
           >
-            {t('settings.save')}
+            {brandSaving ? '저장 중…' : t('settings.save')}
           </button>
           <button
             type="button"
@@ -856,7 +881,7 @@ export default function SettingsPage() {
               setLogoError('');
               setBrandMsg('저장된 설정으로 되돌렸습니다.');
             }}
-            disabled={!customizationEnabled}
+            disabled={!brandEditable}
           >
             변경 취소
           </button>
@@ -873,7 +898,7 @@ export default function SettingsPage() {
               setLogoError('');
               setBrandMsg('미리보기를 기본값으로 바꿨습니다. 저장하면 반영됩니다.');
             }}
-            disabled={!customizationEnabled}
+            disabled={!brandEditable}
           >
             미리보기 기본값
           </button>
