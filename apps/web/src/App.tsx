@@ -14,6 +14,7 @@ import SettingsPage from './pages/SettingsPage';
 import AboutPage from './pages/AboutPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import PlatformAdminPage from './pages/PlatformAdminPage';
+import AuditLogPage from './pages/AuditLogPage';
 import ToastHost from './components/ui/ToastHost';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="variables" element={<VariablesPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="integrations" element={<IntegrationsPage />} />
+          <Route path="audit-logs" element={<AuditLogPage />} />
           <Route path="admin" element={<PlatformAdminPage />} />
           <Route path="platform-admin" element={<PlatformAdminPage />} />
           <Route path="about" element={<AboutPage />} />

@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
 import { policiesApi } from '../api/policies';
-import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield } from 'lucide-react';
+import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText } from 'lucide-react';
 import UserMenu from './UserMenu';
 import { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
@@ -23,6 +23,7 @@ const navDefs = [
   { path: '/variables', labelKey: 'layout.nav.variables', icon: Variable, id: 'nav-variables' },
   { path: '/settings', labelKey: 'layout.nav.settings', icon: Settings, id: 'nav-settings' },
   { path: '/integrations', labelKey: 'layout.nav.integrations', icon: PlugZap, id: 'nav-integrations' },
+  { path: '/audit-logs', labelKey: 'layout.nav.auditLogs', icon: ScrollText, id: 'nav-audit-logs' },
   { path: '/admin', labelKey: 'layout.nav.admin', icon: Shield, id: 'nav-platform-admin' },
 ] as const;
 
@@ -45,9 +46,12 @@ export default function Layout() {
   const navItems = useMemo(() => {
     const isEnterprise = canUseApiIntegration(user?.plan);
     const isViewer = user?.role === 'viewer';
+    const isAdmin = user?.role === 'admin';
     return navDefs
       .filter((item) => (item.path === '/integrations' ? isEnterprise : true))
       .filter((item) => (item.path === '/admin' ? user?.platformRole === 'global_admin' : true))
+      // 감사 로그에는 다른 구성원의 활동이 담긴다 — 회사 관리자만 본다
+      .filter((item) => (item.path === '/audit-logs' ? isAdmin : true))
       .filter((item) => {
         if (!isViewer) return true;
         return item.path === '/search';

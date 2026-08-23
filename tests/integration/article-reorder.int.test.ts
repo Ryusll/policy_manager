@@ -222,6 +222,6 @@ describe('조 순서 재정렬 (T-60)', () => {
 
   it('재정렬이 감사 로그에 남는다', async () => {
     const { body } = await api('/audit-logs?limit=30', { token: t.token });
-    expect(body.map((r: any) => r.action)).toContain('policy.articles.reorder');
+    expect(body.rows.map((r: any) => r.action)).toContain('policy.articles.reorder');
   });
 });

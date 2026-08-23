@@ -80,9 +80,11 @@ describe('버전 반려·폐지 (T-10)', () => {
 
     it('반려가 감사 로그에 사유와 함께 남는다', async () => {
       const { body } = await api('/audit-logs?limit=50', { token: t.token });
-      const rejected = body.find((r: any) => r.action === 'version.reject');
+      const rejected = body.rows.find((r: any) => r.action === 'version.reject');
       expect(rejected).toBeTruthy();
-      expect(rejected.details.reason).toBeTruthy();
+      // 목록에는 details 본문이 없다(T-11) — 상세에서 받아 확인한다
+      const detail = await api(`/audit-logs/${rejected.id}`, { token: t.token });
+      expect(detail.body.details.reason).toBeTruthy();
     });
   });
 

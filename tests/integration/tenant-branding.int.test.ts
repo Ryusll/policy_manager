@@ -141,7 +141,7 @@ describe('회사 브랜딩 (T-57)', () => {
 
     it('저장이 감사 로그에 남는다', async () => {
       const { body } = await api('/audit-logs?limit=20', { token: proTokenA });
-      expect(body.map((r: any) => r.action)).toContain('branding.update');
+      expect(body.rows.map((r: any) => r.action)).toContain('branding.update');
     });
   });
 });

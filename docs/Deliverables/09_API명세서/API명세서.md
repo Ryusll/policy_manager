@@ -159,10 +159,18 @@
 |---|---|---|---|
 | POST | import/policies | admin | 규정 벌크 임포트 |
 
-## audit (`/api/audit-logs`) — UI 미연결(API만)
+## audit (`/api/audit-logs`)
+
+> 관리자(`admin`) 전용. 감사 로그에는 다른 구성원의 활동이 함께 담긴다.
+
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | admin | 감사 로그 조회 |
+| GET | (root) | admin | 목록. Query: `action`(정확히 일치 / 끝에 `.` 이면 접두어 묶음), `userId`, `from`·`to`(YYYY-MM-DD, **종료일 당일 포함**), `page`, `limit`(기본 50, 최대 200). 응답 `{rows, total, page, limit}`. **`rows` 에는 `details` 본문이 없다** — `hasDetails`·`keys` 만 (T-11) |
+| GET | actions | admin | 이 회사에 쌓인 액션 종류·건수 (필터 드롭다운용) |
+| GET | actors | admin | 기록을 남긴 적 있는 사용자 목록 (필터용) |
+| GET | :id | admin | 기록 상세 — `details` 본문 포함 |
+
+> **목록에서 `details` 를 뺀 이유**: 템플릿 수정 기록의 `details` 에는 before/after 스냅샷(레이아웃 JSON + CSS 전문)이 들어 있어, 50건이면 응답이 수 MB 가 된다. 목록에서는 펼치기 전까지 쓰지 않는다.
 
 ## billing (`/api/billing`)
 | Method | Path | 인증 | 설명 |
