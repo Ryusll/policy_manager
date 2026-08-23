@@ -12,7 +12,7 @@
 | ADR-0001 | 조·항·목을 단일 Article 테이블 + nullable 번호로 표현 | Accepted |
 | ADR-0002 | 멀티테넌시를 공유 DB + tenantId 컬럼(앱 레벨 격리)로 구현 | Accepted |
 | ADR-0003 | 테넌트 브랜딩을 서버가 아닌 브라우저 localStorage에 저장 | **Superseded by ADR-0014** |
-| ADR-0004 | 결제를 provider 추상화로 두되 결제 이력 테이블은 미사용 | Accepted (미완성) |
+| ADR-0004 | 결제를 provider 추상화로 두되 결제 이력 테이블은 미사용 | **일부 해소(T-17)** — 이력 테이블은 이제 쓰인다 |
 | ADR-0005 | 컨테이너 기동 시 migrate 실패하면 db push로 폴백 | **Superseded by ADR-0012** |
 | ADR-0006 | 검색을 pg_bigm 우선 + ILIKE 폴백으로 구현 | Accepted |
 | ADR-0007 | JWT를 Authorization 헤더로, CORS는 origin reflect | Accepted |
@@ -83,7 +83,7 @@
 
 ## ADR-0004 — 결제를 provider 추상화로 두되 결제 이력 테이블은 미사용
 
-**상태**: Accepted (미완성)
+**상태**: Accepted · **이력 미사용 부분은 2026-08-23 해소(T-17)**
 
 **맥락**
 플랜 업그레이드(Pro/Enterprise) 결제가 필요하나, 초기에는 특정 PG사 연동 없이 데모/개발이 가능해야 한다.
@@ -93,8 +93,10 @@
 
 **결과**
 - (+) PG 없이도 전체 업그레이드 플로우를 데모할 수 있고, 나중에 웹훅만 실제 PG에 물리면 된다.
-- (−) 스키마에 있는 `BillingCustomer`/`BillingSubscription`/`BillingPayment` 테이블을 **전혀 쓰지 않는다.** 결제·구독 이력이 남지 않는다(SRS 13.1, [08_ERD](../08_ERD_테이블명세서/ERD_테이블명세서.md)의 주의 참고).
-- (−) 특정 PG SDK·영수증·환불 처리가 없다. 실서비스 결제 전 별도 구현 필요.
+- (−) ~~스키마에 있는 `BillingCustomer`/`BillingSubscription`/`BillingPayment` 테이블을 전혀 쓰지 않는다~~ → **2026-08-23 해소(T-17)**. 결제 성공 시 세 테이블에 기록하고 `tenant.planExpiresAt` 을 구독 종료일로 채운다. 기록 경로가 provider 와 무관하므로, 실 PG 를 붙일 때 바뀌는 곳은 웹훅 해석뿐이다.
+- (−) 특정 PG SDK·영수증·환불 처리가 없다. 실서비스 결제 전 별도 구현 필요(D-03).
+- (−) **mock 결제는 0원으로 기록된다.** 실제로 돈이 오가지 않으므로 요금표를 지어내 넣지 않았다 — 이력이 그럴듯하게 거짓이 되는 것을 피한 것이다. 요금 정책이 정해지면(D-03) 실 결제 금액이 그대로 들어간다.
+- (−) 청구 주기를 **한 달 고정**으로 뒀다. 연간 결제나 비례 정산(proration)은 없다. 실 PG 연동 시 다시 볼 지점.
 
 ---
 

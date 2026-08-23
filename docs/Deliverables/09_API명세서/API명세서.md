@@ -181,8 +181,12 @@
 ## billing (`/api/billing`)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | checkout | admin | 플랜 업그레이드 체크아웃 (mock: 즉시 반영) |
-| POST | webhook | Public | 결제 프로바이더 웹훅 수신 |
+| POST | checkout | admin | 플랜 업그레이드 체크아웃 (mock: 즉시 반영). 성공 시 **구독·결제 기록을 남기고** `tenant.planExpiresAt` 을 구독 종료일로 채운다 (T-17) |
+| GET | history | admin | 결제·구독 이력. 응답 `{currentSubscription, subscriptions[], payments[]}` |
+| POST | webhook | Public | 결제 프로바이더 웹훅 수신. `data.amount`·`data.orderId` 를 결제 기록에 남긴다 |
+
+> **mock 결제는 0원으로 기록된다** — 실제로 돈이 오가지 않으므로 요금표를 지어내 넣지 않는다(`metadata.mock: true`). 실 PG 를 붙이면 결제사가 알려 준 금액을 쓴다(요금 정책은 D-03).
+> **구독 전이**: 같은 요금제를 다시 사면 기존 구독을 **연장**(이력이 쪼개지지 않게), 요금제가 바뀌면 이전 구독을 `canceled` 로 닫고 새로 연다(활성 구독은 항상 1개).
 
 ## platform-admin (`/api/platform-admin`) — `global_admin` 전용
 | Method | Path | 인증 | 설명 |

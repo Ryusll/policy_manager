@@ -132,7 +132,7 @@
 | 항목 | 실제 상태 |
 |---|---|
 | ~~규정 내보내기(Export)~~ | **2026-08-23 정리**(T-16 · [ADR-0015](../10_ADR_의사결정기록/ADR.md)). 빈 `ExportModule` 과 미사용 `ExportJob` 테이블 제거. 내보내기는 **동기**로 확정(PDF 는 응답 본문으로 반환), 이력은 감사 로그 `policy.export.pdf` 로 남긴다 |
-| 결제 이력·구독 관리 | `BillingCustomer`/`BillingSubscription`/`BillingPayment` 테이블은 존재하나 **코드에서 전혀 읽거나 쓰지 않음**. 결제 시 `tenant.plan`만 변경됨 |
+| ~~결제 이력·구독 관리~~ | **2026-08-23 해소**(T-17). 결제 시 세 테이블에 기록하고 `planExpiresAt` 을 구독 종료일로 채운다. `GET /billing/history` + 요금제 모달에 이력 표시. **mock 결제는 0원으로 남는다**(테스트 결제 표시) |
 | 실 PG 연동 | mock 즉시 반영, 또는 범용 hosted-checkout 리다이렉트+웹훅 골격만 존재. 특정 PG사(토스/아임포트 등) SDK 연동은 없음 |
 
 ### 13.2 백엔드 API는 있으나 UI가 없는 것

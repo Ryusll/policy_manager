@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { X, Check, Zap, Building2, Rocket } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { useI18n } from '../i18n/useI18n';
@@ -14,6 +15,17 @@ export default function PlanModal({ onClose }: Props) {
   const currentPlan = user?.plan || 'starter';
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<'pro' | 'enterprise' | null>(null);
+  const isAdmin = user?.role === 'admin';
+
+  /**
+   * 결제·구독 이력 (T-17). 기록을 남기기 시작했으니 볼 수 있어야 한다 —
+   * 보이지 않으면 남기는 의미가 없다. 관리자만 조회할 수 있는 API 다.
+   */
+  const { data: history } = useQuery({
+    queryKey: ['billing-history'],
+    queryFn: billingApi.history,
+    enabled: isAdmin,
+  });
 
   const plans = useMemo(
     () => [
@@ -190,6 +202,53 @@ export default function PlanModal({ onClose }: Props) {
               );
             })}
           </div>
+
+          {isAdmin && history && (
+            <div className="mt-5 border border-gray-200 rounded overflow-hidden">
+              <div className="bg-gray-50 border-b border-gray-200 px-3 py-2 text-xs font-medium text-gray-700">
+                결제·구독 이력
+              </div>
+              <div className="p-3 space-y-3 text-xs">
+                {history.currentSubscription ? (
+                  <p className="text-gray-700">
+                    현재 구독:{' '}
+                    <span className="font-semibold capitalize">{history.currentSubscription.plan}</span>
+                    {history.currentSubscription.currentPeriodEnd && (
+                      <>
+                        {' '}· 유효기간{' '}
+                        {new Date(history.currentSubscription.currentPeriodEnd).toLocaleDateString('ko-KR')}
+                        까지
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-gray-500">아직 결제 기록이 없습니다.</p>
+                )}
+
+                {history.payments.length > 0 && (
+                  <ul className="divide-y divide-gray-100 max-h-40 overflow-y-auto">
+                    {history.payments.map((pay) => (
+                      <li key={pay.id} className="flex items-center gap-2 py-1.5">
+                        <span className="text-gray-600">
+                          {new Date(pay.paidAt ?? pay.createdAt).toLocaleDateString('ko-KR')}
+                        </span>
+                        <span className="capitalize text-gray-800">{pay.metadata?.targetPlan ?? '-'}</span>
+                        <span className="ml-auto tabular-nums text-gray-700">
+                          {pay.amount.toLocaleString('ko-KR')}원
+                        </span>
+                        {/* 요금표를 지어내지 않는다 — mock 결제는 실제로 돈이 오가지 않았다 */}
+                        {pay.metadata?.mock && (
+                          <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                            테스트 결제
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="mt-5 bg-gray-50 border border-gray-200 rounded p-3 text-xs text-gray-500">
             <p>{t('plan.footer1')}</p>
