@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MinLength, IsDateString } from 'class-validator';
+import { IsString, IsOptional, MinLength, MaxLength, IsDateString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateVersionDto {
@@ -37,4 +37,12 @@ export class ApproveVersionDto {
   @IsOptional()
   @IsDateString()
   effectiveDate?: string;
+}
+
+export class RejectVersionDto {
+  @ApiProperty({ description: '반려 사유(필수). 사유 없이 되돌리면 편집자는 왜 반려됐는지 알 수 없다.' })
+  @IsString()
+  @MinLength(1, { message: '반려 사유를 입력하세요.' })
+  @MaxLength(2000)
+  reason: string;
 }

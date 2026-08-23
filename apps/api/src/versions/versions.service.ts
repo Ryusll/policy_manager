@@ -112,7 +112,8 @@ export class VersionsService {
     }
     const row = await this.prisma.articleVersion.update({
       where: { id: versionId },
-      data: { status: 'review' },
+      // 이전 반려 사유는 지운다. 남겨 두면 다시 올린 뒤에도 반려 상태처럼 보인다.
+      data: { status: 'review', reviewNote: null },
     });
     await this.audit.log({
       tenantId,
@@ -210,14 +211,24 @@ export class VersionsService {
     return result;
   }
 
-  async reject(tenantId: string, versionId: string, userId: string) {
+  /**
+   * 반려 — 검토 중인 버전을 초안으로 되돌린다 (T-10).
+   *
+   * 사유를 함께 받는다. 사유 없이 되돌리면 편집자는 **왜 반려됐는지 알 수 없는 초안**을
+   * 받게 되고, 같은 내용을 다시 올리기 쉽다. 감사 로그는 관리자만 볼 수 있어서
+   * 거기 적어 두는 것만으로는 편집자에게 닿지 않는다 — 버전 자체에 남긴다.
+   */
+  async reject(tenantId: string, versionId: string, userId: string, reason?: string) {
     const version = await this.findOne(tenantId, versionId);
     if (version.status !== 'review') {
       throw new BadRequestException('Only versions in review can be rejected');
     }
+    const note = String(reason ?? '').trim();
+    if (!note) throw new BadRequestException('반려 사유를 입력하세요.');
+
     const row = await this.prisma.articleVersion.update({
       where: { id: versionId },
-      data: { status: 'draft' },
+      data: { status: 'draft', reviewNote: note.slice(0, 2000) },
     });
     await this.audit.log({
       tenantId,
@@ -225,10 +236,17 @@ export class VersionsService {
       action: 'version.reject',
       entityType: 'ArticleVersion',
       entityId: versionId,
+      details: { reason: note.slice(0, 2000) },
     });
     return row;
   }
 
+  /**
+   * 폐지 — 게시된 버전을 archived 로 내린다 (T-10).
+   *
+   * 이 조문의 마지막 게시본이면 조문이 **전문 보기·인쇄에서 본문 없이 남는다**.
+   * 정당한 폐지도 있으므로 막지는 않고, 그렇게 됐는지를 응답으로 알려 화면이 말하게 한다.
+   */
   async archive(tenantId: string, versionId: string, userId: string) {
     const version = await this.findOne(tenantId, versionId);
     if (version.status !== 'published') {
@@ -238,14 +256,18 @@ export class VersionsService {
       where: { id: versionId },
       data: { status: 'archived' },
     });
+    const remainingPublished = await this.prisma.articleVersion.count({
+      where: { articleId: version.articleId, status: 'published' },
+    });
     await this.audit.log({
       tenantId,
       userId,
       action: 'version.archive',
       entityType: 'ArticleVersion',
       entityId: versionId,
+      details: { articleId: version.articleId, remainingPublished },
     });
-    return row;
+    return { ...row, remainingPublished };
   }
 
   async diff(tenantId: string, versionId1: string, versionId2: string) {

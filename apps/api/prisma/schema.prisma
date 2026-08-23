@@ -353,6 +353,9 @@ model ArticleVersion {
   content     String
   status      VersionStatus @default(draft)
   changeNote  String?       @map("change_note")
+  /// 반려 사유(T-10). 검토자가 되돌려 보낸 까닭 — 없으면 편집자는 왜 반려됐는지 알 수 없다.
+  /// 다시 검토 요청을 하면 지운다(이전 반려 사유가 남아 있으면 현재 상태를 잘못 읽는다).
+  reviewNote  String?       @map("review_note") @db.Text
   /// 이 버전이 시행된 날. 시점 조회(as-of)의 기준. 승인 시 확정된다.
   effectiveDate DateTime?   @map("effective_date") @db.Date
   approvedBy  String?       @map("approved_by")

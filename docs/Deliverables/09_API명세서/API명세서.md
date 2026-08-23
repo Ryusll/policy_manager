@@ -78,8 +78,8 @@
 | PUT | versions/:id | admin, editor | 초안 본문·변경메모 수정 |
 | POST | versions/:id/submit | admin | 검토 요청 (draft→review) |
 | POST | versions/:id/approve | admin | 시행 승인 (review→published, 이전 published는 archived). **`effectiveDate` 확정 — 시점 조회의 기준** |
-| POST | versions/:id/reject | admin | 검토 반려 — **UI 미연결(API만)** |
-| POST | versions/:id/archive | admin | 버전 폐지 — **UI 미연결(API만)** |
+| POST | versions/:id/reject | admin | 검토 반려(review→draft). Body: `reason`(**필수**) — 사유는 버전의 `reviewNote` 에 남아 편집자에게 보인다. 다시 검토 요청하면 지워진다 (T-10) |
+| POST | versions/:id/archive | admin | 게시본 폐지(published→archived). 응답에 `remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10) |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
 
 ## comments (`/api/articles/:articleId/comments`, `/api/comments/:id`)

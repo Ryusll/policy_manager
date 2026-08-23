@@ -184,7 +184,12 @@ export const versionsApi = {
   submit: (id: string) => client.post('/versions/' + id + '/submit').then((r) => r.data),
   approve: (id: string, data: { changeNote: string; effectiveDate?: string }) =>
     client.post('/versions/' + id + '/approve', data).then((r) => r.data),
-  reject: (id: string) => client.post('/versions/' + id + '/reject').then((r) => r.data),
+  /** 반려 — 사유 필수. 사유 없이 되돌리면 편집자는 왜 반려됐는지 알 수 없다 (T-10) */
+  reject: (id: string, reason: string) =>
+    client.post('/versions/' + id + '/reject', { reason }).then((r) => r.data),
+  /** 폐지 — 응답의 `remainingPublished` 가 0이면 이 조문에 게시본이 없다 (T-10) */
+  archive: (id: string): Promise<{ remainingPublished: number }> =>
+    client.post('/versions/' + id + '/archive').then((r) => r.data),
   diff: (v1: string, v2: string) =>
     client.get('/versions/diff', { params: { v1, v2 } }).then((r) => r.data),
 };

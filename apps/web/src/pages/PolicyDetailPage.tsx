@@ -24,6 +24,8 @@ import {
   Layers,
   Link2 as LinkIcon,
   ArrowUpDown,
+  Undo2,
+  Archive,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuthStore } from '../stores/authStore';
@@ -506,6 +508,10 @@ export default function PolicyDetailPage() {
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [approveTargetId, setApproveTargetId] = useState<string | null>(null);
+  const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [archiveTarget, setArchiveTarget] = useState<any | null>(null);
+  const [versionActionMsg, setVersionActionMsg] = useState('');
   const [approveNote, setApproveNote] = useState('');
   /** 시행 승인 시 확정할 시행일(YYYY-MM-DD). 비우면 서버가 승인일로 기록 */
   const [approveEffectiveDate, setApproveEffectiveDate] = useState('');
@@ -1036,6 +1042,33 @@ export default function PolicyDetailPage() {
     },
   });
 
+  const rejectMutation = useMutation({
+    mutationFn: ({ id: versionId, reason }: { id: string; reason: string }) =>
+      versionsApi.reject(versionId, reason),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      setRejectTargetId(null);
+      setRejectReason('');
+      setVersionActionMsg('초안으로 되돌렸습니다. 반려 사유가 버전에 기록됩니다.');
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: (versionId: string) => versionsApi.archive(versionId),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
+      setArchiveTarget(null);
+      setVersionActionMsg(
+        res?.remainingPublished === 0
+          ? '폐지했습니다. 이 조문에는 게시된 본문이 남아 있지 않습니다 — 전문 보기·인쇄에서 본문 없이 나옵니다.'
+          : '폐지했습니다.',
+      );
+    },
+  });
+
   const createCommentMutation = useMutation({
     mutationFn: (content: string) => commentsApi.create(selectedArticle.id, { content }),
     onSuccess: () => {
@@ -1087,6 +1120,8 @@ export default function PolicyDetailPage() {
   const q = tocQuery.trim().toLowerCase();
   const selectTocArticle = useCallback((article: any) => {
     setSelectedArticle(article);
+    // 다른 조문으로 옮기면 앞 조문의 처리 알림은 지운다 — 남아 있으면 이 조문 얘기로 읽힌다
+    setVersionActionMsg('');
     window.history.replaceState(null, '', `${window.location.pathname}#article-${article.id}`);
   }, []);
   const filteredChapters = policy?.chapters?.map((chapter: any) => {
@@ -2953,17 +2988,30 @@ export default function PolicyDetailPage() {
                           <StatusBadge status="review" />
                         </span>
                         {user?.role === 'admin' && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setApproveTargetId(v.id);
-                              setApproveNote('');
-                            }}
-                            className="text-[11px] text-green-800 font-medium hover:underline shrink-0 inline-flex items-center gap-1"
-                          >
-                            <CheckCircle size={12} aria-hidden />
-                            시행 승인
-                          </button>
+                          <span className="shrink-0 inline-flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setApproveTargetId(v.id);
+                                setApproveNote('');
+                              }}
+                              className="text-[11px] text-green-800 font-medium hover:underline inline-flex items-center gap-1"
+                            >
+                              <CheckCircle size={12} aria-hidden />
+                              시행 승인
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRejectTargetId(v.id);
+                                setRejectReason('');
+                              }}
+                              className="text-[11px] text-red-700 font-medium hover:underline inline-flex items-center gap-1"
+                            >
+                              <Undo2 size={12} aria-hidden />
+                              반려
+                            </button>
+                          </span>
                         )}
                       </li>
                     ))}
@@ -2972,6 +3020,19 @@ export default function PolicyDetailPage() {
                     전문·변경 사유는 아래 버전 카드에서 바로 확인할 수 있습니다. (넓은 화면에서는 오른쪽 패널에서 판·법·규와
                     미리보기를 함께 다룹니다.)
                   </p>
+                </div>
+              )}
+              {articleViewMode === 'segment' && selectedArticle && versionActionMsg && (
+                <div className="px-4 py-2 border-b border-gray-200 bg-navy-50 flex items-start gap-2" role="status">
+                  <p className="text-xs text-navy-900 flex-1">{versionActionMsg}</p>
+                  <button
+                    type="button"
+                    onClick={() => setVersionActionMsg('')}
+                    className="text-navy-500 hover:text-navy-800 shrink-0"
+                    aria-label="알림 닫기"
+                  >
+                    <X size={13} />
+                  </button>
                 </div>
               )}
               {articleViewMode === 'segment' && selectedArticle && (
@@ -2998,15 +3059,36 @@ export default function PolicyDetailPage() {
                             </button>
                           )}
                           {version.status === 'review' && user?.role === 'admin' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setApproveTargetId(version.id);
+                                  setApproveNote('');
+                                }}
+                                className="text-xs text-green-700 hover:underline flex items-center gap-1"
+                              >
+                                <CheckCircle size={12} /> 시행 승인
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRejectTargetId(version.id);
+                                  setRejectReason('');
+                                }}
+                                className="text-xs text-red-700 hover:underline flex items-center gap-1"
+                              >
+                                <Undo2 size={12} /> 반려
+                              </button>
+                            </>
+                          )}
+                          {version.status === 'published' && user?.role === 'admin' && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setApproveTargetId(version.id);
-                                setApproveNote('');
-                              }}
-                              className="text-xs text-green-700 hover:underline flex items-center gap-1"
+                              onClick={() => setArchiveTarget(version)}
+                              className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1"
                             >
-                              <CheckCircle size={12} /> 시행 승인
+                              <Archive size={12} /> 폐지
                             </button>
                           )}
                         </div>
@@ -3016,6 +3098,12 @@ export default function PolicyDetailPage() {
                       </div>
                       {version.changeNote && (
                         <p className="text-xs text-gray-400 mt-1.5 italic">변경사유: {version.changeNote}</p>
+                      )}
+                      {version.status === 'draft' && version.reviewNote && (
+                        /* 반려된 초안. 사유가 보이지 않으면 편집자는 같은 내용을 다시 올린다. */
+                        <p className="mt-2 text-xs text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                          <strong>반려 사유:</strong> {version.reviewNote}
+                        </p>
                       )}
                     </div>
                   ))}
@@ -4569,6 +4657,107 @@ export default function PolicyDetailPage() {
         </div>
       )}
       {showPlanModal && <PlanModal onClose={() => setShowPlanModal(false)} />}
+      {rejectTargetId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
+            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">검토 반려</div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-600">
+                이 버전을 <strong>초안으로 되돌립니다.</strong> 내용은 지워지지 않고, 편집자가 고쳐서 다시 올릴 수 있습니다.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="reject-reason">
+                  반려 사유
+                </label>
+                <textarea
+                  id="reject-reason"
+                  className="input resize-none w-full"
+                  rows={4}
+                  placeholder="무엇을 고쳐야 하는지 적어 주세요. 편집자에게 그대로 보입니다."
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  autoFocus
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  사유는 되돌린 초안에 함께 표시됩니다. 감사 로그는 관리자만 볼 수 있어서 거기에만 적으면 편집자에게 닿지 않습니다.
+                </p>
+              </div>
+              {rejectMutation.isError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {(rejectMutation.error as any)?.response?.data?.message || '반려하지 못했습니다.'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const reason = rejectReason.trim();
+                    if (!reason) return;
+                    rejectMutation.mutate({ id: rejectTargetId, reason });
+                  }}
+                  disabled={!rejectReason.trim() || rejectMutation.isPending}
+                  className="btn-primary"
+                >
+                  {rejectMutation.isPending ? '처리 중…' : '반려'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRejectTargetId(null);
+                    setRejectReason('');
+                  }}
+                  className="btn-secondary"
+                >
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {archiveTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
+            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">게시본 폐지</div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-700">
+                <span className="font-mono text-xs bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">
+                  v{archiveTarget.versionNum}
+                </span>{' '}
+                을(를) 폐지할까요?
+              </p>
+              {/* 게시본이 하나뿐이면 조문이 본문 없이 남는다. 정당한 폐지도 있으므로 막지 않고 알린다. */}
+              <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
+                <p>폐지하면 이 버전은 게시 상태에서 내려갑니다. 내용과 이력은 남습니다.</p>
+                <p>
+                  이 조문의 <strong>마지막 게시본이면 전문 보기·인쇄에 본문 없이 나옵니다.</strong> 새 버전을 올려
+                  승인하거나, 조문 자체를 정리해야 합니다.
+                </p>
+              </div>
+              {archiveMutation.isError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {(archiveMutation.error as any)?.response?.data?.message || '폐지하지 못했습니다.'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => archiveMutation.mutate(archiveTarget.id)}
+                  disabled={archiveMutation.isPending}
+                  className="btn-primary"
+                >
+                  {archiveMutation.isPending ? '처리 중…' : '폐지'}
+                </button>
+                <button type="button" onClick={() => setArchiveTarget(null)} className="btn-secondary">
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {reorderOpen && (
         <ArticleReorderPanel
           chapters={policy?.chapters}
