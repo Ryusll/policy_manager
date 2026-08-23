@@ -512,6 +512,7 @@ export default function PolicyDetailPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [archiveTarget, setArchiveTarget] = useState<any | null>(null);
   const [versionActionMsg, setVersionActionMsg] = useState('');
+  const [activeToggleTarget, setActiveToggleTarget] = useState<boolean | null>(null);
   const [approveNote, setApproveNote] = useState('');
   /** 시행 승인 시 확정할 시행일(YYYY-MM-DD). 비우면 서버가 승인일로 기록 */
   const [approveEffectiveDate, setApproveEffectiveDate] = useState('');
@@ -870,6 +871,24 @@ export default function PolicyDetailPage() {
       qc.invalidateQueries({ queryKey: ['policy', id] });
       setPolicyDatesMsg('저장했습니다.');
       setTimeout(() => setPolicyDatesMsg(''), 2500);
+    },
+  });
+
+  /**
+   * 시행중 ↔ 비활성 (T-15).
+   *
+   * `isActive` 는 지금 **표시 전용**이다 — 검색에서 빠지지도, 목록에서 사라지지도 않는다.
+   * 폐지된 규정도 찾을 수 있어야 하므로 그게 맞다. 다만 사용자는 "비활성"을 "안 보이게
+   * 됨"으로 읽기 쉬워서, 확인 창에 무엇이 바뀌고 무엇이 안 바뀌는지 적어 둔다.
+   */
+  const toggleActiveMutation = useMutation({
+    mutationFn: (next: boolean) => policiesApi.update(policy!.id, { isActive: next }),
+    onSuccess: (_res, next) => {
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      qc.invalidateQueries({ queryKey: ['policies'] });
+      setActiveToggleTarget(null);
+      setPolicyDatesMsg(next ? '시행중으로 되돌렸습니다.' : '비활성으로 표시했습니다.');
+      setTimeout(() => setPolicyDatesMsg(''), 3000);
     },
   });
 
@@ -2334,6 +2353,15 @@ export default function PolicyDetailPage() {
                 <span className={`text-xs px-2 py-0.5 rounded border ${policy.isActive ? 'bg-blue-900 text-blue-200 border-blue-700' : 'bg-gray-700 text-gray-300 border-gray-600'}`}>
                   {policy.isActive ? '시행중' : '비활성'}
                 </span>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveToggleTarget(!policy.isActive)}
+                    className="text-[11px] text-navy-300 underline underline-offset-2 hover:text-white"
+                  >
+                    {policy.isActive ? '비활성으로 변경' : '시행중으로 변경'}
+                  </button>
+                )}
               </div>
               <h1 className="text-xl sm:text-2xl font-bold leading-snug">{policy.title}</h1>
               {policy.description && <p className="text-navy-300 text-sm mt-1">{policy.description}</p>}
@@ -4657,6 +4685,51 @@ export default function PolicyDetailPage() {
         </div>
       )}
       {showPlanModal && <PlanModal onClose={() => setShowPlanModal(false)} />}
+      {activeToggleTarget !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
+            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">
+              {activeToggleTarget ? '시행중으로 변경' : '비활성으로 변경'}
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-700">
+                <span className="font-medium">{policy.title}</span> 을(를){' '}
+                <strong>{activeToggleTarget ? '시행중' : '비활성'}</strong> 으로 표시할까요?
+              </p>
+              {/* "비활성 = 안 보이게 됨"으로 읽기 쉽다. 실제로 무엇이 바뀌는지 적어 둔다. */}
+              <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-700 space-y-1">
+                <p>
+                  <strong>바뀌는 것</strong>: 규정 목록·상세·체계도·즐겨찾기에 표시되는 상태 배지, 대시보드의
+                  시행중 규정 수.
+                </p>
+                <p>
+                  <strong>바뀌지 않는 것</strong>: 조문·본문·이력은 그대로 남고,{' '}
+                  <strong>검색에서도 계속 나옵니다.</strong> 폐지된 규정도 찾을 수 있어야 하기 때문입니다.
+                </p>
+              </div>
+              {toggleActiveMutation.isError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {(toggleActiveMutation.error as any)?.response?.data?.message || '상태를 바꾸지 못했습니다.'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => toggleActiveMutation.mutate(activeToggleTarget)}
+                  disabled={toggleActiveMutation.isPending}
+                  className="btn-primary"
+                >
+                  {toggleActiveMutation.isPending ? '처리 중…' : '변경'}
+                </button>
+                <button type="button" onClick={() => setActiveToggleTarget(null)} className="btn-secondary">
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {rejectTargetId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">

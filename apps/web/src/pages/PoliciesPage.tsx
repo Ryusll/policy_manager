@@ -60,6 +60,8 @@ export default function PoliciesPage() {
   const [search, setSearch] = useState(searchParams.get('q') || '');
   const [selectedDepartment, setSelectedDepartment] = useState(searchParams.get('department') || 'all');
   const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || 'all');
+  /** 시행 상태 필터 (T-15). 비활성 규정을 지우지 않고 일하는 목록에서만 빼려면 필요하다 */
+  const [selectedStatus, setSelectedStatus] = useState(searchParams.get('status') || 'all');
   const [activeIssueTarget, setActiveIssueTarget] = useState<string>('');
   const [cleanupOptions, setCleanupOptions] = useState({
     renumber: true,
@@ -200,6 +202,17 @@ export default function PoliciesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['policies'] }),
   });
 
+  /**
+   * 시행중 ↔ 비활성 (T-15). 목록에서는 확인 없이 바로 바꾼다 —
+   * 되돌리기가 같은 버튼 한 번이고, 삭제와 달리 잃는 것이 없다.
+   * 무엇이 바뀌고 무엇이 안 바뀌는지에 대한 설명은 규정 상세의 확인 창에 있다.
+   */
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, next }: { id: string; next: boolean }) =>
+      policiesApi.update(id, { isActive: next }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policies'] }),
+  });
+
   const updateChapterField = (chapterIdx: number, field: 'number' | 'title', value: string) => {
     setParsedDraft((prev) => {
       const chapters = [...prev.chapters];
@@ -326,7 +339,10 @@ export default function PoliciesPage() {
     const matchedDepartment = selectedDepartment === 'all' || department === selectedDepartment;
     const matchedCategory = selectedCategory === 'all' || category === selectedCategory;
     const matchedIndex = !indexKey || indexKeyOf(p.title) === indexKey;
-    return matchedSearch && matchedDepartment && matchedCategory && matchedIndex;
+    const matchedStatus =
+      selectedStatus === 'all' ||
+      (selectedStatus === 'active' ? p.isActive !== false : p.isActive === false);
+    return matchedSearch && matchedDepartment && matchedCategory && matchedIndex && matchedStatus;
   });
 
   // 색인으로 훑을 때는 사전처럼 가나다 순이어야 읽힌다. 평소에는 기존 순서를 유지한다.
@@ -371,8 +387,9 @@ export default function PoliciesPage() {
     if (search.trim()) next.set('q', search.trim());
     if (selectedDepartment !== 'all') next.set('department', selectedDepartment);
     if (selectedCategory !== 'all') next.set('category', selectedCategory);
+    if (selectedStatus !== 'all') next.set('status', selectedStatus);
     setSearchParams(next, { replace: true });
-  }, [search, selectedDepartment, selectedCategory, setSearchParams]);
+  }, [search, selectedDepartment, selectedCategory, selectedStatus, setSearchParams]);
 
   useEffect(() => {
     setParsedDraft(parsePolicyTextWithSplitMode(importRawText, importSplitMode, importDelimiter, parseProfile));
@@ -1068,6 +1085,16 @@ export default function PoliciesPage() {
             </option>
           ))}
         </select>
+        <select
+          className="input text-xs min-w-[7rem]"
+          value={selectedStatus}
+          onChange={(e) => setSelectedStatus(e.target.value)}
+          aria-label="시행 상태"
+        >
+          <option value="all">전체 상태</option>
+          <option value="active">시행중</option>
+          <option value="inactive">비활성</option>
+        </select>
         {search && <span className="text-xs text-gray-500">{t('policies.countUnit', { n: visible.length })}</span>}
       </div>
 
@@ -1141,13 +1168,29 @@ export default function PoliciesPage() {
                   })()}
                 </td>
                 <td className="text-center">
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded border ${
-                      policy.isActive ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-gray-100 text-gray-500 border-gray-300'
-                    } inline-flex whitespace-nowrap`}
-                  >
-                    {policy.isActive ? t('policies.status.active') : t('policies.status.inactive')}
-                  </span>
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleActiveMutation.mutate({ id: policy.id, next: !policy.isActive })}
+                      disabled={toggleActiveMutation.isPending}
+                      title={policy.isActive ? '비활성으로 변경' : '시행중으로 변경'}
+                      className={`text-xs px-2 py-0.5 rounded border inline-flex whitespace-nowrap transition-colors disabled:opacity-50 ${
+                        policy.isActive
+                          ? 'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100'
+                          : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'
+                      }`}
+                    >
+                      {policy.isActive ? t('policies.status.active') : t('policies.status.inactive')}
+                    </button>
+                  ) : (
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded border ${
+                        policy.isActive ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-gray-100 text-gray-500 border-gray-300'
+                      } inline-flex whitespace-nowrap`}
+                    >
+                      {policy.isActive ? t('policies.status.active') : t('policies.status.inactive')}
+                    </span>
+                  )}
                 </td>
                 <td className="text-center">
                   <div className="flex items-center justify-center gap-2">
