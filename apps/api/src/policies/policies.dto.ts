@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsInt, Min, MaxLength, IsIn, IsDateString, ValidateNested } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsInt, Min, MaxLength, IsIn, IsDateString, ValidateNested, IsArray, ArrayMinSize, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { PolicyRevisionNotifyDto } from '../notifications/notifications.dto';
@@ -476,4 +476,25 @@ export class ExportPolicyPdfDto {
   @IsOptional()
   @IsBoolean()
   pageNumbers?: boolean;
+}
+
+export class ReorderTargetDto {
+  @ApiProperty({ description: '이 조가 들어갈 장 ID' })
+  @IsString()
+  @MinLength(1)
+  chapterId: string;
+
+  @ApiProperty({ description: '옮기기 **전**의 조 번호. 이 값으로 기존 행을 찾는다' })
+  @IsInt()
+  @Min(1)
+  jo: number;
+}
+
+export class ReorderArticlesDto {
+  @ApiProperty({ type: [ReorderTargetDto], description: '문서에 나타날 차례대로. 규정의 모든 조가 빠짐없이 한 번씩 있어야 한다' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ReorderTargetDto)
+  order: ReorderTargetDto[];
 }

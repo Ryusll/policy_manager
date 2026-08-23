@@ -59,10 +59,15 @@
 | GET | :id/as-of | admin, editor | **시점 조회** — 기준일에 시행 중이던 본문. Query: `date`(YYYY-MM-DD) |
 | GET | :id/compare | admin, editor | **신구조문대비표** — 두 시점 본문을 조문 단위로 대비. Query: `from`, `to`(YYYY-MM-DD) |
 | POST | :id/export/pdf | admin, editor | **전문 PDF 내보내기.** Body는 전문 보기 렌더 HTML, 응답은 `application/pdf` |
-| POST | :id/files | admin, editor | 첨부파일 업로드 (MinIO) |
-| GET | :id/files | admin, editor | 첨부파일 목록 |
-| GET | :id/files/:filename | admin, editor | 첨부파일 다운로드 |
+| POST | :id/files | admin, editor | 첨부파일 업로드 |
+| GET | :id/files | JWT | 첨부파일 목록 |
+| GET | :id/files/:filename | JWT | 첨부파일 다운로드 |
 | DELETE | :id/files/:filename | admin, editor | 첨부파일 삭제 |
+
+> **첨부파일 4종 공통(T-41)**: 규정 소유를 먼저 확인하므로 남의 규정이면 404다. `:id`·`:filename` 은 형식 검사를 통과해야 하며(UUID / 저장 파일명), 조립 경로가 업로드 루트를 벗어나면 400. 예전에는 인코딩한 슬래시로 경로를 거슬러 올라가 컨테이너의 임의 파일을 읽고 지울 수 있었다.
+
+| GET | :id/jo-order | JWT | 조 재정렬 시작점 — 현재 조 차례(`[{chapterId, jo}]`) |
+| PUT | :id/jo-order | admin·editor | 조 순서 일괄 재정렬·번호 재부여. Body: `order: [{chapterId, jo}]` — **규정의 모든 조를 문서 순서대로 한 번씩**. `jo` 는 옮기기 전 번호. 빠지거나 겹치면 400. 조에 딸린 항·목 행도 함께 움직이고, 장이 바뀌면 절 지정은 풀린다(T-60) |
 
 ## versions (`/api/articles/:articleId/versions`, `/api/versions/:id`)
 | Method | Path | 인증 | 설명 |

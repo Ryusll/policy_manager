@@ -23,6 +23,7 @@ import {
   BookOpen,
   Layers,
   Link2 as LinkIcon,
+  ArrowUpDown,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuthStore } from '../stores/authStore';
@@ -34,6 +35,7 @@ import { buildEnterprisePolicyBodyHtml } from '../components/policy-template/tem
 import RevisionReasonsModal from '../components/RevisionReasonsModal';
 import ComparisonTableModal from '../components/ComparisonTableModal';
 import { canManagePolicyTemplates } from '../lib/planFeatures';
+import ArticleReorderPanel from '../components/ArticleReorderPanel';
 import { escapeRegExp } from '../lib/searchRegex';
 import { highlightText } from '../lib/highlightSearch';
 import PlanModal from '../components/PlanModal';
@@ -509,6 +511,9 @@ export default function PolicyDetailPage() {
   const [approveEffectiveDate, setApproveEffectiveDate] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [tocQuery, setTocQuery] = useState('');
+  const [reorderOpen, setReorderOpen] = useState(false);
+  const [reorderSaving, setReorderSaving] = useState(false);
+  const [reorderError, setReorderError] = useState('');
   const [fullViewSearchQuery, setFullViewSearchQuery] = useState('');
   const [fullViewActiveMatchIndex, setFullViewActiveMatchIndex] = useState(0);
   const [tocOpen, setTocOpen] = useState(true);
@@ -1861,6 +1866,18 @@ export default function PolicyDetailPage() {
                     onChange={(e) => setTocQuery(e.target.value)}
                   />
                 </div>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReorderError('');
+                      setReorderOpen(true);
+                    }}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-1.5 text-[11px] text-gray-600 hover:text-navy-700 border border-gray-300 rounded py-1.5 hover:bg-white transition-colors"
+                  >
+                    <ArrowUpDown size={12} aria-hidden /> 조 순서 재정렬
+                  </button>
+                )}
               </div>
               <div className="divide-y divide-gray-100 flex-1 min-h-0 overflow-y-auto overscroll-contain">
             {filteredChapters.length === 0 && (
@@ -4552,6 +4569,33 @@ export default function PolicyDetailPage() {
         </div>
       )}
       {showPlanModal && <PlanModal onClose={() => setShowPlanModal(false)} />}
+      {reorderOpen && (
+        <ArticleReorderPanel
+          chapters={policy?.chapters}
+          saving={reorderSaving}
+          error={reorderError}
+          onCancel={() => setReorderOpen(false)}
+          onSave={async (order) => {
+            if (!id) return;
+            setReorderSaving(true);
+            setReorderError('');
+            try {
+              await policiesApi.reorderArticles(id, order);
+              await qc.invalidateQueries({ queryKey: ['policy', id] });
+              // 선택 중이던 조문의 번호가 바뀌었을 수 있다. 옛 번호를 들고 있으면
+              // 본문이 엉뚱한 조를 가리키므로 선택을 놓는다.
+              setSelectedArticle(null);
+              setReorderOpen(false);
+            } catch (e: any) {
+              setReorderError(
+                e?.response?.data?.message || '조 순서를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+              );
+            } finally {
+              setReorderSaving(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

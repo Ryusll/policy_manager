@@ -75,6 +75,10 @@ export const policiesApi = {
     client
       .put('/policies/' + policyId + '/chapters/' + chapterId + '/articles/' + articleId, data)
       .then((r) => r.data),
+  /** 조 순서 일괄 재정렬 (T-60). `order` 는 문서에 나타날 차례대로, 규정의 모든 조를 한 번씩 */
+  reorderArticles: (policyId: string, order: { chapterId: string; jo: number }[]) =>
+    client.put(`/policies/${policyId}/jo-order`, { order }).then((r) => r.data as { changed: number }),
+
   deleteArticle: (policyId: string, chapterId: string, articleId: string) =>
     client.delete('/policies/' + policyId + '/chapters/' + chapterId + '/articles/' + articleId),
 

@@ -19,6 +19,7 @@ import {
   CreatePolicyImportLogDto,
   CreateRevisionReasonDto, UpdateRevisionReasonDto,
   ExportPolicyPdfDto,
+  ReorderArticlesDto,
 } from './policies.dto';
 import { Roles } from '../common/guards/decorators';
 import {
@@ -332,6 +333,19 @@ export class PoliciesController {
   }
 
   /* ───── 파일 업로드 ───── */
+
+  @Get(':id/jo-order')
+  @ApiOperation({ summary: '조 재정렬 시작점 — 현재 조 차례' })
+  listJoOrder(@Request() req: any, @Param('id') id: string) {
+    return this.policiesService.listJoOrder(req.user.tenantId, id);
+  }
+
+  @Put(':id/jo-order')
+  @Roles('admin', 'editor')
+  @ApiOperation({ summary: '조 순서 일괄 재정렬 · 번호 재부여 (T-60)' })
+  reorderArticles(@Request() req: any, @Param('id') id: string, @Body() dto: ReorderArticlesDto) {
+    return this.policiesService.reorderArticles(req.user.tenantId, id, dto.order, req.user.id);
+  }
 
   @Post(':id/files')
   @Roles('admin', 'editor')

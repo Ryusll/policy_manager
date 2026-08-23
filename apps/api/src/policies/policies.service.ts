@@ -10,6 +10,12 @@ import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import { buildPolicyForest } from './policy-hierarchy';
+import {
+  ReorderPlanError,
+  buildReorderPlan,
+  currentJoOrder,
+  type ReorderTarget,
+} from './article-reorder';
 import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
 import { buildComparisonRows, type CompareArticleInput } from './policy-compare';
 import {
@@ -739,6 +745,74 @@ export class PoliciesService {
     });
     if (!article) throw new NotFoundException('Article not found');
     await this.prisma.article.delete({ where: { id: articleId } });
+  }
+
+  /**
+   * 조 순서 일괄 재정렬 (T-60).
+   *
+   * 가져온 규정은 조 순서가 원문과 어긋나거나 장이 잘못 잡히는 일이 잦다. 조를 하나씩
+   * 고치던 것을 목차에서 끌어 놓고 한 번에 다시 매긴다. 조 번호는 장을 가로질러
+   * 이어지므로(제1장 제1·2조 → 제2장 제3조) 하나만 옮겨도 뒤가 전부 밀린다.
+   *
+   * 한 트랜잭션으로 처리한다. 중간에 끊기면 조 번호가 겹치거나 비는 상태가 남는데,
+   * 그건 목차·안정 링크(T-73)·인쇄가 동시에 무너진 상태다.
+   */
+  async reorderArticles(
+    tenantId: string,
+    policyId: string,
+    order: ReorderTarget[],
+    userId: string,
+  ) {
+    await this.findOne(tenantId, policyId);
+    const chapters = await this.prisma.chapter.findMany({
+      where: { policyId },
+      select: { id: true },
+    });
+    const rows = await this.prisma.article.findMany({
+      where: { chapter: { policyId } },
+      select: { id: true, chapterId: true, sectionId: true, number: true },
+    });
+
+    let changes;
+    try {
+      changes = buildReorderPlan(rows, order, chapters.map((c) => c.id));
+    } catch (e) {
+      if (e instanceof ReorderPlanError) throw new BadRequestException(e.message);
+      throw e;
+    }
+
+    if (changes.length === 0) return { changed: 0 };
+
+    await this.prisma.$transaction(
+      changes.map((c) =>
+        this.prisma.article.update({
+          where: { id: c.id },
+          data: { number: c.number, chapterId: c.chapterId, sectionId: c.sectionId },
+        }),
+      ),
+    );
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.articles.reorder',
+      entityType: 'Policy',
+      entityId: policyId,
+      details: { changed: changes.length, order: order.map((t) => t.jo) },
+    });
+
+    return { changed: changes.length };
+  }
+
+  /** 재정렬 화면이 시작점으로 쓸 현재 순서 */
+  async listJoOrder(tenantId: string, policyId: string) {
+    await this.findOne(tenantId, policyId);
+    const chapters = await this.prisma.chapter.findMany({
+      where: { policyId },
+      select: { id: true, number: true, title: true, articles: { select: { number: true } } },
+      orderBy: { number: 'asc' },
+    });
+    return { order: currentJoOrder(chapters) };
   }
 
   async createAppendix(tenantId: string, policyId: string, dto: CreatePolicyAppendixDto) {
