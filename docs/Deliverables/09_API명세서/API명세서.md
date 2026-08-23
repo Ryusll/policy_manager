@@ -58,7 +58,7 @@
 | GET | :id/effective-dates | admin, editor | **시점 조회용** — 본문이 바뀐 시행일 목록(내림차순) |
 | GET | :id/as-of | admin, editor | **시점 조회** — 기준일에 시행 중이던 본문. Query: `date`(YYYY-MM-DD) |
 | GET | :id/compare | admin, editor | **신구조문대비표** — 두 시점 본문을 조문 단위로 대비. Query: `from`, `to`(YYYY-MM-DD) |
-| POST | :id/export/pdf | admin, editor | **전문 PDF 내보내기.** Body는 전문 보기 렌더 HTML, 응답은 `application/pdf` |
+| POST | :id/export/pdf | admin, editor | **전문 PDF 내보내기.** Body는 전문 보기 렌더 HTML, 응답은 `application/pdf`. 동기 처리이며 감사 로그에 `policy.export.pdf` 로 남는다([ADR-0015](../10_ADR_의사결정기록/ADR.md)) |
 | POST | :id/files | admin, editor | 첨부파일 업로드 |
 | GET | :id/files | JWT | 첨부파일 목록 |
 | GET | :id/files/:filename | JWT | 첨부파일 다운로드 |

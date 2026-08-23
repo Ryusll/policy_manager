@@ -10,7 +10,6 @@ import { SearchModule } from './search/search.module';
 import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
 import { TenantBrandingModule } from './tenant-branding/tenant-branding.module';
-import { ExportModule } from './export/export.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PlanGuard } from './common/guards/plan.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -40,7 +39,6 @@ import { FavoritesModule } from './favorites/favorites.module';
     AdminModule,
     AuditModule,
     TenantBrandingModule,
-    ExportModule,
     IntegrationsModule,
     BillingModule,
     UsersModule,

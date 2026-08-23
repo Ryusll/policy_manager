@@ -75,7 +75,6 @@ model Tenant {
   policies   Policy[]
   variables  Variable[]
   auditLogs  AuditLog[]
-  exportJobs ExportJob[]
   comments   ArticleComment[]
   templates  PolicyTemplate[]
   importLogs PolicyImportLog[]
@@ -500,18 +499,6 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-model ExportJob {
-  id         String   @id @default(uuid())
-  tenantId   String   @map("tenant_id")
-  status     String   @default("pending")
-  fileUrl    String?  @map("file_url")
-  createdAt  DateTime @default(now()) @map("created_at")
-  finishedAt DateTime? @map("finished_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@map("export_jobs")
-}
 
 model PolicyImportLog {
   id            String   @id @default(uuid())

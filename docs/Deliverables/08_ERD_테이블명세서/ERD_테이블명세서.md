@@ -17,7 +17,7 @@ Tenant 1───N PolicyTemplate
 Tenant 1───N Variable
 Tenant 1───N NotificationGroup 1───N NotificationGroupMember N───1 User
 Tenant 1───N UserNotification N───1 User
-Tenant 1───N AuditLog, ExportJob, PolicyImportLog
+Tenant 1───N AuditLog, PolicyImportLog
 Tenant 1───N RegulationParseSession N───1 Policy (committedPolicy, nullable)
 Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N BillingPayment
 (PlatformBranding: 테넌트와 무관한 단일 행, SaaS 운영사 표기)
@@ -109,6 +109,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | content | string | 조문 본문 |
 | status | enum VersionStatus | draft/review/published/archived |
 | changeNote | string? | 조문 단위 개정 사유. 시행 승인 시 필수 |
+| reviewNote | string? | **반려 사유**(T-10). 되돌린 초안 카드에 그대로 보인다. 다시 검토 요청하면 지운다 — 남겨 두면 재제출 뒤에도 반려 상태처럼 보인다 |
 | effectiveDate | date? | **이 버전이 시행된 날. 시점 조회(as-of)의 기준.** 승인 시 확정(미지정이면 승인일) |
 | approvedBy / approvedAt | string?/datetime? | |
 | createdBy | string? | |
@@ -153,14 +154,19 @@ tenantId FK, userId FK, kind(기본 "policy_revision"), title, body(text), polic
 ### AuditLog (`audit_logs`)
 tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json).
 
-### ExportJob (`export_jobs`)
-tenantId FK, status, fileUrl, finishedAt. **DB 스키마만 존재** — `ExportModule`은 빈 모듈이고 이 테이블을 참조하는 코드가 전혀 없음 ([03_SRS 13.1](../03_SRS_요구사항명세/SRS_요구사항명세.md) 참고).
-
 ### PolicyImportLog (`policy_import_logs`)
 tenantId FK, userId FK?, policyId FK?, sourceName, parseProfile, chapterCount, articleCount, cleanupOptions(json), status, message. 인덱스: `[tenantId, createdAt]`.
 
 ### RegulationParseSession (`regulation_parse_sessions`)
 tenantId FK, userId FK?, fileName, mimeType, status(기본 "pending"), extractedText(text), extractMeta(json), parseTree(json), errorMessage, committedPolicyId FK? → Policy(관계명 CommittedParsePolicy). 인덱스: `[tenantId, createdAt]`.
+
+### TenantBranding (`tenant_branding`)
+테넌트당 1행(PK = `tenantId`). brandMark, logoDataUrl(data URL, 350KB 상한), logoWidth·logoHeight, updatedBy. Tenant 삭제 시 Cascade.
+플랫폼(운영사) 브랜딩인 `PlatformBranding` 과 다르다 — 이쪽은 **고객사** 로고·배지다([ADR-0014](../10_ADR_의사결정기록/ADR.md), T-57).
+
+### Favorite (`favorites`)
+tenantId·userId·policyId FK, articleId FK(nullable — null 이면 규정 즐겨찾기, 값이 있으면 조문 즐겨찾기).
+**Postgres 는 NULL 을 서로 다른 값으로 보므로 `@@unique` 만으로는 규정 즐겨찾기 중복을 막지 못한다** — 서비스에서 먼저 조회한다(T-80).
 
 ### PlatformBranding (`platform_branding`)
 테넌트 무관 단일 행(SaaS 운영사 표기). id, legalName, registrationNo, productLabel(기본 "Policy Manager"), logoDataUrl, lockupImageSrc.

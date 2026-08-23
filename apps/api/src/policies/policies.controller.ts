@@ -22,6 +22,7 @@ import {
   ReorderArticlesDto,
 } from './policies.dto';
 import { Roles } from '../common/guards/decorators';
+import { AuditService } from '../audit/audit.service';
 import {
   UnsafeUploadPathError,
   policyUploadDir,
@@ -35,6 +36,7 @@ export class PoliciesController {
   constructor(
     private policiesService: PoliciesService,
     private policyPdfService: PolicyPdfService,
+    private audit: AuditService,
   ) {}
 
   /**
@@ -447,6 +449,22 @@ export class PoliciesController {
       metaLine: dto.metaLine,
       footerText: dto.footerText,
       pageNumbers: dto.pageNumbers,
+    });
+
+    /**
+     * 내보내기를 감사 로그에 남긴다 (T-16).
+     *
+     * 예전에는 `ExportJob` 테이블이 이 자리를 노렸지만 한 번도 쓰이지 않았다(ADR-0015).
+     * 규정 PDF 는 회사 밖으로 나가는 문서라 "누가 언제 무엇을 뽑았나"는 남을 이유가 있고,
+     * 그 기록의 자리는 별도 테이블이 아니라 감사 로그다.
+     */
+    await this.audit.log({
+      tenantId: req.user.tenantId,
+      userId: req.user.id,
+      action: 'policy.export.pdf',
+      entityType: 'Policy',
+      entityId: id,
+      details: { code: policy.code, title: policy.title, bytes: pdf.length },
     });
 
     const base = `${policy.code || 'policy'}_${policy.title || ''}`
