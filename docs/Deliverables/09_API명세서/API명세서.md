@@ -154,10 +154,16 @@
 | PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14) |
 | POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 커밋. 응답 `{policyId, sessionId, articleCount}`. **현재 트리를 전부 조(條)로 평탄화** — 항·목 매핑은 T-88 |
 
-## admin (`/api/admin`) — UI 미연결(API만)
+## admin (`/api/admin`)
+
+> 관리자(`admin`) 전용. 규정 가져오기 화면의 **JSON 일괄 등록** 탭에서 쓴다.
+
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | import/policies | admin | 규정 벌크 임포트 |
+| POST | import/policies/validate | admin | **사전 검사**(200). 넣지 않고 문제를 전부 모아 돌려준다. 응답 `{issues[], canImport, summary}` (T-13) |
+| POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues` |
+
+> **사전 검사가 보는 것**: 코드 중복(기존/파일 안), 빈 코드·제목, 길이 초과, 장·조 번호 형식 → 오류. 장 없음, 빈 본문, 조 번호 겹침·건너뜀 → 경고. **플랜 규정 상한**도 여기서 본다 — 예전에는 일괄 가져오기가 상한을 통과해 Starter(5건)가 한 번에 100건을 넣을 수 있었다.
 
 ## audit (`/api/audit-logs`)
 

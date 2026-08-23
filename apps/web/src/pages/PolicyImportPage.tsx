@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Upload, FileText, Trash2, ChevronRight, RotateCcw, Check, Scale, ExternalLink } from 'lucide-react';
+import { Upload, FileText, Trash2, ChevronRight, RotateCcw, Check, Scale, ExternalLink, FileJson } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
   regulationParseApi,
@@ -28,15 +28,18 @@ import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
 import { LawGoKrSearchPanel } from '../components/LawGoKrSearchPanel';
+import BulkImportPanel from '../components/BulkImportPanel';
+import { useAuthStore } from '../stores/authStore';
 import type { LawGoKrSessionMeta } from '../api/lawgokr';
 
 const MAX_PDF_BYTES = 30 * 1024 * 1024; // 서버 FileInterceptor 제한과 동일
 
 type Step = 'upload' | 'review' | 'done';
-type Source = 'pdf' | 'lawgokr';
+type Source = 'pdf' | 'lawgokr' | 'json';
 
 export default function PolicyImportPage() {
   const navigate = useNavigate();
+  const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [source, setSource] = useState<Source>('pdf');
@@ -193,6 +196,7 @@ export default function PolicyImportPage() {
               [
                 ['pdf', 'PDF 업로드', FileText],
                 ['lawgokr', '법제처에서 가져오기', Scale],
+                ['json', 'JSON 일괄 등록', FileJson],
               ] as const
             ).map(([key, label, Icon]) => (
               <button
@@ -211,6 +215,15 @@ export default function PolicyImportPage() {
               </button>
             ))}
           </div>
+
+          {source === 'json' &&
+            (isAdmin ? (
+              <BulkImportPanel onImported={() => navigate('/policies')} />
+            ) : (
+              <p className="text-sm text-gray-600 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                일괄 등록은 관리자만 사용할 수 있습니다. 한 번에 여러 규정을 만들기 때문입니다.
+              </p>
+            ))}
 
           {source === 'lawgokr' && (
             <LawGoKrSearchPanel
