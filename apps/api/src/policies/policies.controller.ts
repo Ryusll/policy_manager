@@ -10,6 +10,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { Response } from 'express';
 import { PoliciesService } from './policies.service';
 import { PolicyPdfService } from './policy-pdf.service';
+import { PolicyHwpxService } from './policy-hwpx.service';
 import {
   CreatePolicyDto, UpdatePolicyDto,
   CreateChapterDto, UpdateChapterDto,
@@ -19,6 +20,7 @@ import {
   CreatePolicyImportLogDto,
   CreateRevisionReasonDto, UpdateRevisionReasonDto,
   ExportPolicyPdfDto,
+  ExportPolicyHwpxDto,
   ReorderArticlesDto,
 } from './policies.dto';
 import { Roles } from '../common/guards/decorators';
@@ -36,6 +38,7 @@ export class PoliciesController {
   constructor(
     private policiesService: PoliciesService,
     private policyPdfService: PolicyPdfService,
+    private policyHwpxService: PolicyHwpxService,
     private audit: AuditService,
   ) {}
 
@@ -478,6 +481,47 @@ export class PoliciesController {
     );
     res.setHeader('Content-Length', String(pdf.length));
     res.end(pdf);
+  }
+
+  @Post(':id/export/hwpx')
+  @HttpCode(200) // 리소스를 만드는 게 아니라 파일을 돌려준다
+  @ApiOperation({
+    summary: '전문 HWPX 내보내기 (한/글) — T-85',
+    description:
+      '`.hwp` 가 아니라 `.hwpx` 다. `.hwp` 는 한컴 독점 바이너리라 서버에서 생성할 수 없고, `.hwpx` 는 같은 한/글이 여는 KS X 6101 표준이다(ADR-0016).',
+  })
+  async exportHwpx(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() dto: ExportPolicyHwpxDto,
+    @Res() res: Response,
+  ) {
+    const policy = await this.policiesService.findOne(req.user.tenantId, id);
+    const hwpx = await this.policyHwpxService.render({
+      html: dto.html,
+      title: dto.title ?? policy.title,
+    });
+
+    await this.audit.log({
+      tenantId: req.user.tenantId,
+      userId: req.user.id,
+      action: 'policy.export.hwpx',
+      entityType: 'Policy',
+      entityId: id,
+      details: { code: policy.code, title: policy.title, bytes: hwpx.length },
+    });
+
+    const base = `${policy.code || 'policy'}_${policy.title || ''}`
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .trim()
+      .slice(0, 80);
+    res.setHeader('Content-Type', 'application/hwp+zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="policy.hwpx"; filename*=UTF-8''${encodeURIComponent(base)}.hwpx`,
+    );
+    res.setHeader('Content-Length', String(hwpx.length));
+    res.end(hwpx);
   }
 
   @Get(':id/files/:filename')

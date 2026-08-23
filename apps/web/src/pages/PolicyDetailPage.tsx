@@ -539,6 +539,7 @@ export default function PolicyDetailPage() {
   /** 시점 조회 기준일(YYYY-MM-DD). 빈 문자열이면 현행 본문 */
   const [asOfDate, setAsOfDate] = useState('');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportingHwpx, setIsExportingHwpx] = useState(false);
   const [showRevisionReasons, setShowRevisionReasons] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
   const [showThreeWay, setShowThreeWay] = useState(false);
@@ -1459,6 +1460,39 @@ export default function PolicyDetailPage() {
     } finally {
       setIsExportingPdf(false);
       setTimeout(() => setLawToolMsg(''), 3000);
+    }
+  }, [policy, id, fullViewGroups, asOfDate]);
+
+  /**
+   * 한/글 내보내기 (T-85).
+   *
+   * 만들어지는 파일은 `.hwpx` 다. `.hwp` 는 한컴 독점 바이너리라 서버에서 생성할 수단이
+   * 없고, `.hwpx` 는 같은 한/글이 여는 KS X 6101 표준이다(ADR-0016). 한/글 2014 이전
+   * 버전은 열지 못하므로 안내 문구에 적어 둔다.
+   */
+  const downloadHwpx = useCallback(async () => {
+    if (!policy || !id) return;
+    setIsExportingHwpx(true);
+    setLawToolMsg('한/글 문서를 만드는 중입니다…');
+    try {
+      // PDF 와 같은 빌더로 만든 HTML 을 보낸다(화면 = 인쇄물 = PDF = HWPX).
+      const html = buildEnterprisePolicyBodyHtml(fullViewGroups, '');
+      const blob = await policiesApi.exportHwpx(id, { html, title: policy.title });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfDate ? `-${asOfDate}` : ''}.hwpx`;
+      a.rel = 'noopener';
+      a.click();
+      URL.revokeObjectURL(url);
+      setLawToolMsg('한/글 문서(.hwpx)를 내려받았습니다. 한/글 2014 이상에서 열립니다.');
+    } catch (err: any) {
+      setLawToolMsg(
+        err?.response?.status === 500 ? '한/글 문서 생성에 실패했습니다.' : '한/글 문서 요청에 실패했습니다.',
+      );
+    } finally {
+      setIsExportingHwpx(false);
+      setTimeout(() => setLawToolMsg(''), 4000);
     }
   }, [policy, id, fullViewGroups, asOfDate]);
 
@@ -2653,6 +2687,16 @@ export default function PolicyDetailPage() {
           >
             <Download size={14} aria-hidden />
             {isExportingPdf ? 'PDF 생성 중…' : 'PDF 저장'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadHwpx()}
+            disabled={isExportingHwpx}
+            title="한/글 2014 이상에서 열리는 .hwpx 로 저장합니다"
+            className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download size={14} aria-hidden />
+            {isExportingHwpx ? '한/글 생성 중…' : '한/글 .hwpx'}
           </button>
           <button
             type="button"

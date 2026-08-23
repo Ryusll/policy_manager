@@ -498,3 +498,16 @@ export class ReorderArticlesDto {
   @Type(() => ReorderTargetDto)
   order: ReorderTargetDto[];
 }
+
+export class ExportPolicyHwpxDto {
+  @ApiProperty({ description: '전문 보기 렌더 결과 HTML (서버에서 sanitize 후 HWPX로 변환)' })
+  @IsString()
+  @MaxLength(4_000_000)
+  html: string;
+
+  @ApiProperty({ required: false, description: '문서 제목. 생략 시 규정 제목' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  title?: string;
+}

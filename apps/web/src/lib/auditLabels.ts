@@ -11,6 +11,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'policy.delete': '규정 삭제',
   'policy.articles.reorder': '조 순서 재정렬',
   'policy.export.pdf': '규정 PDF 내보내기',
+  'policy.export.hwpx': '규정 HWPX 내보내기',
   'policy.revision_reason.create': '제·개정 이유 추가',
   'policy.revision_reason.update': '제·개정 이유 수정',
   'policy.revision_reason.delete': '제·개정 이유 삭제',

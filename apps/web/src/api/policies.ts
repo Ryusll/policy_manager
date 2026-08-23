@@ -113,6 +113,15 @@ export const policiesApi = {
   compare: (policyId: string, from: string, to: string): Promise<PolicyComparison> =>
     client.get('/policies/' + policyId + '/compare', { params: { from, to } }).then((r) => r.data),
 
+  /**
+   * 한/글 내보내기 (T-85). 확장자가 `.hwpx` 인 이유는 `.hwp` 가 한컴 독점 바이너리라
+   * 서버에서 만들 수 없어서다 — `.hwpx` 는 같은 한/글이 여는 표준이다(ADR-0016).
+   */
+  exportHwpx: (policyId: string, data: { html: string; title?: string }): Promise<Blob> =>
+    client
+      .post('/policies/' + policyId + '/export/hwpx', data, { responseType: 'blob' })
+      .then((r) => r.data),
+
   exportPdf: (policyId: string, data: ExportPdfInput): Promise<Blob> =>
     client
       .post('/policies/' + policyId + '/export/pdf', data, { responseType: 'blob' })

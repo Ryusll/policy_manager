@@ -59,6 +59,7 @@
 | GET | :id/as-of | admin, editor | **시점 조회** — 기준일에 시행 중이던 본문. Query: `date`(YYYY-MM-DD) |
 | GET | :id/compare | admin, editor | **신구조문대비표** — 두 시점 본문을 조문 단위로 대비. Query: `from`, `to`(YYYY-MM-DD) |
 | POST | :id/export/pdf | admin, editor | **전문 PDF 내보내기.** Body는 전문 보기 렌더 HTML, 응답은 `application/pdf`. 동기 처리이며 감사 로그에 `policy.export.pdf` 로 남는다([ADR-0015](../10_ADR_의사결정기록/ADR.md)) |
+| POST | :id/export/hwpx | JWT | **전문 한/글 내보내기.** Body는 같은 HTML, 응답은 `application/hwp+zip`. **`.hwp` 가 아니라 `.hwpx`** — `.hwp` 는 독점 바이너리라 서버에서 만들 수 없다([ADR-0016](../10_ADR_의사결정기록/ADR.md)). 한/글 2014 이상에서 열린다. 감사 로그 `policy.export.hwpx` |
 | POST | :id/files | admin, editor | 첨부파일 업로드 |
 | GET | :id/files | JWT | 첨부파일 목록 |
 | GET | :id/files/:filename | JWT | 첨부파일 다운로드 |
