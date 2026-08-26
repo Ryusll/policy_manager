@@ -1,7 +1,7 @@
 name: CI
 
-# T-31. push/PR마다 타입체크·테스트·빌드를 돌려 회귀를 막는다.
-# DB가 필요한 플로우 테스트는 아직 없다(T-30 잔여) — 지금은 순수 로직 테스트만 돈다.
+# T-31. push/PR마다 타입체크·lint·테스트·빌드를 돌려 회귀를 막는다.
+# DB가 필요한 플로우 테스트는 integration job 에서 컨테이너를 띄워 돈다(T-30).
 
 on:
   push:
@@ -37,6 +37,11 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      # T-32. 설정 파일이 없어 오랫동안 아무 룰도 돌지 않았다. 여기서 돌려
+      # 다시 그렇게 되지 않게 한다. 경고는 통과, 에러만 막는다.
+      - name: Lint
+        run: npm run lint
 
       - name: Test
         run: npm test

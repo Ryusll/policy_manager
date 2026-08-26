@@ -206,7 +206,7 @@ export function collectFlatSections(lines: RegulationParseLine[]): FlatSection[]
 
     const head = matchHeader(line);
     if (head) {
-      current = flushSection(current, out, lastStructuralDepthRef);
+      flushSection(current, out, lastStructuralDepthRef);
       current = {
         id: randomUUID(),
         norm: head.norm,

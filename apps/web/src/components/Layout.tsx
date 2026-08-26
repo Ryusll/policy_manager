@@ -76,7 +76,8 @@ export default function Layout() {
   }, []);
 
   const handleLogout = async () => {
-    try { await authApi.logout(); } catch {}
+    // 서버 로그아웃이 실패해도 로컬 세션은 지운다 — 못 나가는 것보다 낫다
+      try { await authApi.logout(); } catch { /* 무시 */ }
     logout();
     navigate('/login');
   };

@@ -25,7 +25,7 @@ export async function api(
     body: json !== undefined ? JSON.stringify(json) : (rest.body as any),
   });
   const text = await res.text();
-  let body: any = null;
+  let body: any;
   try {
     body = text ? JSON.parse(text) : null;
   } catch {

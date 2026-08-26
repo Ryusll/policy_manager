@@ -21,7 +21,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     });
   }
 
-  async validate(
+  validate(
     _accessToken: string,
     _refreshToken: string,
     profile: {
@@ -31,7 +31,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       photos?: { value: string }[];
     },
     done: VerifyCallback,
-  ): Promise<void> {
+  ): void {
     const email = profile.emails?.[0]?.value;
     if (!email) {
       done(new Error('No email from Google'), undefined);

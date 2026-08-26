@@ -9,7 +9,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Columns3, Info } from 'lucide-react';
-import { clsx } from 'clsx';
 import { policiesApi, type ThreeWayRow } from '../api/policies';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';

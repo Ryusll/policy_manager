@@ -45,7 +45,7 @@ export function sanitizeTemplateHtml(html: string): string {
     WHOLE_DOCUMENT: false,
     RETURN_DOM: false,
     RETURN_DOM_FRAGMENT: false,
-  }) as unknown as string;
+  });
 }
 
 /**

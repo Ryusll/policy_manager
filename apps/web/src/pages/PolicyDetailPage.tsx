@@ -510,7 +510,7 @@ export default function PolicyDetailPage() {
   const [approveTargetId, setApproveTargetId] = useState<string | null>(null);
   const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
-  const [archiveTarget, setArchiveTarget] = useState<any | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<any>(null);
   const [versionActionMsg, setVersionActionMsg] = useState('');
   const [activeToggleTarget, setActiveToggleTarget] = useState<boolean | null>(null);
   const [approveNote, setApproveNote] = useState('');
@@ -692,7 +692,7 @@ export default function PolicyDetailPage() {
     if (!found) return;
     setSelectedArticle(found.hit);
     setArticleViewMode('segment');
-    setExpandedChapters((prev) => new Set(prev).add(found!.ch.id));
+    setExpandedChapters((prev) => new Set(prev).add(found.ch.id));
   }, [policy?.id]);
 
   /** 현재 조문을 가리키는 안정 링크를 클립보드에 복사한다 */
@@ -775,13 +775,8 @@ export default function PolicyDetailPage() {
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => filesApi.upload(id!, file),
-    onSuccess: () => { refetchFiles(); setUploadError(''); },
+    onSuccess: () => { void refetchFiles(); setUploadError(''); },
     onError: (e: any) => setUploadError(e.response?.data?.message || '업로드 실패'),
-  });
-
-  const deleteFileMutation = useMutation({
-    mutationFn: (filename: string) => filesApi.delete(id!, filename),
-    onSuccess: () => refetchFiles(),
   });
 
   const formatSize = (bytes: number) => {
@@ -1093,7 +1088,7 @@ export default function PolicyDetailPage() {
     mutationFn: (content: string) => commentsApi.create(selectedArticle.id, { content }),
     onSuccess: () => {
       setCommentDraft('');
-      refetchComments();
+      void refetchComments();
     },
   });
 
@@ -1237,7 +1232,7 @@ export default function PolicyDetailPage() {
     (requestedIndex: number) => {
       const root = getFullViewRoot();
       if (!root) return;
-      const matches = Array.from(root.querySelectorAll('.tmpl-fullview-hit')) as HTMLElement[];
+      const matches = Array.from(root.querySelectorAll('.tmpl-fullview-hit'));
       if (!matches.length) {
         clearActiveFullViewHit();
         setFullViewActiveMatchIndex(0);

@@ -66,20 +66,20 @@ function preprocessPolicyImportText(input: string): string {
   s = stripFormCoverLines(s);
 
   // 한 줄에 "…제2장 … 제1조 …"처럼 붙는 경우
-  const beforeChapter = /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*장(?:\s|[\.\:：\-（(]|$))/gi;
-  const beforeArticle = /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*조(?:\s|[\.\:：\-（(]|$))/gi;
+  const beforeChapter = /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*장(?:\s|[.:：\-（(]|$))/gi;
+  const beforeArticle = /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*조(?:\s|[.:：\-（(]|$))/gi;
   s = s.replace(beforeChapter, '$1\n');
   s = s.replace(beforeArticle, '$1\n');
 
   // "…Ⅱ . 정보보안 …" / "…I 총칙 …" 로마 장 표기
-  s = s.replace(/([^\n])(?=\s*(?:[IVXLCDM]{1,6}|[\u2160-\u216B]+)(?:\s*[\.．])?\s+[가-힣A-Za-z])/gi, '$1\n');
+  s = s.replace(/([^\n])(?=\s*(?:[IVXLCDM]{1,6}|[\u2160-\u216B]+)(?:\s*[.．])?\s+[가-힣A-Za-z])/gi, '$1\n');
 
   // "총 칙 1 . 목 적" 처럼 장 제목 뒤에 조항이 붙은 경우
-  s = s.replace(/([가-힣])(?=\s+\d{1,2}(?:\s*[\.．]\s*\d+){0,4}(?:\s*[\.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g, '$1\n');
+  s = s.replace(/([가-힣])(?=\s+\d{1,2}(?:\s*[.．]\s*\d+){0,4}(?:\s*[.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g, '$1\n');
 
   // "…문 4.1 / 7.2.1 …" 십진 항이 문장 중간에 붙은 경우 줄 분리
   s = s.replace(
-    /([^\n가-힣\s])(?=\s*\d{1,2}(?:\s*[\.．]\s*\d+){1,4}(?:\s*[\.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g,
+    /([^\n가-힣\s])(?=\s*\d{1,2}(?:\s*[.．]\s*\d+){1,4}(?:\s*[.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g,
     '$1\n',
   );
 
@@ -123,7 +123,7 @@ function stripEnumeratePrefix(line: string): string {
   let s = line.trim().replace(/^[\s\u200b\u200c]+/, '');
   for (let i = 0; i < 4; i += 1) {
     const candidate = s
-      .replace(/^\(?[0-9]+\)?[\.\)、:：\]]\s*/u, '')
+      .replace(/^\(?[0-9]+\)?[.)、:：\]]\s*/u, '')
       .replace(/^[（(]\s*[0-9]+\s*[）)]\s*/u, '')
       .replace(/^【\s*[0-9]+\s*】\s*/u, '')
       .trim();
@@ -137,7 +137,7 @@ function stripEnumeratePrefix(line: string): string {
 
 function parseRomanChapterLine(s: string): { num: number | null; title: string } | null {
   const romanNorm = normalizeUnicodeRomanPrefix(s);
-  const rm = romanNorm.match(/^([IVXLCDM]+)(?:\s*[\.．])?\s+(.*)$/i);
+  const rm = romanNorm.match(/^([IVXLCDM]+)(?:\s*[.．])?\s+(.*)$/i);
   if (!rm) return null;
   const num = romanToInt(rm[1].toUpperCase());
   if (num === null || num < 1 || num > 99) return null;
@@ -170,7 +170,7 @@ function parseChapterHeader(line: string, profile: ParseProfile): { num: number 
 
 /** "1. 목적", "2.1 본 지침은 …", "1. Purpose" 등 회사 지침·규정 흔한 십진 목차 */
 function parseDecimalOutlineArticleHeader(line: string, _profile: ParseProfile): { num: number | null; title: string } | null {
-  const t0 = line.trim().replace(/\s*[\.．]\s*/g, '.');
+  const t0 = line.trim().replace(/\s*[.．]\s*/g, '.');
   const dec = t0.match(/^(\d+(?:\.\d+){0,4})(?:\.)?\s+(.+)$/);
   if (!dec) return null;
   const normalizedNo = dec[1].trim();

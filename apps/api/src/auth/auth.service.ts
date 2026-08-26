@@ -72,7 +72,7 @@ export class AuthService {
     profile: GoogleOAuthProfile,
     state: GoogleOAuthState,
   ) {
-    const { email, name, googleId } = profile;
+    const { googleId } = profile;
 
     const existingOAuth = await this.prisma.user.findFirst({
       where: { oauthProvider: 'google', oauthSub: googleId },

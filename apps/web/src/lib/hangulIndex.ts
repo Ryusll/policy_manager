@@ -52,7 +52,7 @@ export function indexKeyOfChar(ch: string): IndexKey {
 
 /** 규정명의 색인 키. 앞쪽 공백·따옴표 등은 건너뛰고 첫 의미 글자를 본다. */
 export function indexKeyOf(title: string): IndexKey {
-  const trimmed = (title || '').replace(/^[\s"'«‹「『(\[{<]+/, '');
+  const trimmed = (title || '').replace(/^[\s"'«‹「『([{<]+/, '');
   return indexKeyOfChar(trimmed.charAt(0));
 }
 

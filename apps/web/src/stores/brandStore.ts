@@ -168,7 +168,7 @@ export const useBrandStore = create<BrandState>()(
           // v2 이하는 테넌트를 기록하지 않았다. `syncFromServer` 가 null 을 "내 것"으로
           // 취급해 서버로 한 번 이관한다.
           cachedTenantId: typeof s.cachedTenantId === 'string' ? s.cachedTenantId : null,
-        } as Partial<BrandState>;
+        };
       },
     },
   ),

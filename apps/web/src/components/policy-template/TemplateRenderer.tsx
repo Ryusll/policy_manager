@@ -204,7 +204,7 @@ export default function TemplateRenderer({
   highlightQuery?: string;
 }) {
   const brandLogoDataUrl = useBrandStore((s) => s.brandLogoDataUrl);
-  const rawHtml = typeof template?.layoutJson?.rawHtml === 'string' ? (template.layoutJson.rawHtml as string) : '';
+  const rawHtml = typeof template?.layoutJson?.rawHtml === 'string' ? template.layoutJson.rawHtml : '';
   const mode = typeof template?.layoutJson?.mode === 'string' ? String(template.layoutJson.mode) : '';
   const basicConfig = (template?.layoutJson?.basicConfig || {}) as BasicTemplateConfig;
   const cssText = typeof template?.cssText === 'string' ? template.cssText : '';

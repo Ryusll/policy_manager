@@ -100,7 +100,7 @@ export default function BulkImportPanel({ onImported }: { onImported?: () => voi
     if (!body) return;
     setBusy(true);
     try {
-      setResult(await adminApi.validateImport(body as any));
+      setResult(await adminApi.validateImport(body));
     } catch (e: any) {
       setServerError(e?.response?.data?.message || '사전 검사에 실패했습니다.');
     } finally {
@@ -114,7 +114,7 @@ export default function BulkImportPanel({ onImported }: { onImported?: () => voi
     setBusy(true);
     setServerError('');
     try {
-      const res = await adminApi.importPolicies(body as any);
+      const res = await adminApi.importPolicies(body);
       setDone({ importedPolicies: res.importedPolicies });
       setResult(null);
       setText('');
@@ -154,7 +154,10 @@ export default function BulkImportPanel({ onImported }: { onImported?: () => voi
             e.target.value = '';
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = () => onTextChange(String(reader.result ?? ''));
+            // readAsText 면 항상 string 이지만, ArrayBuffer 가 오면 String() 이
+            // '[object ArrayBuffer]' 를 만들어 "JSON 형식 오류"로 둔갑한다.
+            reader.onload = () =>
+              onTextChange(typeof reader.result === 'string' ? reader.result : '');
             reader.onerror = () => setParseError('파일을 읽지 못했습니다.');
             reader.readAsText(file);
           }}

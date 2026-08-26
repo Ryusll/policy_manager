@@ -22,7 +22,7 @@ export default function OAuthCallbackPage() {
     }
 
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         useAuthStore.setState({
           accessToken: access,

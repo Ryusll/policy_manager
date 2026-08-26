@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Delete, Param, Body, Request, HttpCode, Query,
+  Controller, Get, Post, Put, Param, Body, Request, HttpCode, Query,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { VersionsService } from './versions.service';

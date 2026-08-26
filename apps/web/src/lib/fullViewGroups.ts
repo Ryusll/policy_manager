@@ -10,8 +10,8 @@ import { groupArticlesByJo, flattenJoGroup } from './legalArticleLabel';
 
 export type FullViewJoGroup = {
   articleNumber: number;
-  main: any | null;
-  hangs: { clauseNumber: number; hang: any | null; items: any[] }[];
+  main: any;
+  hangs: { clauseNumber: number; hang: any; items: any[] }[];
   orphanItems: any[];
   /** 조 그룹의 모든 행(평탄) — 검색 집계용 */
   items: any[];

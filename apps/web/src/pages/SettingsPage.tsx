@@ -96,7 +96,7 @@ export default function SettingsPage() {
   const [previewPolicyId, setPreviewPolicyId] = useState('');
   const [previewPolicy, setPreviewPolicy] = useState<any>(null);
   const [showTemplatePreviewModal, setShowTemplatePreviewModal] = useState(false);
-  const [restoreCandidate, setRestoreCandidate] = useState<any | null>(null);
+  const [restoreCandidate, setRestoreCandidate] = useState<any>(null);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>('');
   const [revisionQuery, setRevisionQuery] = useState('');
   const [revisionActionFilter, setRevisionActionFilter] = useState('all');
@@ -221,7 +221,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (activeTab !== 'team' || !isAdmin) return;
-    loadNotifyTeams();
+    void loadNotifyTeams();
   }, [activeTab, isAdmin]);
 
   const previewText = displayBrandMark(brandDraft.mark);
@@ -267,6 +267,11 @@ export default function SettingsPage() {
       if (!selectedTemplateId && rows[0]) {
         setSelectedTemplateId(rows[0].id);
       }
+    } catch (e: any) {
+      // catch 가 없던 자리다(T-32 lint 로 발견). 목록을 못 받으면 스피너만 멎고
+      // 화면은 "템플릿 없음"처럼 보여서, 실패인지 정말 비어 있는지 알 수 없었다.
+      setTemplates([]);
+      setTemplateMsg(e?.response?.data?.message || '템플릿 목록을 불러오지 못했습니다.');
     } finally {
       setTemplateLoading(false);
     }
@@ -284,7 +289,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (activeTab !== 'templates') return;
     if (!canManageTemplatesByPlan) return;
-    loadTemplates();
+    void loadTemplates();
   }, [activeTab, canManageTemplatesByPlan]);
 
   useEffect(() => {
@@ -316,12 +321,12 @@ export default function SettingsPage() {
       chapterPageBreak: cfg.chapterPageBreak ?? false,
       showPageNumber: cfg.showPageNumber ?? false,
     });
-    loadTemplateRevisions(selectedTemplateId);
+    void loadTemplateRevisions(selectedTemplateId);
   }, [selectedTemplateId, templates]);
 
   useEffect(() => {
     if (activeTab !== 'templates' || !canManageTemplatesByPlan) return;
-    (async () => {
+    void (async () => {
       try {
         const list = await policiesApi.list();
         setPreviewPolicies(Array.isArray(list) ? list : []);
@@ -338,7 +343,7 @@ export default function SettingsPage() {
       setPreviewPolicy(null);
       return;
     }
-    (async () => {
+    void (async () => {
       try {
         const full = await policiesApi.get(previewPolicyId);
         setPreviewPolicy(full);

@@ -48,7 +48,7 @@ function asArray<T>(value: OneOrMany<T> | undefined | null): T[] {
 /** 정렬용 선행 공백·비가시 문자를 걷어낸 문자열 */
 function text(value: unknown): string {
   if (value == null) return '';
-  if (typeof value === 'string') return value.replace(/ /g, ' ').trim();
+  if (typeof value === 'string') return value.replace(/\u00A0/g, ' ').trim();
   if (typeof value === 'number') return String(value);
   return '';
 }

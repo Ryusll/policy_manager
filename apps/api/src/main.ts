@@ -53,4 +53,11 @@ async function bootstrap() {
   await app.listen(port);
   console.log('Application is running on port ' + port);
 }
-bootstrap();
+
+// 부팅 실패(포트 점유·DB 연결 불가·시크릿 가드)는 컨테이너가 곧바로 죽어야
+// 오케스트레이터가 재시작을 판단한다. 프라미스를 놓아두면 unhandled rejection
+// 스택만 남고 원인 줄이 사라진다.
+bootstrap().catch((err) => {
+  console.error('API 부팅에 실패했습니다:', err);
+  process.exit(1);
+});

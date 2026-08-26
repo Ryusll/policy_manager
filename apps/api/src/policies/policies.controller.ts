@@ -6,7 +6,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { Response } from 'express';
 import { PoliciesService } from './policies.service';
 import { PolicyPdfService } from './policy-pdf.service';
@@ -402,7 +402,6 @@ export class PoliciesController {
     try {
       await this.policiesService.findOne(req.user.tenantId, id);
     } catch (e) {
-      const { unlinkSync } = require('fs');
       try { unlinkSync(file.path); } catch { /* 이미 없으면 그만 */ }
       throw e;
     }
@@ -420,7 +419,6 @@ export class PoliciesController {
   @ApiOperation({ summary: '규정 파일 목록 조회' })
   async listFiles(@Request() req: any, @Param('id') id: string) {
     await this.policiesService.findOne(req.user.tenantId, id);
-    const { readdirSync, statSync } = require('fs');
     const dir = this.safe(() => policyUploadDir(req.user.tenantId, id));
     if (!existsSync(dir)) return [];
     return readdirSync(dir).map((filename: string) => {
@@ -548,7 +546,6 @@ export class PoliciesController {
     @Param('filename') filename: string,
   ) {
     await this.policiesService.findOne(req.user.tenantId, id);
-    const { unlinkSync } = require('fs');
     const filePath = this.safe(() => policyUploadFilePath(req.user.tenantId, id, filename));
     if (!existsSync(filePath)) throw new NotFoundException('파일을 찾을 수 없습니다.');
     unlinkSync(filePath);

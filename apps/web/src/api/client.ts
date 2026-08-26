@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../stores/authStore';
 
 const client = axios.create({
@@ -21,10 +21,12 @@ const isPublicAuthRequest = (url: string | undefined) =>
 
 client.interceptors.response.use(
   (res) => res,
-  async (error) => {
-    const original = error.config;
+  async (error: AxiosError) => {
+    // `_retry` 는 우리가 붙이는 표시다 — 같은 요청으로 무한히 갱신을 돌지 않게 한다.
+    const original = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
     if (
       error.response?.status === 401 &&
+      original &&
       !original._retry &&
       !isPublicAuthRequest(original.url)
     ) {
