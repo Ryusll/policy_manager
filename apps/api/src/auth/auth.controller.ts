@@ -16,7 +16,14 @@ import { AuthService } from './auth.service';
 import { LoginDto, RefreshTokenDto, RegisterDto } from './auth.dto';
 import { Public } from '../common/guards/decorators';
 import type { GoogleOAuthProfile } from './google.strategy';
-import { parseGoogleOAuthState } from './oauth-state';
+import {
+  createGoogleOAuthState,
+  parseGoogleOAuthState,
+  getOAuthStateSecret,
+  OAUTH_STATE_COOKIE,
+  OAUTH_STATE_TTL_MS,
+} from './oauth-state';
+import { GoogleOAuthRejection } from './google-account-resolution';
 import { getPublicUrl } from '../common/config/public-url';
 
 @ApiTags('auth')
@@ -66,17 +73,33 @@ export class AuthController {
           'tenantSlug and tenantName are required when mode=register',
       });
     }
-    const state = Buffer.from(
-      JSON.stringify({
-        mode: resolvedMode,
-        tenantSlug: slug,
-        tenantName: name,
-      }),
-    ).toString('base64url');
+    // state 는 서명하고, 같은 난수를 쿠키에도 심는다. 콜백에서 둘을 대조해야
+    // "남이 만든 콜백 URL 을 열게 하는" 공격(로그인 CSRF)을 막을 수 있다(T-42).
+    const { state, nonce } = createGoogleOAuthState(
+      { mode: resolvedMode, tenantSlug: slug, tenantName: name },
+      getOAuthStateSecret(),
+    );
+    res.cookie(OAUTH_STATE_COOKIE, nonce, this.stateCookieOptions());
     passport.authenticate('google', {
       scope: ['email', 'profile'],
       state,
     })(req, res);
+  }
+
+  /**
+   * httpOnly — 스크립트가 읽을 이유가 없다.
+   * SameSite=Lax — 콜백은 구글에서 넘어오는 최상위 GET 이동이라 Lax 로 전달된다.
+   *                None 으로 열면 아무 사이트나 이 쿠키를 실은 요청을 만들 수 있다.
+   * path — 인증 경로 밖으로 새어 나갈 이유가 없다.
+   */
+  private stateCookieOptions() {
+    return {
+      httpOnly: true,
+      sameSite: 'lax' as const,
+      secure: getPublicUrl().startsWith('https://'),
+      path: '/api/auth',
+      maxAge: OAUTH_STATE_TTL_MS,
+    };
   }
 
   @Public()
@@ -84,29 +107,44 @@ export class AuthController {
   @ApiOperation({ summary: 'Google OAuth callback' })
   googleCallback(@Req() req: ExpressRequest, @Res() res: Response) {
     const fe = getPublicUrl();
+    // 쿠키는 성패와 무관하게 바로 지운다. 같은 state 를 두 번 쓰면 두 번째는
+    // 대조할 값이 없어 실패한다 — 재사용 방어가 여기서 나온다.
+    const nonce = (req as ExpressRequest & { cookies?: Record<string, string> }).cookies?.[
+      OAUTH_STATE_COOKIE
+    ];
+    res.clearCookie(OAUTH_STATE_COOKIE, { path: '/api/auth' });
+
+    const fail = (reason: string) =>
+      res.redirect(`${fe}/login?error=oauth&reason=${encodeURIComponent(reason)}`);
+
+    // **state 를 먼저 본다.** 예전에는 코드 교환이 끝난 뒤에야 state 를 봤다 —
+    // 위조된 콜백 하나가 매번 구글로 나가는 요청을 만들었다는 뜻이다.
+    const state = parseGoogleOAuthState(
+      req.query.state as string,
+      getOAuthStateSecret(),
+      nonce,
+    );
+    if (!state) {
+      return fail('state');
+    }
+
     passport.authenticate(
       'google',
       { session: false },
       async (err: Error | null, user: GoogleOAuthProfile | false) => {
         if (err || !user) {
-          return res.redirect(`${fe}/login?error=oauth`);
-        }
-        const state = parseGoogleOAuthState(req.query.state as string);
-        if (!state) {
-          return res.redirect(`${fe}/login?error=oauth_state`);
+          return fail('provider');
         }
         try {
-          const result = await this.authService.completeGoogleOAuth(
-            user,
-            state,
-          );
+          const result = await this.authService.completeGoogleOAuth(user, state);
           const params = new URLSearchParams({
             access_token: result.accessToken,
             refresh_token: result.refreshToken,
           });
           return res.redirect(`${fe}/oauth/callback?${params.toString()}`);
-        } catch {
-          return res.redirect(`${fe}/login?error=oauth`);
+        } catch (e) {
+          // 거부 사유를 잃으면 사용자는 "실패했습니다"만 보고 같은 실패를 반복한다.
+          return fail(e instanceof GoogleOAuthRejection ? e.code : 'server');
         }
       },
     )(req, res);
@@ -117,10 +155,7 @@ export class AuthController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Refresh access token' })
   refresh(@Body() dto: RefreshTokenDto) {
-    const decoded: any = JSON.parse(
-      Buffer.from(dto.refreshToken.split('.')[1], 'base64').toString(),
-    );
-    return this.authService.refresh(decoded.sub, dto.refreshToken);
+    return this.authService.refresh(dto.refreshToken);
   }
 
   @Post('logout')

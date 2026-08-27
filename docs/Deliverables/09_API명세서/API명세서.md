@@ -17,11 +17,24 @@
 |---|---|---|---|
 | POST | login | Public | 이메일/비밀번호 로그인 |
 | POST | register | Public | 테넌트 + 최초 admin 계정 생성 |
-| GET | google | Public | Google OAuth 시작(redirect) |
-| GET | google/callback | Public | Google OAuth 콜백 처리 |
-| POST | refresh | Public | refreshToken으로 accessToken 재발급 |
+| GET | google | Public | Google OAuth 시작(redirect). 서명된 `state`와 `oauth_state` 쿠키를 함께 내린다. `GOOGLE_CLIENT_ID/SECRET` 미설정 시 **503** |
+| GET | google/callback | Public | Google OAuth 콜백. `state`의 서명·유효시간(10분)·쿠키 대조를 **코드 교환보다 먼저** 확인한다. 실패는 `{PUBLIC_URL}/login?error=oauth&reason=<사유>`로 리다이렉트 |
+| POST | refresh | Public | refreshToken으로 재발급. 서명·만료를 검증하고 **매번 새 토큰으로 회전**한다. 잘못된 토큰은 401, 빈 값은 400 |
 | POST | logout | JWT | refreshToken 무효화 |
 | POST | me | JWT | 현재 로그인 사용자 정보 |
+
+**Google 콜백 실패 사유(`reason`)** — 화면이 그대로 문구로 바꿔 보여 준다(T-42).
+
+| 사유 | 뜻 |
+|---|---|
+| `state` | `state`가 없거나 위조·만료됐거나 쿠키와 맞지 않음 |
+| `not_invited` | 그 조직에 계정이 없음. **Google 로그인은 계정을 만들지 않는다**([ADR-0018](../10_ADR_의사결정기록/ADR.md)) |
+| `other_organization` | 이 Google 계정이 다른 조직 소속 |
+| `already_registered` | 이미 가입된 Google 계정으로 `mode=register` 요청 |
+| `slug_taken` / `invalid_slug` / `missing_tenant_name` | `mode=register`의 조직 코드·이름 문제 |
+| `email_unverified` | Google이 이메일 소유를 확인하지 않은 계정 |
+| `email_linked_elsewhere` | 그 이메일이 다른 Google 계정에 연결돼 있음 |
+| `provider` / `server` | Google 응답 실패 / 서버 오류 |
 
 ## users (`/api/users`)
 | Method | Path | 인증 | 설명 |
@@ -223,7 +236,7 @@
 ## auth
 **LoginDto** — `email`(이메일, 자동 trim+소문자), `password`(문자열, 최소 6자), `tenantSlug?`(문자열, trim+소문자)
 **RegisterDto** — `tenantName`, `tenantSlug`, `email`(이메일), `password`(최소 6자), `name`
-**RefreshTokenDto** — `refreshToken`(문자열)
+**RefreshTokenDto** — `refreshToken`(문자열, 빈 값 불가)
 
 ## users
 **CreateUserDto** — `email`(이메일), `password`(최소 6자), `name`, `role`(admin|editor|viewer)

@@ -71,7 +71,14 @@ export async function createTenant(tag: string) {
   if (status >= 300) {
     throw new Error(`테넌트 생성 실패 (${status}): ${JSON.stringify(body)}`);
   }
-  return { slug, email, password, token: body.accessToken as string, user: body.user };
+  return {
+    slug,
+    email,
+    password,
+    token: body.accessToken as string,
+    refreshToken: body.refreshToken as string,
+    user: body.user,
+  };
 }
 
 export async function login(email: string, password: string, tenantSlug: string) {
