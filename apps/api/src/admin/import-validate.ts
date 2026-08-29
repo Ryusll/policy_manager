@@ -19,11 +19,43 @@ export type ImportIssue = {
   message: string;
 };
 
+export type ImportArticleShape = {
+  number?: number;
+  title?: string;
+  content?: string;
+  publish?: boolean;
+};
+
+export type ImportChapterShape = {
+  number?: number;
+  title?: string;
+  /** true 면 제목 없는 장 — 목차·인쇄에서 장 머리글을 쓰지 않는다 */
+  suppressHeader?: boolean;
+  articles?: ImportArticleShape[];
+};
+
 export type ImportPolicyShape = {
   code?: string;
   title?: string;
-  chapters?: { number?: number; title?: string; articles?: { number?: number; title?: string; content?: string }[] }[];
+  chapters?: ImportChapterShape[];
+  /**
+   * 장 없이 조문만 있는 규정. 짧은 내규는 `제1조` 부터 시작하는 편이 흔한데,
+   * 예전에는 이 형태를 표현할 수 없어 **없는 장 제목을 지어내야** 했다 —
+   * T-83 이 다른 가져오기 경로에서 없앤 바로 그 문제다(T-84).
+   */
+  articles?: ImportArticleShape[];
 };
+
+/** 최상위 `articles` 를 숨김 장 한 건으로 눕힌다. 검사와 저장이 같은 결과를 보게 한다. */
+export function normalizeImportChapters(policy: ImportPolicyShape): ImportChapterShape[] {
+  const chapters = policy.chapters ?? [];
+  const loose = policy.articles ?? [];
+  if (!loose.length) return chapters;
+  return [
+    ...chapters,
+    { number: chapters.length + 1, suppressHeader: true, articles: loose },
+  ];
+}
 
 export type ValidateInput = {
   policies: ImportPolicyShape[];
@@ -90,7 +122,7 @@ export function validateImport(input: ValidateInput): ValidateResult {
       issues.push({ level: 'error', policyIndex: idx, code, message: `규정 제목이 ${MAX_TITLE}자를 넘습니다.` });
     }
 
-    const chs = p.chapters ?? [];
+    const chs = normalizeImportChapters(p);
     if (chs.length === 0) {
       // 막지는 않는다 — 껍데기만 만들고 나중에 채우는 쓰임이 있다
       issues.push({
@@ -113,12 +145,13 @@ export function validateImport(input: ValidateInput): ValidateResult {
           message: `${chIdx + 1}번째 장의 번호가 1 이상의 정수가 아닙니다.`,
         });
       }
-      if (!String(ch.title ?? '').trim()) {
+      // 숨김 장은 제목을 쓰지 않는다(장 없는 규정을 담는 그릇이다)
+      if (ch.suppressHeader !== true && !String(ch.title ?? '').trim()) {
         issues.push({
           level: 'error',
           policyIndex: idx,
           code: code || null,
-          message: `${chIdx + 1}번째 장의 제목이 비어 있습니다.`,
+          message: `${chIdx + 1}번째 장의 제목이 비어 있습니다. 장 없는 규정이라면 최상위 articles 로 넣거나 suppressHeader 를 켜세요.`,
         });
       }
       const ars = ch.articles ?? [];

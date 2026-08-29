@@ -11,6 +11,12 @@ import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import { buildPolicyForest } from './policy-hierarchy';
 import {
+  applyChapterHeaderPatch,
+  newChapterHeader,
+  ChapterHeaderError,
+  type ChapterHeaderState,
+} from './chapter-header';
+import {
   ReorderPlanError,
   buildReorderPlan,
   currentJoOrder,
@@ -557,18 +563,9 @@ export class PoliciesService {
 
   async createChapter(tenantId: string, policyId: string, dto: CreateChapterDto, userId: string) {
     await this.findOne(tenantId, policyId);
-    const suppress = dto.suppressHeader === true;
-    const title = String(dto.title ?? '').trim();
-    if (!suppress && !title) {
-      throw new BadRequestException('장 제목을 입력하세요.');
-    }
+    const header = this.chapterHeader(() => newChapterHeader(dto));
     const ch = await this.prisma.chapter.create({
-      data: {
-        policyId,
-        number: dto.number,
-        title: title || '본문',
-        suppressHeader: suppress,
-      },
+      data: { policyId, number: dto.number, ...header },
     });
     await this.audit.log({
       tenantId,
@@ -587,7 +584,28 @@ export class PoliciesService {
       where: { id: chapterId, policyId },
     });
     if (!chapter) throw new NotFoundException('Chapter not found');
-    return this.prisma.chapter.update({ where: { id: chapterId }, data: dto });
+    // 생성에는 있고 수정에는 없던 검사다(T-84). 없으면 "제목 없는 보이는 장"을
+    // 만들 수 있고, 그 장은 화면·인쇄에 제목 없는 빈 머리글로 나온다.
+    const header = this.chapterHeader(() =>
+      applyChapterHeaderPatch(
+        { title: chapter.title, suppressHeader: chapter.suppressHeader },
+        dto,
+      ),
+    );
+    return this.prisma.chapter.update({
+      where: { id: chapterId },
+      data: { ...dto, ...header },
+    });
+  }
+
+  /** 불변식 위반을 400 으로 바꾼다(규칙 자체는 DB 없이 검사할 수 있게 밖에 둔다) */
+  private chapterHeader(run: () => ChapterHeaderState): ChapterHeaderState {
+    try {
+      return run();
+    } catch (e) {
+      if (e instanceof ChapterHeaderError) throw new BadRequestException(e.message);
+      throw e;
+    }
   }
 
   async removeChapter(tenantId: string, policyId: string, chapterId: string) {

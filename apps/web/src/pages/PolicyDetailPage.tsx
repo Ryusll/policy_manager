@@ -54,6 +54,7 @@ import {
   formatKoDate,
   sortArticlesForToc,
 } from '../lib/legalArticleLabel';
+import { buildPolicyPlainText, policyPlainTextFilename } from '../lib/policyPlainText';
 import {
   buildFullViewGroups,
   collectJoNumbers,
@@ -1387,34 +1388,17 @@ export default function PolicyDetailPage() {
 
   const downloadFullTextTxt = useCallback(() => {
     if (!policy) return;
-    const lines: string[] = [`${policy.code} ${policy.title}`, ''];
-    for (const ch of fullViewGroups) {
-      lines.push('');
-      lines.push(`===== 제${ch.number}장 ${ch.title} =====`);
-      // 절 소속 조문도 빠짐없이 담는다
-      for (const g of ch.allGroups || []) {
-        for (const a of g.items || []) {
-          lines.push('');
-          lines.push(`${articleShortLabel(a)} ${a.title || ''}`);
-          lines.push(String(a.versions?.[0]?.content || '').trim());
-        }
-      }
-    }
-    if (appendicesGrouped.all.length) {
-      lines.push('');
-      lines.push('===== 부칙·별표·서식 =====');
-      for (const ap of appendicesGrouped.all) {
-        lines.push('');
-        const lbl = appendixKindLabel[ap.kind as AppendixKind] || ap.kind;
-        lines.push(`[${lbl}] ${ap.title || ''}`);
-        lines.push(String(ap.body || '').trim());
-      }
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const text = buildPolicyPlainText({
+      policy,
+      chapters: fullViewGroups,
+      appendices: appendicesGrouped.all,
+      appendixKindLabel,
+    });
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}-full.txt`;
+    a.download = policyPlainTextFilename(policy.code);
     a.rel = 'noopener';
     a.click();
     URL.revokeObjectURL(url);

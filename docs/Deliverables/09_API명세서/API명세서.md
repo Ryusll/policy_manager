@@ -245,9 +245,10 @@
 **CreatePolicyDto** — `code`, `title`, `description?`, `department?`(≤100), `category?`(≤100), `templateId?`
 **UpdatePolicyDto** — `title?`, `description?`, `department?`(≤100), `category?`(≤100), `isActive?`(bool), `templateId?`(null로 해제 가능), `revisionDate?`(YYYY-MM-DD, null 가능), `effectiveDate?`(YYYY-MM-DD, null 가능), `revisionNotify?`(아래 PolicyRevisionNotifyDto)
 **CreateChapterDto** — `number`(정수≥1), `title?`, `suppressHeader?`(bool)
+> **보이는 장은 제목이 있어야 한다.** `suppressHeader`가 아닌데 제목이 비면 400. 숨김 장은 제목 없이 만들 수 있고 기본 이름(`본문`)이 채워진다. 생성·수정 모두 같은 규칙이다(T-84).
 **CreateSectionDto** — `number`(정수≥1), `title`(≤300)
 **UpdateSectionDto** — `number?`(≥1), `title?`(≤300)
-**UpdateChapterDto** — `number?`(≥1), `title?`, `suppressHeader?`
+**UpdateChapterDto** — `number?`(≥1), `title?`, `suppressHeader?` — 생성과 같은 규칙. 보이는 장의 제목을 빈 값으로 바꾸면 400
 **CreateArticleDto** — `number`(정수≥1), `sectionId?`(소속 절, 미지정 시 장 직속), `title?`(항·목만 추가 시 생략), `clauseNumber?`(≥1), `itemNumber?`(≥1), `hasPrecedent?`/`hasRelatedLaw?`/`hasRelatedRule?`(bool), `relatedPrecedentNote?`/`relatedLawNote?`/`relatedRuleNote?`(≤8000), `content?`
 **UpdateArticleDto** — `number?`(≥1), `sectionId?`(절 이동. `null`이면 절에서 분리), `title?`, `clauseNumber?`(null로 비우기), `itemNumber?`(null로 비우기), has* 플래그, related*Note(≤8000)
 **CreatePolicyAppendixDto** — `kind`(supplementary=부칙|annex=별표|form=서식), `title`(≤500), `body`(≤500000), `sortOrder?`(≥0)
@@ -310,7 +311,10 @@
 **UpdatePlatformBrandingDto** — `legalName?`(≤200), `registrationNo?`(null 가능), `productLabel?`(≤160), `logoDataUrl?`(data URL 또는 null), `lockupImageSrc?`(≤512)
 
 ## admin
-**ImportPoliciesDto** — `policies[]`{ `code`, `title`, `description?`, `chapters[]`{ `number`(≥1), `title`, `articles[]`{ `number`(≥1), `title`, `content?`, `publish?`(true면 v1 즉시 published) } } }
+**ImportPoliciesDto** — `policies[]`{ `code`, `title`, `description?`, `chapters[]?`{ `number`(≥1), `title?`, `suppressHeader?`(bool), `articles[]?`{ `number`(≥1), `title`, `content?`, `publish?`(true면 v1 즉시 published) } }, `articles[]?` }
+
+- 장 제목은 **`suppressHeader: true`일 때만 생략**할 수 있다. 그냥 비워 두면 400이다(실수와 의도를 구분한다).
+- **장 없는 규정**은 `policy.articles[]`(최상위)로 넣는다. 서버가 숨김 장 한 건으로 눕혀 담는다 — 없는 장 제목을 지어낼 필요가 없다(T-84, [ADR-0019](../10_ADR_의사결정기록/ADR.md)). `chapters`와 함께 쓰면 마지막 장 뒤에 붙는다.
 
 ---
 

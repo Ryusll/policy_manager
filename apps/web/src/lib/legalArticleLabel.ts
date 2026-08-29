@@ -151,9 +151,22 @@ export function articleDisplayLabel(article: ArticleLabelParts & { title?: strin
   return t ? `${base} (${t})` : base;
 }
 
-export function isChapterHeaderHidden(chapter: { suppressHeader?: boolean; title?: string }): boolean {
+/**
+ * 장 머리글을 감출지 — **이 판단의 유일한 정의**(T-84).
+ *
+ * `Article.chapterId` 가 필수라 "장 없는 규정"은 숨김 장이라는 관례로 표현된다
+ * (ADR-0011). 관례를 아는 곳이 여럿이면 그중 하나는 반드시 어긋난다 —
+ * 실제로 읽어주기(`speech.ts`)는 제목이 빈 장도 감췄는데 화면·인쇄는 감추지
+ * 않았고, 텍스트 내보내기는 아예 확인하지 않아 `===== 제1장  =====` 를 찍었다.
+ *
+ * 제목이 빈 장까지 감추는 쪽을 택한 이유: 서버가 "보이는 장은 제목이 있어야
+ * 한다"를 강제하므로(`chapter-header.ts`) 제목 없는 보이는 장은 **있어서는 안
+ * 되는 상태**다. 그런 데이터가 남아 있다면 "제1장" 뒤에 아무것도 없는 줄을
+ * 그리는 것보다 감추는 편이 낫다.
+ */
+export function isChapterHeaderHidden(chapter: { suppressHeader?: boolean; title?: string | null }): boolean {
   if (chapter.suppressHeader) return true;
-  return false;
+  return !String(chapter.title ?? '').trim();
 }
 
 export function formatKoDate(iso?: string | null): string {

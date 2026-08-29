@@ -4,7 +4,8 @@ import { AuditService } from '../audit/audit.service';
 import { ImportPoliciesDto } from './admin.dto';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
-import { validateImport, type ValidateResult } from './import-validate';
+import { validateImport, normalizeImportChapters, type ValidateResult } from './import-validate';
+import { newChapterHeader } from '../policies/chapter-header';
 
 @Injectable()
 export class AdminService {
@@ -74,9 +75,12 @@ export class AdminService {
         });
         createdPolicyIds.push(policy.id);
 
-        for (const ch of p.chapters || []) {
+        // 최상위 `articles`(장 없는 규정)를 숨김 장으로 눕힌 목록. 사전 검사와
+        // 같은 함수를 써서 "검사는 통과했는데 저장이 다르게 본" 상황을 막는다.
+        for (const ch of normalizeImportChapters(p)) {
+          const header = newChapterHeader(ch);
           const chapter = await tx.chapter.create({
-            data: { policyId: policy.id, number: ch.number, title: ch.title },
+            data: { policyId: policy.id, number: ch.number as number, ...header },
           });
           for (const ar of ch.articles || []) {
             const article = await tx.article.create({

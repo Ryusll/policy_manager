@@ -206,4 +206,81 @@ describe('validateImport (T-13)', () => {
       expect(r.canImport).toBe(true);
     });
   });
+
+  /**
+   * 짧은 내규는 `제1조` 부터 시작하는 편이 흔하다. 예전에는 이 형태를 표현할
+   * 방법이 없어 **없는 장 제목을 지어내야** 했다 — T-83 이 다른 가져오기
+   * 경로에서 없앤 바로 그 문제가 일괄 가져오기에는 남아 있었다(T-84).
+   */
+  describe('장 없는 규정', () => {
+    const base = { existingCodes: [], currentCount: 0, maxPolicies: 100 };
+
+    it('최상위 articles 로 넣을 수 있다', () => {
+      const r = validateImport({
+        ...base,
+        policies: [
+          {
+            code: 'HR-1',
+            title: '인사규정',
+            articles: [{ number: 1, title: '목적', content: '…' }],
+          },
+        ],
+      });
+      expect(r.canImport).toBe(true);
+      expect(r.summary.articles).toBe(1);
+      // 조문을 담을 숨김 장 한 건으로 센다
+      expect(r.summary.chapters).toBe(1);
+      expect(r.issues.filter((i) => i.level === 'error')).toEqual([]);
+    });
+
+    it('제목 없는 장은 suppressHeader 를 켜야 통과한다', () => {
+      const withFlag = validateImport({
+        ...base,
+        policies: [
+          {
+            code: 'HR-2',
+            title: '인사규정',
+            chapters: [{ number: 1, suppressHeader: true, articles: [{ number: 1, title: '목적', content: 'x' }] }],
+          },
+        ],
+      });
+      expect(withFlag.canImport).toBe(true);
+
+      const without = validateImport({
+        ...base,
+        policies: [
+          {
+            code: 'HR-3',
+            title: '인사규정',
+            chapters: [{ number: 1, articles: [{ number: 1, title: '목적', content: 'x' }] }],
+          },
+        ],
+      });
+      expect(without.canImport).toBe(false);
+      expect(without.issues.some((i) => i.message.includes('제목이 비어'))).toBe(true);
+    });
+
+    it('장과 최상위 조문을 함께 쓰면 뒤에 붙는다', () => {
+      const r = validateImport({
+        ...base,
+        policies: [
+          {
+            code: 'HR-4',
+            title: '인사규정',
+            chapters: [{ number: 1, title: '총칙', articles: [{ number: 1, title: '목적', content: 'x' }] }],
+            articles: [{ number: 2, title: '부칙격 조문', content: 'y' }],
+          },
+        ],
+      });
+      expect(r.canImport).toBe(true);
+      expect(r.summary.chapters).toBe(2);
+      expect(r.summary.articles).toBe(2);
+    });
+
+    it('조문도 장도 없으면 여전히 경고만 낸다', () => {
+      const r = validateImport({ ...base, policies: [{ code: 'HR-5', title: '껍데기' }] });
+      expect(r.canImport).toBe(true);
+      expect(r.issues.some((i) => i.level === 'warning' && i.message.includes('장이 없습니다'))).toBe(true);
+    });
+  });
 });

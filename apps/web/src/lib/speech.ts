@@ -9,6 +9,8 @@
  * 그래서 문장 단위로 잘라 큐로 넣는다.
  */
 
+import { isChapterHeaderHidden } from './legalArticleLabel';
+
 export const SPEECH_CHUNK_LIMIT = 180;
 
 export type SpeakableArticle = {
@@ -78,7 +80,7 @@ export function buildPolicySpeech(chapters: any[], policyTitle?: string): string
   if (policyTitle) lines.push(policyTitle);
 
   for (const chapter of chapters || []) {
-    const hidden = chapter.suppressHeader || !String(chapter.title || '').trim();
+    const hidden = isChapterHeaderHidden(chapter);
     if (!hidden) lines.push(`제${chapter.number}장 ${chapter.title}`);
     for (const block of chapter.blocks || []) {
       if (block.kind === 'section') lines.push(`제${block.number}절 ${block.title}`);
