@@ -5,7 +5,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import { join } from 'path';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { Response } from 'express';
 import { PoliciesService } from './policies.service';
@@ -30,6 +30,7 @@ import {
   policyUploadDir,
   policyUploadFilePath,
 } from './upload-path';
+import { buildStoredName, originalNameFromStored } from './upload-name';
 
 @ApiTags('policies')
 @ApiBearerAuth()
@@ -370,8 +371,9 @@ export class PoliciesController {
           }
         },
         filename: (req, file, cb) => {
-          const unique = Date.now() + '-' + Math.round(Math.random() * 1e6);
-          cb(null, unique + extname(file.originalname));
+          // 원래 이름을 저장명 안에 실어 둔다. 그러지 않으면 새로고침한 목록에
+          // `1788213942878-919001.pdf` 만 남아 어느 파일인지 알 수 없다(T-90).
+          cb(null, buildStoredName(file.originalname));
         },
       }),
       limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
@@ -405,9 +407,18 @@ export class PoliciesController {
       try { unlinkSync(file.path); } catch { /* 이미 없으면 그만 */ }
       throw e;
     }
+    const originalName = originalNameFromStored(file.filename);
+    await this.audit.log({
+      tenantId: req.user.tenantId,
+      userId: req.user.id,
+      action: 'policy.file.upload',
+      entityType: 'Policy',
+      entityId: id,
+      details: { fileName: originalName, storedName: file.filename, size: file.size },
+    });
     return {
       id: file.filename,
-      originalName: file.originalname,
+      originalName,
       size: file.size,
       mimeType: file.mimetype,
       url: `/api/policies/${id}/files/${file.filename}`,
@@ -425,7 +436,7 @@ export class PoliciesController {
       const stat = statSync(join(dir, filename));
       return {
         id: filename,
-        originalName: filename.replace(/^\d+-\d+-/, ''),
+        originalName: originalNameFromStored(filename),
         size: stat.size,
         url: `/api/policies/${id}/files/${filename}`,
         uploadedAt: stat.birthtime,
@@ -533,7 +544,7 @@ export class PoliciesController {
     await this.policiesService.findOne(req.user.tenantId, id);
     const filePath = this.safe(() => policyUploadFilePath(req.user.tenantId, id, filename));
     if (!existsSync(filePath)) throw new NotFoundException('파일을 찾을 수 없습니다.');
-    res.download(filePath, filename.replace(/^\d+-\d+-/, ''));
+    res.download(filePath, originalNameFromStored(filename));
   }
 
   @Delete(':id/files/:filename')
@@ -549,5 +560,15 @@ export class PoliciesController {
     const filePath = this.safe(() => policyUploadFilePath(req.user.tenantId, id, filename));
     if (!existsSync(filePath)) throw new NotFoundException('파일을 찾을 수 없습니다.');
     unlinkSync(filePath);
+    // 첨부는 규정의 근거 자료다. 사라진 뒤에 "누가 언제 지웠나"를 물을 곳이
+    // 있어야 한다 — 다른 파괴적 동작은 모두 남기는데 여기만 빠져 있었다(T-90).
+    await this.audit.log({
+      tenantId: req.user.tenantId,
+      userId: req.user.id,
+      action: 'policy.file.delete',
+      entityType: 'Policy',
+      entityId: id,
+      details: { fileName: originalNameFromStored(filename), storedName: filename },
+    });
   }
 }

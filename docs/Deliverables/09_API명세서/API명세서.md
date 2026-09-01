@@ -73,10 +73,12 @@
 | GET | :id/compare | admin, editor | **신구조문대비표** — 두 시점 본문을 조문 단위로 대비. Query: `from`, `to`(YYYY-MM-DD) |
 | POST | :id/export/pdf | admin, editor | **전문 PDF 내보내기.** Body는 전문 보기 렌더 HTML, 응답은 `application/pdf`. 동기 처리이며 감사 로그에 `policy.export.pdf` 로 남는다([ADR-0015](../10_ADR_의사결정기록/ADR.md)) |
 | POST | :id/export/hwpx | JWT | **전문 한/글 내보내기.** Body는 같은 HTML, 응답은 `application/hwp+zip`. **`.hwp` 가 아니라 `.hwpx`** — `.hwp` 는 독점 바이너리라 서버에서 만들 수 없다([ADR-0016](../10_ADR_의사결정기록/ADR.md)). 한/글 2014 이상에서 열린다. 감사 로그 `policy.export.hwpx` |
-| POST | :id/files | admin, editor | 첨부파일 업로드 |
-| GET | :id/files | JWT | 첨부파일 목록 |
-| GET | :id/files/:filename | JWT | 첨부파일 다운로드 |
-| DELETE | :id/files/:filename | admin, editor | 첨부파일 삭제 |
+| POST | :id/files | admin, editor | 첨부파일 업로드(≤50MB, PDF·Word·Excel·PNG·JPEG). 감사 `policy.file.upload` |
+| GET | :id/files | JWT | 첨부파일 목록. `originalName`은 **올린 그대로의 이름**(한글 포함) |
+| GET | :id/files/:filename | JWT | 첨부파일 다운로드. 한글 이름은 RFC 5987(`filename*=UTF-8''…`)로 실어 보낸다 |
+| DELETE | :id/files/:filename | admin, editor | 첨부파일 삭제. 감사 `policy.file.delete`(details에 `fileName`) |
+
+> **디스크 저장명과 표시 이름은 다르다.** 저장명은 `{시각}-{난수}-{base64url(원래이름)}{확장자}` 형태의 ASCII 안전 문자열이고([T-41](../15_보안검토서/보안_검토서.md)의 경로 탈출 방어가 저장명을 `[A-Za-z0-9._-]`로 제한한다), 표시용 `originalName`은 여기서 되돌려 만든다. `:filename` 자리에는 **저장명(목록의 `id`)** 을 넣는다. 이 형식 이전에 올라간 파일은 저장명이 그대로 표시된다(T-90).
 
 > **첨부파일 4종 공통(T-41)**: 규정 소유를 먼저 확인하므로 남의 규정이면 404다. `:id`·`:filename` 은 형식 검사를 통과해야 하며(UUID / 저장 파일명), 조립 경로가 업로드 루트를 벗어나면 400. 예전에는 인코딩한 슬래시로 경로를 거슬러 올라가 컨테이너의 임의 파일을 읽고 지울 수 있었다.
 

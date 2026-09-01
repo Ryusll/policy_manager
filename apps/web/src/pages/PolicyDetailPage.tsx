@@ -26,6 +26,7 @@ import {
   ArrowUpDown,
   Undo2,
   Archive,
+  Trash2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuthStore } from '../stores/authStore';
@@ -503,7 +504,8 @@ export default function PolicyDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fullViewMainRef = useRef<HTMLDivElement>(null);
   const fullViewModalRef = useRef<HTMLDivElement>(null);
-  const [uploadError, setUploadError] = useState('');
+  // 업로드·삭제가 같은 모달에서 같은 자리에 오류를 띄운다
+  const [fileError, setFileError] = useState('');
   const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showFullTextModal, setShowFullTextModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
@@ -776,8 +778,14 @@ export default function PolicyDetailPage() {
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => filesApi.upload(id!, file),
-    onSuccess: () => { void refetchFiles(); setUploadError(''); },
-    onError: (e: any) => setUploadError(e.response?.data?.message || '업로드 실패'),
+    onSuccess: () => { void refetchFiles(); setFileError(''); },
+    onError: (e: any) => setFileError(e.response?.data?.message || '업로드 실패'),
+  });
+
+  const deleteFileMutation = useMutation({
+    mutationFn: (storedName: string) => filesApi.delete(id!, storedName),
+    onSuccess: () => { void refetchFiles(); setFileError(''); },
+    onError: (e: any) => setFileError(e.response?.data?.message || '삭제하지 못했습니다.'),
   });
 
   const formatSize = (bytes: number) => {
@@ -4113,19 +4121,41 @@ export default function PolicyDetailPage() {
               </button>
             </div>
             <div className="p-4 space-y-3">
-              {uploadError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{uploadError}</div>}
+              {fileError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{fileError}</div>}
               {files.length === 0 ? (
                 <p className="text-sm text-gray-500">등록된 첨부파일이 없습니다.</p>
               ) : (
                 <ul className="space-y-2 max-h-72 overflow-auto">
-                  {files.map((file: any) => (
-                    <li key={file.id} className="flex items-start justify-between gap-2 border border-gray-200 rounded px-3 py-2 text-sm">
-                      <a href={file.url} target="_blank" rel="noreferrer" className="text-navy-700 hover:underline break-all min-w-0">
-                        {file.originalName}
-                      </a>
-                      <span className="text-xs text-gray-500 flex-shrink-0">{formatSize(file.size)}</span>
-                    </li>
-                  ))}
+                  {files.map((file: any) => {
+                    const removing =
+                      deleteFileMutation.isPending && deleteFileMutation.variables === file.id;
+                    return (
+                      <li key={file.id} className="flex items-start justify-between gap-2 border border-gray-200 rounded px-3 py-2 text-sm">
+                        <a href={file.url} target="_blank" rel="noreferrer" className="text-navy-700 hover:underline break-all min-w-0">
+                          {file.originalName}
+                        </a>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs text-gray-500">{formatSize(file.size)}</span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              // 되돌릴 수 없다. 어느 파일인지 이름으로 확인시킨다.
+                              onClick={() => {
+                                if (!window.confirm(`「${file.originalName}」을(를) 삭제할까요?\n되돌릴 수 없습니다.`)) return;
+                                deleteFileMutation.mutate(file.id);
+                              }}
+                              disabled={deleteFileMutation.isPending}
+                              className="text-gray-400 hover:text-red-600 disabled:opacity-40 p-1"
+                              aria-label={`${file.originalName} 삭제`}
+                              title="삭제"
+                            >
+                              {removing ? <span className="text-xs">삭제 중…</span> : <Trash2 size={14} />}
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {canEdit && (
