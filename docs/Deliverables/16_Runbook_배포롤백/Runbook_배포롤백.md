@@ -9,7 +9,7 @@
 |---|---|---|---|
 | postgres | 5432 | 5433 | DB `policy_manager`, `pg_bigm` 확장 |
 | redis | 6379 | 6380 | |
-| minio | 9000 / 9001 | 9000 / 9001 | 파일 스토리지(콘솔 9001), 버킷 `policy-files` |
+| minio | 9000 / 9001 | 9000 / 9001 | **현재 쓰이지 않는다.** 코드에 MinIO 클라이언트가 없고 `STORAGE_TYPE` 을 읽는 곳도 없다. 첨부파일은 api 컨테이너의 `api_uploads` 볼륨(`/app/uploads`)에 저장된다. 버킷 `policy-files` 도 만들어진 적이 없다 — 저장 위치 확정은 결정 대기 D-06 |
 | api | 3000 | 3001 | NestJS, `/api` prefix |
 | web | 80 | 80 | nginx, `/api/` → api 프록시 |
 
@@ -88,6 +88,12 @@ api 컨테이너 헬스체크는 `/api/health`를 5초 간격, start_period 60�
    - 배포 전 반드시 DB 백업: `docker compose exec postgres pg_dump -U postgres policy_manager > backup_YYYYMMDD.sql`
    - 문제 발생 시 복원: `docker compose exec -T postgres psql -U postgres policy_manager < backup_YYYYMMDD.sql`
 3. **볼륨 데이터**: `postgres_data`, `minio_data`, `api_uploads` 볼륨은 `docker compose down`으로는 삭제되지 않음. `down -v`는 볼륨까지 삭제하므로 **운영에서 절대 사용 금지**
+4. **첨부파일 백업**: 규정 첨부는 DB가 아니라 `api_uploads` 볼륨에만 있다. `pg_dump` 로는 **함께 백업되지 않는다.**
+   ```bash
+   docker run --rm -v policy_manager-main_api_uploads:/data -v "$PWD":/out alpine \
+     tar czf /out/uploads_$(date +%F).tgz -C /data .
+   ```
+   (볼륨 이름은 `docker volume ls | grep api_uploads` 로 확인. 오브젝트 스토리지로 옮기면 이 단계는 사라진다 — D-06)
 
 ## 7-1. 시크릿 교체 (운영 배포 전 필수)
 
@@ -196,6 +202,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://<호스트>/api/policies/0/as-o
 - [ ] `ALLOW_DEFAULT_SECRETS`가 설정돼 있지 않은가
 - [ ] `PUBLIC_URL`과 Google OAuth 콜백 URL이 일치하는가
 - [ ] 배포 전 DB 백업(`pg_dump`)을 수행했는가
+- [ ] **첨부파일 백업(`api_uploads` 볼륨)을 수행했는가** — `pg_dump` 에 포함되지 않는다
 - [ ] 마이그레이션이 `migrate deploy`로 정상 적용되었는가 (기동 로그에서 `migrate deploy completed.` 확인)
 - [ ] 통합 관리자(global_admin)에서 플랫폼 브랜딩 초기값을 설정했는가
 - [ ] 헬스체크·주요 화면(로그인, 규정 목록/상세, 검색) 스모크 테스트를 통과했는가

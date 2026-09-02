@@ -40,7 +40,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | (root) | admin, editor | 테넌트 사용자 목록 |
-| POST | (root) | admin | 팀원 초대(사용자 생성) — Pro+ 플랜 |
+| POST | (root) | admin | 팀원 초대(사용자 생성). **플랜 게이트 없음** — 플랜별 사용자 상한(`maxUsersForPlan`: Starter 10 / Pro 50)만 강제한다. 문서에 오래 "Pro+"로 적혀 있었으나 코드와 다르다(결정 대기 D-07) |
 
 ## policies (`/api/policies`)
 | Method | Path | 인증 | 설명 |
