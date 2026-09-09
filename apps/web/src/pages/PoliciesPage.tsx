@@ -1052,6 +1052,9 @@ export default function PoliciesPage() {
         </div>
       </div>
 
+      {/* 한 줄 배치. 각 select 에 w-auto 가 필요하다 — 공통 `.input` 클래스가
+          `w-full` 을 갖고 있어서, 빼면 select 하나가 한 행을 통째로 차지하고
+          flex-wrap 때문에 필터가 세 줄로 벌어진다. 좁은 화면에서는 그대로 접힌다. */}
       <div className="card px-4 py-3 flex flex-wrap items-center gap-3">
         <Search size={15} className="text-gray-400 flex-shrink-0" />
         <input
@@ -1062,7 +1065,7 @@ export default function PoliciesPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
         <select
-          className="input text-xs min-w-[8rem]"
+          className="input w-auto text-xs min-w-[8rem]"
           value={selectedDepartment}
           onChange={(e) => setSelectedDepartment(e.target.value)}
         >
@@ -1074,7 +1077,7 @@ export default function PoliciesPage() {
           ))}
         </select>
         <select
-          className="input text-xs min-w-[8rem]"
+          className="input w-auto text-xs min-w-[8rem]"
           value={selectedCategory}
           onChange={(e) => setSelectedCategory(e.target.value)}
         >
@@ -1086,7 +1089,7 @@ export default function PoliciesPage() {
           ))}
         </select>
         <select
-          className="input text-xs min-w-[7rem]"
+          className="input w-auto text-xs min-w-[7rem]"
           value={selectedStatus}
           onChange={(e) => setSelectedStatus(e.target.value)}
           aria-label="시행 상태"
