@@ -18,3 +18,4 @@
 | 일자 | 변경 내용 | 작성 |
 |------|-----------|------|
 | 2026-07-20 | 최초 기록 (루트 `.env.example` 현황 스냅샷) | - |
+| 2026-09-07 | **백업 설정 6종 추가** — `BACKUP_S3_ENDPOINT`·`BACKUP_S3_BUCKET`·`BACKUP_S3_ACCESS_KEY`·`BACKUP_S3_SECRET_KEY`(필수), `BACKUP_S3_PREFIX`·`BACKUP_KEEP_DAYS`(선택). 규정 본문(DB)과 첨부파일이 둘 다 서버 안에만 있어 서버가 사라지면 같이 사라지던 문제. `scripts/backup-offsite.sh` 가 쓴다 | - |

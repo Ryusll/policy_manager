@@ -88,12 +88,7 @@ api 컨테이너 헬스체크는 `/api/health`를 5초 간격, start_period 60�
    - 배포 전 반드시 DB 백업: `docker compose exec postgres pg_dump -U postgres policy_manager > backup_YYYYMMDD.sql`
    - 문제 발생 시 복원: `docker compose exec -T postgres psql -U postgres policy_manager < backup_YYYYMMDD.sql`
 3. **볼륨 데이터**: `postgres_data`, `minio_data`, `api_uploads` 볼륨은 `docker compose down`으로는 삭제되지 않음. `down -v`는 볼륨까지 삭제하므로 **운영에서 절대 사용 금지**
-4. **첨부파일 백업**: 규정 첨부는 DB가 아니라 `api_uploads` 볼륨에만 있다. `pg_dump` 로는 **함께 백업되지 않는다.**
-   ```bash
-   docker run --rm -v policy_manager-main_api_uploads:/data -v "$PWD":/out alpine \
-     tar czf /out/uploads_$(date +%F).tgz -C /data .
-   ```
-   (볼륨 이름은 `docker volume ls | grep api_uploads` 로 확인. 오브젝트 스토리지로 옮기면 이 단계는 사라진다 — D-06)
+4. **첨부파일 백업**: 규정 첨부는 DB가 아니라 `api_uploads` 볼륨에만 있어 `pg_dump` 에 **포함되지 않는다.** 아래 8절의 서버 밖 백업이 DB와 첨부를 함께 내보내므로, 그것이 돌고 있으면 이 항목은 자동으로 충족된다.
 
 ## 7-1. 시크릿 교체 (운영 배포 전 필수)
 
@@ -196,13 +191,90 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://<호스트>/api/policies/0/as-o
 - `/api/docs`(Swagger)가 **인증 없이 공개**돼 있다(실측 200). 운영에서는 차단하거나 인증 뒤로 옮긴다.
 - 서비스가 평문 HTTP다. 로그인 토큰이 평문으로 오간다.
 
+## 7-3. 서버 밖 백업 (필수)
+
+### 왜 필요한가
+
+**규정 본문(DB)과 첨부파일이 둘 다 이 서버 안에만 있다.** 기존 절차의
+`pg_dump > backup_YYYYMMDD.sql` 은 같은 서버에 파일을 만드는 것이라,
+배포하다 잘못됐을 때 되돌리는 용도는 되지만 **서버 자체가 사라지면 백업도
+함께 사라진다.** Always Free 인스턴스는 유휴 상태가 이어지면 회수되기도 한다.
+
+첨부파일은 DB 백업에 들어 있지도 않았다. 둘 다 내보내야 복구가 성립한다.
+
+### 설정
+
+S3 호환 저장소면 어디든 된다(Oracle Object Storage, AWS S3, 별도 서버의 MinIO).
+`.env` 에 아래를 채운다 — 값은 인프라 담당자가 발급한다.
+
+```
+BACKUP_S3_ENDPOINT=https://<네임스페이스>.compat.objectstorage.<리전>.oraclecloud.com
+BACKUP_S3_BUCKET=policy-manager-backup
+BACKUP_S3_ACCESS_KEY=...
+BACKUP_S3_SECRET_KEY=...
+BACKUP_KEEP_DAYS=30
+```
+
+> Oracle Object Storage 를 쓴다면 콘솔에서 **Customer Secret Key** 를 발급받아
+> 위 두 값에 넣는다(사용자 API 키와 다르다). 엔드포인트는 버킷의
+> "S3 호환성" 안내에 표시된다.
+
+### 매일 자동 실행
+
+```bash
+crontab -e
+# 매일 새벽 3시. 실패하면 종료 코드가 0이 아니라 cron 이 메일로 알린다.
+0 3 * * * cd /home/ubuntu/policy_manager && bash scripts/backup-offsite.sh >> /var/log/policy-backup.log 2>&1
+```
+
+한 번 손으로 돌려 확인:
+
+```bash
+bash scripts/backup-offsite.sh
+```
+
+DB 덤프 → 첨부 아카이브 → 업로드 → **업로드된 크기 대조** → 오래된 것 정리
+순으로 진행하고, 어디서든 어긋나면 종료 코드 1로 멈춘다. 0바이트 덤프를
+성공으로 넘기지 않는다.
+
+### 복원되는지 확인 (한 달에 한 번은 돌릴 것)
+
+**복원해 본 적 없는 백업은 백업이 아니라 희망이다.**
+
+```bash
+bash scripts/restore-offsite.sh --verify
+```
+
+최신 백업을 내려받아 **임시 DB에 넣어 보고** 원본과 테이블·행 수를 대조한 뒤
+임시 DB를 지운다. 운영 데이터는 건드리지 않는다. 첨부 아카이브도 열어 본다.
+
+### 실제 복구
+
+```bash
+bash scripts/restore-offsite.sh --restore 2026-09-07T030000Z
+```
+
+파괴적이다. `RESTORE` 를 직접 입력해야 진행되며, api·web 을 멈추고 DB와 첨부
+볼륨을 덮어쓴 뒤 다시 띄운다. 백업 목록은 `--verify` 실행 로그나 저장소 콘솔에서 확인한다.
+
+### 한계
+
+- 하루 한 번이므로 **최대 24시간치를 잃을 수 있다.** 더 촘촘히 하려면 주기를 줄인다.
+- 첨부 아카이브는 스택이 도는 중에 만들므로, 그 순간 업로드 중이던 파일 하나가
+  빠질 수 있다. 다음 회차에 포함된다.
+- 저장소 자격증명이 서버 `.env` 에 있다. 서버가 털리면 백업도 지워질 수 있다 —
+  저장소 쪽에서 **버전 관리나 삭제 보호**를 켜 두는 것이 안전하다.
+
+---
+
 ## 8. 운영 체크리스트
 
 - [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가 (→ 7-1. `docker compose config`로 확인)
 - [ ] `ALLOW_DEFAULT_SECRETS`가 설정돼 있지 않은가
 - [ ] `PUBLIC_URL`과 Google OAuth 콜백 URL이 일치하는가
-- [ ] 배포 전 DB 백업(`pg_dump`)을 수행했는가
-- [ ] **첨부파일 백업(`api_uploads` 볼륨)을 수행했는가** — `pg_dump` 에 포함되지 않는다
+- [ ] 배포 전 DB 백업(`pg_dump`)을 수행했는가 — 되돌리기용 스냅샷
+- [ ] **서버 밖 백업(7-3절)이 어젯밤 정상 실행됐는가** — `tail /var/log/policy-backup.log`. DB·첨부를 함께 내보내는 것은 이쪽뿐이다
+- [ ] (월 1회) `restore-offsite.sh --verify` 로 **복원되는지** 확인했는가
 - [ ] 마이그레이션이 `migrate deploy`로 정상 적용되었는가 (기동 로그에서 `migrate deploy completed.` 확인)
 - [ ] 통합 관리자(global_admin)에서 플랫폼 브랜딩 초기값을 설정했는가
 - [ ] 헬스체크·주요 화면(로그인, 규정 목록/상세, 검색) 스모크 테스트를 통과했는가
@@ -239,4 +311,4 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://<호스트>/api/policies/0/as-o
 
 ## 10. 향후 개선 (참고)
 
-무중단 배포, 이미지 태그 기반 롤백, 마이그레이션 down 전략, 자동 백업 스케줄은 현재 미비. [02_WBS_작업분해](../02_WBS_작업분해/WBS_작업분해.md) WP2 참고.
+무중단 배포, 이미지 태그 기반 롤백, 마이그레이션 down 전략은 현재 미비. ~~자동 백업 스케줄~~ 은 **2026-09-07 해소**(7-3절). [02_WBS_작업분해](../02_WBS_작업분해/WBS_작업분해.md) WP2 참고.
