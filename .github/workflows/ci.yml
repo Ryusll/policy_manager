@@ -1,0 +1,143 @@
+name: CI
+
+# T-31. push/PR마다 타입체크·lint·테스트·빌드를 돌려 회귀를 막는다.
+# DB가 필요한 플로우 테스트는 integration job 에서 컨테이너를 띄워 돈다(T-30).
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# 같은 브랜치에 연속 push하면 앞선 실행을 취소한다
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # 워크스페이스 락파일 기준 재현 설치 (Dockerfile과 같은 방식)
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      # 타입체크·빌드가 Prisma Client 타입을 필요로 한다
+      - name: Generate Prisma client
+        run: npx prisma generate --schema apps/api/prisma/schema.prisma
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # T-32. 설정 파일이 없어 오랫동안 아무 룰도 돌지 않았다. 여기서 돌려
+      # 다시 그렇게 되지 않게 한다. 경고는 통과, 에러만 막는다.
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # PDF 내보내기(T-76)는 파이썬 렌더러에 의존한다. 파이썬 쪽이 깨지면
+  # 빌드는 통과하는데 런타임에만 터지므로 여기서 따로 확인한다.
+  pdf-renderer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PDF deps
+        # 따옴표 필수: `:all: -r`의 콜론+공백을 YAML이 중첩 매핑으로 읽는다
+        run: 'pip install --only-binary=:all: -r apps/api/scripts/requirements.txt'
+
+      - name: Render a Korean PDF and read the text back
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          import pymupdf as fitz
+
+          payload = json.dumps({
+              "html": '<div class="tmpl-article-block">'
+                      '<div class="tmpl-article-label">제1조</div>'
+                      '<article class="tmpl-article tmpl-row-jo">'
+                      '<div class="tmpl-article-head"><span class="tmpl-article-name">목적</span></div>'
+                      '<div class="tmpl-article-body">이 규정은 정보자산을 보호함을 목적으로 한다.</div>'
+                      '</article></div>',
+              "title": "정보보안 관리규정",
+              "metaLine": "코드: SEC-001",
+              "pageNumbers": True,
+          })
+          out = subprocess.run(
+              [sys.executable, "apps/api/scripts/pdf_render.py"],
+              input=payload.encode("utf-8"), capture_output=True,
+          )
+          assert out.returncode == 0, out.stderr.decode("utf-8")
+          assert out.stdout[:4] == b"%PDF", "PDF 매직이 아님"
+
+          text = fitz.open("pdf", out.stdout)[0].get_text()
+          for needed in ("정보보안 관리규정", "제1조", "목적", "이 규정은 정보자산을 보호함을 목적으로 한다."):
+              assert needed in text, f"PDF에서 {needed!r}를 찾지 못했습니다:\n{text}"
+          print(f"OK — {len(out.stdout)} bytes, 한글 텍스트 정상")
+          PY
+
+  # DB·API가 실제로 떠야 도는 플로우 테스트 (T-30 잔여). 단위 테스트가 못 잡는
+  # 가드·검증·테넌트 격리를 여기서 확인한다.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      - name: Start stack
+        # 운영 기본값 그대로면 시크릿 가드가 부팅을 막는다. CI 전용 값을 넣는다.
+        run: |
+          cat > .env <<'ENV'
+          JWT_SECRET=ci-only-jwt-secret-value-that-is-long-enough-32
+          JWT_REFRESH_SECRET=ci-only-refresh-secret-value-long-enough-32
+          POSTGRES_USER=ci_app
+          POSTGRES_PASSWORD=ci-postgres-password
+          POSTGRES_DB=policy_manager
+          MINIO_ACCESS_KEY=ciminioaccess
+          MINIO_SECRET_KEY=ci-minio-secret-key
+          ENV
+          docker compose up -d --build postgres redis minio api
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:3001/api/health > /dev/null; then echo "up"; exit 0; fi
+            sleep 5
+          done
+          echo "API가 뜨지 않았습니다"; docker compose logs api | tail -60; exit 1
+
+      - name: Integration tests
+        run: npm run test:int
+
+      - name: API logs on failure
+        if: failure()
+        run: docker compose logs api | tail -100

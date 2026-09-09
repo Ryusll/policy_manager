@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+apps/*/.env
+apps/*/.env.*
+!apps/*/.env.example
+
+# claude local settings (personal)
+.claude/settings.local.json
+
+# build output
+dist/
+**/dist/
+dist-seed/
+**/dist-seed/
+apps/web/dist/
+apps/api/dist/
+
+# prisma generated client
+**/node_modules/.prisma/
+
+# logs
+*.log
+npm-debug.log*
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
+
+# docker volumes (if bind-mounted locally)
+postgres_data/
+minio_data/

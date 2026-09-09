@@ -1,6 +1,8 @@
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // 컨테이너 베이스가 Debian(node:20-slim)이므로 debian 타깃이 필요하다.
+  // musl 타깃은 Alpine을 쓰던 시절의 잔재라 제거 (Dockerfile 주석 참고)
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -73,7 +75,6 @@ model Tenant {
   policies   Policy[]
   variables  Variable[]
   auditLogs  AuditLog[]
-  exportJobs ExportJob[]
   comments   ArticleComment[]
   templates  PolicyTemplate[]
   importLogs PolicyImportLog[]
@@ -83,6 +84,8 @@ model Tenant {
   billingCustomer BillingCustomer?
   subscriptions BillingSubscription[]
   payments BillingPayment[]
+  favorites Favorite[]
+  branding   TenantBranding?
 
   @@map("tenants")
 }
@@ -108,6 +111,7 @@ model User {
   regulationParseSessions RegulationParseSession[]
   notificationGroupMembers NotificationGroupMember[]
   userNotifications        UserNotification[]
+  favorites                Favorite[]
 
   @@unique([tenantId, email])
   @@unique([oauthProvider, oauthSub])
@@ -125,17 +129,25 @@ model Policy {
   revisionDate   DateTime? @map("revision_date") @db.Date
   effectiveDate  DateTime? @map("effective_date") @db.Date
   templateId     String?   @map("template_id")
+  /// 상위 규정. 규정 > 세칙 > 지침 체계를 자기참조 트리로 표현한다(T-71).
+  /// 최상위는 null. 상위가 지워져도 하위는 남아야 하므로 SetNull.
+  parentId       String?   @map("parent_id")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
   tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   template PolicyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  parent   Policy?  @relation("PolicyHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Policy[] @relation("PolicyHierarchy")
   chapters   Chapter[]
   appendices PolicyAppendix[]
+  revisionReasons PolicyRevisionReason[]
   importLogs PolicyImportLog[]
   committedParseSessions RegulationParseSession[] @relation("CommittedParsePolicy")
+  favorites  Favorite[]
 
   @@unique([tenantId, code])
+  @@index([tenantId, parentId])
   @@map("policies")
 }
 
@@ -163,7 +175,48 @@ model RegulationParseSession {
   @@map("regulation_parse_sessions")
 }
 
-/** SaaS 운영사 표기(푸터·로그인 등). 고객사(tenant)와 무관한 단일 행 */
+/// 즐겨찾기 (T-80). 규정 또는 조문 하나를 사용자별로 저장한다.
+/// 조문 즐겨찾기도 규정을 함께 들고 있어야 목록에서 "어느 규정의 몇 조"인지 바로 보인다.
+model Favorite {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  userId    String   @map("user_id")
+  policyId  String   @map("policy_id")
+  /// 조문 즐겨찾기면 채워지고, 규정 즐겨찾기면 null
+  articleId String?  @map("article_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policy  Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  article Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  /// 같은 대상을 두 번 담지 못하게 한다. articleId 가 null 인 행(규정 즐겨찾기)은
+  /// Postgres 에서 NULL 이 서로 다르게 취급되므로 서비스에서 한 번 더 확인한다.
+  @@unique([userId, policyId, articleId])
+  @@index([tenantId, userId, createdAt])
+  @@map("favorites")
+}
+
+/// SaaS 운영사 표기(푸터·로그인 등). 고객사(tenant)와 무관한 단일 행
+/// 테넌트(고객사) 브랜딩 — T-57.
+/// 예전에는 브라우저 localStorage 에만 있어서 기기·브라우저를 바꾸면 사라지고
+/// 팀원끼리 공유도 안 됐다(ADR-0003의 제한). 유료 기능이라 유실이 곧 클레임이다.
+model TenantBranding {
+  tenantId    String   @id @map("tenant_id")
+  brandMark   String   @default("") @map("brand_mark") @db.VarChar(8)
+  logoDataUrl String?  @map("logo_data_url") @db.Text
+  logoWidth   Int      @default(32) @map("logo_width")
+  logoHeight  Int      @default(32) @map("logo_height")
+  updatedBy   String?  @map("updated_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_branding")
+}
+
 model PlatformBranding {
   id               String   @id
   legalName        String   @default("") @map("legal_name") @db.VarChar(200)
@@ -225,13 +278,33 @@ model Chapter {
 
   policy   Policy    @relation(fields: [policyId], references: [id], onDelete: Cascade)
   articles Article[]
+  sections Section[]
 
   @@map("chapters")
+}
+
+/// 절(節) — 선택 계층. 사내 규정은 법령의 편>장>절>조 구조를 반드시 따르지 않으므로
+/// 조가 절에 속하지 않아도 된다(Article.sectionId 는 nullable). ADR-0011 참고
+model Section {
+  id        String   @id @default(uuid())
+  chapterId String   @map("chapter_id")
+  number    Int
+  title     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  chapter  Chapter   @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  articles Article[]
+
+  @@index([chapterId, number])
+  @@map("sections")
 }
 
 model Article {
   id        String   @id @default(uuid())
   chapterId String   @map("chapter_id")
+  /// 절(선택 계층). null이면 절에 속하지 않는 조
+  sectionId String?  @map("section_id")
   number    Int
   clauseNumber Int?  @map("clause_number")
   itemNumber Int?    @map("item_number")
@@ -246,8 +319,10 @@ model Article {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   chapter  Chapter          @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  section  Section?         @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   versions ArticleVersion[]
   comments ArticleComment[]
+  favorites Favorite[]
 
   @@map("articles")
 }
@@ -277,6 +352,11 @@ model ArticleVersion {
   content     String
   status      VersionStatus @default(draft)
   changeNote  String?       @map("change_note")
+  /// 반려 사유(T-10). 검토자가 되돌려 보낸 까닭 — 없으면 편집자는 왜 반려됐는지 알 수 없다.
+  /// 다시 검토 요청을 하면 지운다(이전 반려 사유가 남아 있으면 현재 상태를 잘못 읽는다).
+  reviewNote  String?       @map("review_note") @db.Text
+  /// 이 버전이 시행된 날. 시점 조회(as-of)의 기준. 승인 시 확정된다.
+  effectiveDate DateTime?   @map("effective_date") @db.Date
   approvedBy  String?       @map("approved_by")
   approvedAt  DateTime?     @map("approved_at")
   createdBy   String?       @map("created_by")
@@ -286,7 +366,44 @@ model ArticleVersion {
   article        Article          @relation(fields: [articleId], references: [id], onDelete: Cascade)
   variableUsages VariableUsage[]
 
+  /// 시점 조회: 조문별로 "기준일 이전 시행분 중 가장 최근" 버전을 찾는다
+  @@index([articleId, effectiveDate])
   @@map("article_versions")
+}
+
+/// 제정·개정 이유(개정문). 법령의 "제정·개정이유"에 해당하는 문서 단위 기록.
+/// 조문 단위 사유는 `ArticleVersion.changeNote`가 담당한다.
+model PolicyRevisionReason {
+  id               String                   @id @default(uuid())
+  policyId         String                   @map("policy_id")
+  kind             PolicyRevisionKind       @default(amendment)
+  /// 개정 차수 표시용 라벨 (예: "제3차 일부개정")
+  label            String
+  /// 개정 이유 본문
+  reason           String                   @db.Text
+  /// 주요 변경사항 요약 (선택)
+  summary          String?                  @db.Text
+  promulgatedDate  DateTime?                @map("promulgated_date") @db.Date
+  effectiveDate    DateTime?                @map("effective_date") @db.Date
+  createdBy        String?                  @map("created_by")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([policyId, effectiveDate])
+  @@map("policy_revision_reasons")
+}
+
+enum PolicyRevisionKind {
+  /// 제정
+  enactment
+  /// 일부개정
+  amendment
+  /// 전부개정
+  full_amendment
+  /// 폐지
+  repeal
 }
 
 model Variable {
@@ -318,7 +435,7 @@ model VariableUsage {
   @@map("variable_usages")
 }
 
-/** 알림 수신 팀(예: 정보보안팀) — 테넌트별, 구성원은 User와 N:M */
+/// 알림 수신 팀(예: 정보보안팀) — 테넌트별, 구성원은 User와 N:M
 model NotificationGroup {
   id        String   @id @default(uuid())
   tenantId  String   @map("tenant_id")
@@ -344,7 +461,7 @@ model NotificationGroupMember {
   @@map("notification_group_members")
 }
 
-/** 규정 개정·시행 승인 등 사용자별 인앱 알림 */
+/// 규정 개정·시행 승인 등 사용자별 인앱 알림
 model UserNotification {
   id        String    @id @default(uuid())
   tenantId  String    @map("tenant_id")
@@ -382,18 +499,6 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-model ExportJob {
-  id         String   @id @default(uuid())
-  tenantId   String   @map("tenant_id")
-  status     String   @default("pending")
-  fileUrl    String?  @map("file_url")
-  createdAt  DateTime @default(now()) @map("created_at")
-  finishedAt DateTime? @map("finished_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@map("export_jobs")
-}
 
 model PolicyImportLog {
   id            String   @id @default(uuid())

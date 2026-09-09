@@ -22,13 +22,23 @@ import {
   Share2,
   BookOpen,
   Layers,
+  Link2 as LinkIcon,
+  ArrowUpDown,
+  Undo2,
+  Archive,
+  Trash2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuthStore } from '../stores/authStore';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
 import TemplateRenderer from '../components/policy-template/TemplateRenderer';
+import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
+import { buildEnterprisePolicyBodyHtml } from '../components/policy-template/templateUtils';
+import RevisionReasonsModal from '../components/RevisionReasonsModal';
+import ComparisonTableModal from '../components/ComparisonTableModal';
 import { canManagePolicyTemplates } from '../lib/planFeatures';
+import ArticleReorderPanel from '../components/ArticleReorderPanel';
 import { escapeRegExp } from '../lib/searchRegex';
 import { highlightText } from '../lib/highlightSearch';
 import PlanModal from '../components/PlanModal';
@@ -45,12 +55,19 @@ import {
   formatKoDate,
   sortArticlesForToc,
 } from '../lib/legalArticleLabel';
+import { buildPolicyPlainText, policyPlainTextFilename } from '../lib/policyPlainText';
+import {
+  buildFullViewGroups,
+  collectJoNumbers,
+  filterFullViewGroupsByJo,
+} from '../lib/fullViewGroups';
 import {
   buildArticleCreateRequests,
   canSubmitNewArticleForm,
   chapterHasJoRoot,
   inferJoTitle,
   nextClauseNumberForJo,
+  nextJoNumberForPolicy,
   segmentArticleHeading,
   titleFieldHint,
   titleFieldLabel,
@@ -58,6 +75,18 @@ import {
 import { parseRevisionNotify } from '../lib/policyRevisionNotify';
 import { notificationGroupsApi } from '../api/notificationGroups';
 import { usersApi } from '../api/users';
+import { toast } from '../stores/toastStore';
+import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
+import { FavoriteButton } from '../components/FavoriteButton';
+import { SpeechControls } from '../components/SpeechControls';
+import { buildPolicySpeech } from '../lib/speech';
+import {
+  articleHash,
+  findByAnchor,
+  formatArticleAnchor,
+  parseArticleAnchor,
+  parseLegacyArticleId,
+} from '../lib/articleAnchor';
 
 const statusLabel: Record<string, string> = {
   draft: '초안',
@@ -229,7 +258,13 @@ function TocArticleGroups({
   onSelect,
   canEdit,
   onAddHang,
+  selectMode,
+  printSelection,
+  onToggleJo,
 }: {
+  selectMode?: boolean;
+  printSelection?: Set<number>;
+  onToggleJo?: (jo: number) => void;
   articles: any[];
   query: string;
   plJo: string;
@@ -247,6 +282,16 @@ function TocArticleGroups({
         const joTitle = inferJoTitle(articles, group.jo);
         return (
         <div key={`jo-${group.jo}`} className="border-b border-gray-100/80 last:border-b-0">
+          {selectMode && onToggleJo && (
+            <label className="flex items-center gap-1.5 px-2 pt-1.5 text-[11px] text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={printSelection?.has(group.jo) ?? false}
+                onChange={() => onToggleJo(group.jo)}
+              />
+              인쇄에 포함
+            </label>
+          )}
           {group.main ? (
             <TocArticleButton
               article={group.main}
@@ -432,6 +477,8 @@ export default function PolicyDetailPage() {
   const [newChapter, setNewChapter] = useState({ number: 1, title: '' });
   const [newArticle, setNewArticle] = useState<{
     chapterId: string;
+    /** 소속 절(선택 계층). 절 없이 장 직속이면 undefined */
+    sectionId?: string;
     number: number;
     clauseNumber?: number;
     itemNumber?: number;
@@ -445,6 +492,9 @@ export default function PolicyDetailPage() {
     relatedRuleNote: string;
   } | null>(null);
   const [showAddChapter, setShowAddChapter] = useState(false);
+  const [newSection, setNewSection] = useState<
+    { chapterId: string; number: number; title: string } | null
+  >(null);
   const [versionContent, setVersionContent] = useState('');
   const [versionChangeNote, setVersionChangeNote] = useState('');
   const [revisionInternalReasons, setRevisionInternalReasons] = useState<string[]>([]);
@@ -454,15 +504,26 @@ export default function PolicyDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fullViewMainRef = useRef<HTMLDivElement>(null);
   const fullViewModalRef = useRef<HTMLDivElement>(null);
-  const [uploadError, setUploadError] = useState('');
+  // 업로드·삭제가 같은 모달에서 같은 자리에 오류를 띄운다
+  const [fileError, setFileError] = useState('');
   const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showFullTextModal, setShowFullTextModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [approveTargetId, setApproveTargetId] = useState<string | null>(null);
+  const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [archiveTarget, setArchiveTarget] = useState<any>(null);
+  const [versionActionMsg, setVersionActionMsg] = useState('');
+  const [activeToggleTarget, setActiveToggleTarget] = useState<boolean | null>(null);
   const [approveNote, setApproveNote] = useState('');
+  /** 시행 승인 시 확정할 시행일(YYYY-MM-DD). 비우면 서버가 승인일로 기록 */
+  const [approveEffectiveDate, setApproveEffectiveDate] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [tocQuery, setTocQuery] = useState('');
+  const [reorderOpen, setReorderOpen] = useState(false);
+  const [reorderSaving, setReorderSaving] = useState(false);
+  const [reorderError, setReorderError] = useState('');
   const [fullViewSearchQuery, setFullViewSearchQuery] = useState('');
   const [fullViewActiveMatchIndex, setFullViewActiveMatchIndex] = useState(0);
   const [tocOpen, setTocOpen] = useState(true);
@@ -478,6 +539,17 @@ export default function PolicyDetailPage() {
   }>({ kind: 'supplementary', title: '', body: '', sortOrder: '' });
   const [lawToolMsg, setLawToolMsg] = useState('');
   const [articleViewMode, setArticleViewMode] = useState<'full' | 'segment'>('full');
+  /** 시점 조회 기준일(YYYY-MM-DD). 빈 문자열이면 현행 본문 */
+  const [asOfDate, setAsOfDate] = useState('');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportingHwpx, setIsExportingHwpx] = useState(false);
+  const [showRevisionReasons, setShowRevisionReasons] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  const [showThreeWay, setShowThreeWay] = useState(false);
+  const [showA11y, setShowA11y] = useState(false);
+  /** 선택 조문 인쇄 (T-74). 비어 있으면 전체를 뜻한다. */
+  const [printSelection, setPrintSelection] = useState<Set<number>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [relationNotesDraft, setRelationNotesDraft] = useState({
     relatedPrecedentNote: '',
     relatedLawNote: '',
@@ -574,20 +646,71 @@ export default function PolicyDetailPage() {
     queryFn: () => policiesApi.get(id!),
     enabled: !!id,
   });
+
+  // 시점(as-of) 조회: 기준일이 있으면 그날 시행 중이던 본문으로 전문을 갈아끼운다.
+  const { data: asOfPolicy, isFetching: isAsOfLoading } = useQuery({
+    queryKey: ['policy', id, 'as-of', asOfDate],
+    queryFn: () => policiesApi.getAsOf(id!, asOfDate),
+    enabled: !!id && !!asOfDate,
+  });
+  const { data: effectiveDates = [] } = useQuery<string[]>({
+    queryKey: ['policy', id, 'effective-dates'],
+    queryFn: () => policiesApi.effectiveDates(id!),
+    enabled: !!id,
+  });
+  /** 전문 보기가 실제로 그리는 규정 — 시점 조회 중이면 그 시점 스냅샷 */
+  const viewPolicy = asOfDate && asOfPolicy ? asOfPolicy : policy;
+  const asOfInfo = asOfDate && asOfPolicy ? asOfPolicy.asOf : null;
+  // 조문 딥링크 해석 (T-73). 번호 기준(`#제3조제1항`·`?jo=3&hang=1`)을 먼저 보고,
+  // 옛 `#article-<uuid>` 도 계속 받는다 — 이미 나간 링크를 깨뜨리지 않는다.
   useEffect(() => {
     if (!policy?.chapters?.length) return;
-    const hashId = window.location.hash.replace('#article-', '').trim();
-    if (!hashId) return;
-    for (const ch of policy.chapters) {
-      const hit = (ch.articles || []).find((a: any) => a.id === hashId);
-      if (hit) {
-        setSelectedArticle(hit);
-        setArticleViewMode('segment');
-        setExpandedChapters((prev) => new Set(prev).add(ch.id));
-        break;
+    const findChapterOf = (predicate: (a: any) => boolean) => {
+      for (const ch of policy.chapters) {
+        const hit = (ch.articles || []).find(predicate);
+        if (hit) return { ch, hit };
       }
+      return null;
+    };
+
+    const anchor = parseArticleAnchor({
+      hash: window.location.hash,
+      search: window.location.search,
+    });
+    let found: { ch: any; hit: any } | null = null;
+
+    if (anchor) {
+      for (const ch of policy.chapters) {
+        const hit = findByAnchor(ch.articles || [], anchor);
+        if (hit) {
+          found = { ch, hit };
+          break;
+        }
+      }
+    } else {
+      const legacyId = parseLegacyArticleId(window.location.hash);
+      if (legacyId) found = findChapterOf((a: any) => a.id === legacyId);
     }
+
+    if (!found) return;
+    setSelectedArticle(found.hit);
+    setArticleViewMode('segment');
+    setExpandedChapters((prev) => new Set(prev).add(found.ch.id));
   }, [policy?.id]);
+
+  /** 현재 조문을 가리키는 안정 링크를 클립보드에 복사한다 */
+  const copyArticleLink = useCallback(async () => {
+    if (!selectedArticle) return;
+    const url = `${window.location.origin}${window.location.pathname}${articleHash(selectedArticle)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast(`링크를 복사했습니다 — ${formatArticleAnchor(selectedArticle)}`, 'success');
+    } catch {
+      // 클립보드 권한이 없으면(비 HTTPS 등) 주소만 바꿔 사용자가 직접 복사하게 한다
+      window.location.hash = articleHash(selectedArticle).slice(1);
+      toast('클립보드를 쓸 수 없어 주소창을 갱신했습니다. 주소를 복사하세요.', 'info');
+    }
+  }, [selectedArticle]);
   const { data: templates = [] } = useQuery({
     queryKey: ['policy-templates'],
     queryFn: () => templatesApi.list(),
@@ -655,13 +778,14 @@ export default function PolicyDetailPage() {
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => filesApi.upload(id!, file),
-    onSuccess: () => { refetchFiles(); setUploadError(''); },
-    onError: (e: any) => setUploadError(e.response?.data?.message || '업로드 실패'),
+    onSuccess: () => { void refetchFiles(); setFileError(''); },
+    onError: (e: any) => setFileError(e.response?.data?.message || '업로드 실패'),
   });
 
   const deleteFileMutation = useMutation({
-    mutationFn: (filename: string) => filesApi.delete(id!, filename),
-    onSuccess: () => refetchFiles(),
+    mutationFn: (storedName: string) => filesApi.delete(id!, storedName),
+    onSuccess: () => { void refetchFiles(); setFileError(''); },
+    onError: (e: any) => setFileError(e.response?.data?.message || '삭제하지 못했습니다.'),
   });
 
   const formatSize = (bytes: number) => {
@@ -678,6 +802,40 @@ export default function PolicyDetailPage() {
       setNewChapter({ number: 1, title: '' });
     },
   });
+
+  /* ── 절(節): 선택 계층 ── */
+  const addSectionMutation = useMutation({
+    mutationFn: ({ chapterId, ...data }: { chapterId: string; number: number; title: string }) =>
+      policiesApi.createSection(id!, chapterId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      setNewSection(null);
+    },
+  });
+
+  const removeSectionMutation = useMutation({
+    mutationFn: ({ chapterId, sectionId }: { chapterId: string; sectionId: string }) =>
+      policiesApi.deleteSection(id!, chapterId, sectionId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policy', id] }),
+  });
+
+  /** 절에 속하지 않는 조문 (절은 선택 계층이라 같은 장에 공존한다) */
+  const articlesWithoutSection = useCallback(
+    (chapter: any) => (chapter?.articles || []).filter((a: any) => !a.sectionId),
+    [],
+  );
+  const articlesInSection = useCallback(
+    (chapter: any, sectionId: string) =>
+      (chapter?.articles || []).filter((a: any) => a.sectionId === sectionId),
+    [],
+  );
+  const openAddSectionForm = useCallback((chapter: any) => {
+    const nextNo = ((chapter?.sections || []).reduce(
+      (max: number, s: any) => Math.max(max, Number(s.number) || 0),
+      0,
+    ) || 0) + 1;
+    setNewSection({ chapterId: chapter.id, number: nextNo, title: '' });
+  }, []);
 
   const [policyRevisionDate, setPolicyRevisionDate] = useState('');
   const [policyEffectiveDate, setPolicyEffectiveDate] = useState('');
@@ -721,10 +879,29 @@ export default function PolicyDetailPage() {
     },
   });
 
+  /**
+   * 시행중 ↔ 비활성 (T-15).
+   *
+   * `isActive` 는 지금 **표시 전용**이다 — 검색에서 빠지지도, 목록에서 사라지지도 않는다.
+   * 폐지된 규정도 찾을 수 있어야 하므로 그게 맞다. 다만 사용자는 "비활성"을 "안 보이게
+   * 됨"으로 읽기 쉬워서, 확인 창에 무엇이 바뀌고 무엇이 안 바뀌는지 적어 둔다.
+   */
+  const toggleActiveMutation = useMutation({
+    mutationFn: (next: boolean) => policiesApi.update(policy!.id, { isActive: next }),
+    onSuccess: (_res, next) => {
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      qc.invalidateQueries({ queryKey: ['policies'] });
+      setActiveToggleTarget(null);
+      setPolicyDatesMsg(next ? '시행중으로 되돌렸습니다.' : '비활성으로 표시했습니다.');
+      setTimeout(() => setPolicyDatesMsg(''), 3000);
+    },
+  });
+
   const openAddArticleForm = useCallback(
     async (
       chapterId?: string,
       preset?: { number?: number; clauseNumber?: number; itemNumber?: number },
+      sectionId?: string,
     ) => {
       if (!id || !canEdit) return;
       let ch: any = chapterId
@@ -738,12 +915,11 @@ export default function PolicyDetailPage() {
         });
         await qc.invalidateQueries({ queryKey: ['policy', id] });
       }
-      const articles = ch.articles || [];
-      const joNumbers = articles.map((a: any) => Number(a.number) || 0);
-      const nextJo = joNumbers.length ? Math.max(...joNumbers) + 1 : 1;
-      const jo = preset?.number ?? nextJo;
+      // 조 번호는 법령·규정 관례대로 문서 전체에서 이어진다(장이 바뀌어도 1로 돌아가지 않음).
+      const jo = preset?.number ?? nextJoNumberForPolicy(policy?.chapters);
       setNewArticle({
         chapterId: ch.id,
+        sectionId,
         number: jo,
         clauseNumber: preset?.clauseNumber,
         itemNumber: preset?.itemNumber,
@@ -870,13 +1046,50 @@ export default function PolicyDetailPage() {
   });
 
   const approveMutation = useMutation({
-    mutationFn: ({ id, changeNote }: { id: string; changeNote: string }) =>
-      versionsApi.approve(id, { changeNote }),
+    mutationFn: ({
+      id: versionId,
+      changeNote,
+      effectiveDate,
+    }: {
+      id: string;
+      changeNote: string;
+      effectiveDate?: string;
+    }) => versionsApi.approve(versionId, { changeNote, effectiveDate }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
       qc.invalidateQueries({ queryKey: ['policy', id] });
+      // 시행일이 바뀌었으니 시점 조회 후보 날짜도 다시 받는다
+      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
       setApproveTargetId(null);
       setApproveNote('');
+      setApproveEffectiveDate('');
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: ({ id: versionId, reason }: { id: string; reason: string }) =>
+      versionsApi.reject(versionId, reason),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      setRejectTargetId(null);
+      setRejectReason('');
+      setVersionActionMsg('초안으로 되돌렸습니다. 반려 사유가 버전에 기록됩니다.');
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: (versionId: string) => versionsApi.archive(versionId),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
+      setArchiveTarget(null);
+      setVersionActionMsg(
+        res?.remainingPublished === 0
+          ? '폐지했습니다. 이 조문에는 게시된 본문이 남아 있지 않습니다 — 전문 보기·인쇄에서 본문 없이 나옵니다.'
+          : '폐지했습니다.',
+      );
     },
   });
 
@@ -884,7 +1097,7 @@ export default function PolicyDetailPage() {
     mutationFn: (content: string) => commentsApi.create(selectedArticle.id, { content }),
     onSuccess: () => {
       setCommentDraft('');
-      refetchComments();
+      void refetchComments();
     },
   });
 
@@ -931,6 +1144,8 @@ export default function PolicyDetailPage() {
   const q = tocQuery.trim().toLowerCase();
   const selectTocArticle = useCallback((article: any) => {
     setSelectedArticle(article);
+    // 다른 조문으로 옮기면 앞 조문의 처리 알림은 지운다 — 남아 있으면 이 조문 얘기로 읽힌다
+    setVersionActionMsg('');
     window.history.replaceState(null, '', `${window.location.pathname}#article-${article.id}`);
   }, []);
   const filteredChapters = policy?.chapters?.map((chapter: any) => {
@@ -960,19 +1175,26 @@ export default function PolicyDetailPage() {
       return { idx, before, after, kind };
     });
   }, [diffResult]);
-  const fullViewGroups = useMemo(() => {
-    return (policy?.chapters || []).map((chapter: any) => {
-      const joGroups = groupArticlesByJo(chapter.articles || []);
-      const groups = joGroups.map((g) => ({
-        articleNumber: g.jo,
-        main: g.main,
-        hangs: g.hangs,
-        orphanItems: g.orphanItems,
-        items: flattenJoGroup(g),
-      }));
-      return { ...chapter, groups };
+  const fullViewGroups = useMemo(() => buildFullViewGroups(viewPolicy?.chapters), [viewPolicy]);
+  /** 전문 보기·인쇄가 실제로 그리는 목록. 선택이 있으면 그 조만 (T-74) */
+  const printableGroups = useMemo(
+    () => filterFullViewGroupsByJo(fullViewGroups, printSelection),
+    [fullViewGroups, printSelection],
+  );
+  const allJoNumbers = useMemo(() => collectJoNumbers(fullViewGroups), [fullViewGroups]);
+  /** 음성 읽기용 문장 (T-81). 선택 인쇄 중이면 그 조만 읽는다 — 화면과 어긋나면 혼란스럽다. */
+  const speechChunks = useMemo(
+    () => buildPolicySpeech(printableGroups, policy?.title),
+    [printableGroups, policy?.title],
+  );
+  const toggleJo = useCallback((jo: number) => {
+    setPrintSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(jo)) next.delete(jo);
+      else next.add(jo);
+      return next;
     });
-  }, [policy]);
+  }, []);
 
   const fullViewMatchCount = useMemo(() => {
     const q = fullViewSearchQuery.trim();
@@ -990,7 +1212,8 @@ export default function PolicyDetailPage() {
     let count = 0;
     for (const ch of fullViewGroups) {
       count += countIn(String(ch.title ?? ''));
-      for (const g of ch.groups || []) {
+      // allGroups는 절 소속 조문까지 포함한다(절 미소속만 보는 blocks로 세면 매치 수가 모자란다)
+      for (const g of ch.allGroups || []) {
         for (const a of g.items || []) {
           count += countIn(String(a.title ?? ''));
           count += countIn(String(a.versions?.[0]?.content ?? ''));
@@ -1018,7 +1241,7 @@ export default function PolicyDetailPage() {
     (requestedIndex: number) => {
       const root = getFullViewRoot();
       if (!root) return;
-      const matches = Array.from(root.querySelectorAll('.tmpl-fullview-hit')) as HTMLElement[];
+      const matches = Array.from(root.querySelectorAll('.tmpl-fullview-hit'));
       if (!matches.length) {
         clearActiveFullViewHit();
         setFullViewActiveMatchIndex(0);
@@ -1173,39 +1396,92 @@ export default function PolicyDetailPage() {
 
   const downloadFullTextTxt = useCallback(() => {
     if (!policy) return;
-    const lines: string[] = [`${policy.code} ${policy.title}`, ''];
-    for (const ch of fullViewGroups) {
-      lines.push('');
-      lines.push(`===== 제${ch.number}장 ${ch.title} =====`);
-      for (const g of ch.groups || []) {
-        for (const a of g.items || []) {
-          lines.push('');
-          lines.push(`${articleShortLabel(a)} ${a.title || ''}`);
-          lines.push(String(a.versions?.[0]?.content || '').trim());
-        }
-      }
-    }
-    if (appendicesGrouped.all.length) {
-      lines.push('');
-      lines.push('===== 부칙·별표·서식 =====');
-      for (const ap of appendicesGrouped.all) {
-        lines.push('');
-        const lbl = appendixKindLabel[ap.kind as AppendixKind] || ap.kind;
-        lines.push(`[${lbl}] ${ap.title || ''}`);
-        lines.push(String(ap.body || '').trim());
-      }
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const text = buildPolicyPlainText({
+      policy,
+      chapters: fullViewGroups,
+      appendices: appendicesGrouped.all,
+      appendixKindLabel,
+    });
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}-full.txt`;
+    a.download = policyPlainTextFilename(policy.code);
     a.rel = 'noopener';
     a.click();
     URL.revokeObjectURL(url);
     setLawToolMsg('전문 텍스트(.txt)를 내려받았습니다.');
     setTimeout(() => setLawToolMsg(''), 2500);
   }, [policy, fullViewGroups, appendicesGrouped.all]);
+
+  const downloadPdf = useCallback(async () => {
+    if (!policy || !id) return;
+    setIsExportingPdf(true);
+    setLawToolMsg('PDF를 만드는 중입니다…');
+    try {
+      // 전문 보기와 같은 빌더로 만든 HTML을 그대로 보낸다(화면 = 인쇄물 = PDF).
+      const html = buildEnterprisePolicyBodyHtml(fullViewGroups, '');
+      const metaParts = [
+        policy.code ? `코드: ${policy.code}` : '',
+        policy.revisionDate ? `개정일: ${formatKoDate(policy.revisionDate)}` : '',
+        policy.effectiveDate ? `시행일: ${formatKoDate(policy.effectiveDate)}` : '',
+        asOfDate ? `기준일: ${asOfDate} 시점 본문` : '',
+      ].filter(Boolean);
+      const blob = await policiesApi.exportPdf(id, {
+        html,
+        title: policy.title,
+        metaLine: metaParts.join(' · '),
+        footerText: `출력일: ${new Date().toLocaleDateString('ko-KR')}`,
+        pageNumbers: true,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfDate ? `-${asOfDate}` : ''}.pdf`;
+      a.rel = 'noopener';
+      a.click();
+      URL.revokeObjectURL(url);
+      setLawToolMsg('PDF를 내려받았습니다.');
+    } catch (err: any) {
+      setLawToolMsg(err?.response?.status === 500 ? 'PDF 생성에 실패했습니다.' : 'PDF 요청에 실패했습니다.');
+    } finally {
+      setIsExportingPdf(false);
+      setTimeout(() => setLawToolMsg(''), 3000);
+    }
+  }, [policy, id, fullViewGroups, asOfDate]);
+
+  /**
+   * 한/글 내보내기 (T-85).
+   *
+   * 만들어지는 파일은 `.hwpx` 다. `.hwp` 는 한컴 독점 바이너리라 서버에서 생성할 수단이
+   * 없고, `.hwpx` 는 같은 한/글이 여는 KS X 6101 표준이다(ADR-0016). 한/글 2014 이전
+   * 버전은 열지 못하므로 안내 문구에 적어 둔다.
+   */
+  const downloadHwpx = useCallback(async () => {
+    if (!policy || !id) return;
+    setIsExportingHwpx(true);
+    setLawToolMsg('한/글 문서를 만드는 중입니다…');
+    try {
+      // PDF 와 같은 빌더로 만든 HTML 을 보낸다(화면 = 인쇄물 = PDF = HWPX).
+      const html = buildEnterprisePolicyBodyHtml(fullViewGroups, '');
+      const blob = await policiesApi.exportHwpx(id, { html, title: policy.title });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfDate ? `-${asOfDate}` : ''}.hwpx`;
+      a.rel = 'noopener';
+      a.click();
+      URL.revokeObjectURL(url);
+      setLawToolMsg('한/글 문서(.hwpx)를 내려받았습니다. 한/글 2014 이상에서 열립니다.');
+    } catch (err: any) {
+      setLawToolMsg(
+        err?.response?.status === 500 ? '한/글 문서 생성에 실패했습니다.' : '한/글 문서 요청에 실패했습니다.',
+      );
+    } finally {
+      setIsExportingHwpx(false);
+      setTimeout(() => setLawToolMsg(''), 4000);
+    }
+  }, [policy, id, fullViewGroups, asOfDate]);
 
   const copyPageUrl = useCallback(async () => {
     try {
@@ -1232,21 +1508,18 @@ export default function PolicyDetailPage() {
     }
     return templates.find((row: any) => row.isDefault) || null;
   }, [templates, selectedTemplateId, policy?.templateId]);
+  // 토큰 데이터는 templateTokens.buildTemplateTokenData 단일 소스를 사용한다.
+  // ({{content}}·{{logo}}는 렌더 시점 관심사라 TemplateRenderer가 덧붙인다)
   const templateRenderData = useMemo(
-    () => ({
-      tenant: { name: user?.tenantName || '' },
-      policy: { title: policy?.title || '', code: policy?.code || '' },
-      today: new Date().toLocaleDateString('ko-KR'),
-      revisionDate: formatKoDate(policy?.revisionDate) || '',
-      effectiveDate: formatKoDate(policy?.effectiveDate) || '',
-      content: fullViewGroups
-        .flatMap((chapter: any) => chapter.groups)
-        .flatMap((group: any) => group.items)
-        .map((article: any) => article.versions?.[0]?.content || '')
-        .filter(Boolean)
-        .join('\n\n'),
-    }),
-    [user?.tenantName, policy?.title, policy?.code, policy?.revisionDate, policy?.effectiveDate, fullViewGroups],
+    () =>
+      buildTemplateTokenData({
+        tenantName: user?.tenantName,
+        policyTitle: policy?.title,
+        policyCode: policy?.code,
+        revisionDate: policy?.revisionDate,
+        effectiveDate: policy?.effectiveDate,
+      }),
+    [user?.tenantName, policy?.title, policy?.code, policy?.revisionDate, policy?.effectiveDate],
   );
 
   const relatedQuery = (
@@ -1668,6 +1941,18 @@ export default function PolicyDetailPage() {
                     onChange={(e) => setTocQuery(e.target.value)}
                   />
                 </div>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReorderError('');
+                      setReorderOpen(true);
+                    }}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-1.5 text-[11px] text-gray-600 hover:text-navy-700 border border-gray-300 rounded py-1.5 hover:bg-white transition-colors"
+                  >
+                    <ArrowUpDown size={12} aria-hidden /> 조 순서 재정렬
+                  </button>
+                )}
               </div>
               <div className="divide-y divide-gray-100 flex-1 min-h-0 overflow-y-auto overscroll-contain">
             {filteredChapters.length === 0 && (
@@ -1690,6 +1975,9 @@ export default function PolicyDetailPage() {
                 return (
                   <div key={chapter.id} className="border-b border-gray-100">
                     <TocArticleGroups
+                      selectMode={selectMode}
+                      printSelection={printSelection}
+                      onToggleJo={toggleJo}
                       articles={chapter.articles || []}
                       query={tocQuery}
                       plJo="pl-3"
@@ -1736,8 +2024,12 @@ export default function PolicyDetailPage() {
 
                 {expandedChapters.has(chapter.id) && (
                   <div className="bg-gray-50 border-t border-gray-100">
+                    {/* 절에 속하지 않는 조문 먼저 (절은 선택 계층이므로 공존 가능) */}
                     <TocArticleGroups
-                      articles={chapter.articles || []}
+                      selectMode={selectMode}
+                      printSelection={printSelection}
+                      onToggleJo={toggleJo}
+                      articles={articlesWithoutSection(chapter)}
                       query={tocQuery}
                       plJo="pl-3"
                       plHang="pl-8"
@@ -1752,14 +2044,114 @@ export default function PolicyDetailPage() {
                         })
                       }
                     />
+                    {(chapter.sections || []).map((section: any) => (
+                      <div key={section.id}>
+                        <div className="flex items-center gap-2 pl-5 pr-3 py-1.5 bg-gray-100/80 border-y border-gray-200">
+                          <span className="text-xs font-medium text-gray-700">
+                            제{section.number}절 {section.title}
+                          </span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => removeSectionMutation.mutate({ chapterId: chapter.id, sectionId: section.id })}
+                              className="ml-auto text-[11px] text-gray-400 hover:text-red-600"
+                              title="절 삭제 (조문은 유지됩니다)"
+                            >
+                              삭제
+                            </button>
+                          )}
+                        </div>
+                        <TocArticleGroups
+                          selectMode={selectMode}
+                          printSelection={printSelection}
+                          onToggleJo={toggleJo}
+                          articles={articlesInSection(chapter, section.id)}
+                          query={tocQuery}
+                          plJo="pl-5"
+                          plHang="pl-10"
+                          plItem="pl-16"
+                          selectedArticle={selectedArticle}
+                          onSelect={selectTocArticle}
+                          canEdit={canEdit}
+                          onAddHang={(jo) =>
+                            openAddArticleForm(chapter.id, {
+                              number: jo,
+                              clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo),
+                            })
+                          }
+                        />
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => openAddArticleForm(chapter.id, undefined, section.id)}
+                            className="w-full flex items-center gap-1.5 pl-11 pr-4 py-1.5 text-[11px] text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
+                          >
+                            <Plus size={11} /> 제{section.number}절에 조 추가
+                          </button>
+                        )}
+                      </div>
+                    ))}
                     {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => openAddArticleForm(chapter.id)}
-                        className="w-full flex items-center gap-1.5 pl-9 pr-4 py-2 text-xs text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
-                      >
-                        <Plus size={11} /> 조 추가
-                      </button>
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openAddArticleForm(chapter.id)}
+                          className="flex items-center gap-1.5 pl-9 pr-4 py-2 text-xs text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
+                        >
+                          <Plus size={11} /> 조 추가
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openAddSectionForm(chapter)}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-400 hover:text-navy-700 hover:bg-gray-100 transition-colors"
+                        >
+                          <Plus size={11} /> 절 추가
+                        </button>
+                      </div>
+                    )}
+                    {canEdit && newSection != null && newSection.chapterId === chapter.id && (
+                      <div className="m-2 rounded border border-gray-200 bg-white p-2.5 space-y-2">
+                        <div className="flex items-end gap-2">
+                          <div className="w-20">
+                            <label className="block text-[11px] text-gray-600 mb-1">절 번호</label>
+                            <input
+                              type="number"
+                              min={1}
+                              className="input h-8 text-sm"
+                              value={newSection.number}
+                              onChange={(e) =>
+                                setNewSection({ ...newSection, number: +e.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="block text-[11px] text-gray-600 mb-1">절 제목</label>
+                            <input
+                              className="input h-8 text-sm"
+                              placeholder="예) 채용, 복무"
+                              value={newSection.title}
+                              onChange={(e) => setNewSection({ ...newSection, title: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            className="btn-primary text-xs py-1 px-2.5"
+                            disabled={!newSection.title.trim() || addSectionMutation.isPending}
+                            onClick={() => addSectionMutation.mutate(newSection)}
+                          >
+                            {addSectionMutation.isPending ? '추가 중...' : '절 추가'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary text-xs py-1 px-2.5"
+                            onClick={() => setNewSection(null)}
+                          >
+                            취소
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
@@ -1982,6 +2374,15 @@ export default function PolicyDetailPage() {
                 <span className={`text-xs px-2 py-0.5 rounded border ${policy.isActive ? 'bg-blue-900 text-blue-200 border-blue-700' : 'bg-gray-700 text-gray-300 border-gray-600'}`}>
                   {policy.isActive ? '시행중' : '비활성'}
                 </span>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveToggleTarget(!policy.isActive)}
+                    className="text-[11px] text-navy-300 underline underline-offset-2 hover:text-white"
+                  >
+                    {policy.isActive ? '비활성으로 변경' : '시행중으로 변경'}
+                  </button>
+                )}
               </div>
               <h1 className="text-xl sm:text-2xl font-bold leading-snug">{policy.title}</h1>
               {policy.description && <p className="text-navy-300 text-sm mt-1">{policy.description}</p>}
@@ -2267,6 +2668,25 @@ export default function PolicyDetailPage() {
           </button>
           <button
             type="button"
+            onClick={() => void downloadPdf()}
+            disabled={isExportingPdf}
+            className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download size={14} aria-hidden />
+            {isExportingPdf ? 'PDF 생성 중…' : 'PDF 저장'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadHwpx()}
+            disabled={isExportingHwpx}
+            title="한/글 2014 이상에서 열리는 .hwpx 로 저장합니다"
+            className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download size={14} aria-hidden />
+            {isExportingHwpx ? '한/글 생성 중…' : '한/글 .hwpx'}
+          </button>
+          <button
+            type="button"
             onClick={downloadFullTextTxt}
             className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50"
           >
@@ -2303,17 +2723,125 @@ export default function PolicyDetailPage() {
             표준국어대사전
           </button>
         </div>
+        {/* 시점 조회 — 기준일에 시행 중이던 본문으로 전문을 갈아끼운다 */}
+        <div className="px-3 py-2 sm:px-4 flex flex-wrap items-center gap-2 border-b border-gray-100 bg-white">
+          <label htmlFor="policy-as-of" className="text-[11px] font-semibold text-slate-700">
+            시점 조회
+          </label>
+          <input
+            id="policy-as-of"
+            type="date"
+            className="input text-xs py-1.5 w-[10.5rem]"
+            value={asOfDate}
+            onChange={(e) => setAsOfDate(e.target.value)}
+          />
+          {effectiveDates.length > 0 && (
+            <select
+              className="input text-xs py-1.5 max-w-[12rem]"
+              value=""
+              onChange={(e) => e.target.value && setAsOfDate(e.target.value)}
+              aria-label="본문이 바뀐 시행일로 이동"
+            >
+              <option value="">개정 시점 선택…</option>
+              {effectiveDates.map((d) => (
+                <option key={d} value={d}>
+                  {d} 시행
+                </option>
+              ))}
+            </select>
+          )}
+          {asOfDate ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setAsOfDate('')}
+                className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50"
+              >
+                현행으로
+              </button>
+              <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                {isAsOfLoading
+                  ? '불러오는 중…'
+                  : `${asOfDate} 시점 본문입니다${
+                      asOfInfo?.omittedArticles ? ` (그 시점에 없던 조문 ${asOfInfo.omittedArticles}개 제외)` : ''
+                    }`}
+              </span>
+              {asOfInfo && !asOfInfo.hasEffectiveDates ? (
+                <span className="text-[11px] text-gray-500">
+                  시행일이 기록된 조문 버전이 없어 결과가 비어 있을 수 있습니다.
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="text-[11px] text-gray-500">비워두면 현행 본문을 봅니다.</span>
+          )}
+        </div>
         <div className="px-3 py-2 sm:px-4 flex flex-wrap gap-1.5 bg-gray-50/80">
+          {/* 이미 제공 중인 기능은 해당 패널로 이동시킨다(도구줄에서 '추후 제공'으로 잘못 안내되던 항목) */}
+          <button
+            type="button"
+            onClick={() => {
+              setLeftSidebarTab('appendices');
+              setTocOpen(true);
+            }}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            부칙·별표·서식
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLeftSidebarTab('history');
+              setTocOpen(true);
+            }}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            연혁
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowRevisionReasons(true)}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            제정·개정이유
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowComparison(true)}
+            disabled={effectiveDates.length === 0}
+            title={
+              effectiveDates.length === 0
+                ? '시행일이 기록된 개정이 없어 대비할 시점이 없습니다.'
+                : undefined
+            }
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50 disabled:border-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed"
+          >
+            신구조문대비표
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowThreeWay(true)}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            3단비교
+          </button>
+          <Link
+            to="/policies"
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            규정체계도
+          </Link>
+          <button
+            type="button"
+            onClick={() => setShowA11y((v) => !v)}
+            aria-expanded={showA11y}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            음성지원·접근성
+          </button>
           {(
             [
-              '제정·개정이유',
-              '별표·서식',
-              '3단비교',
-              '신구법비교',
-              '법령체계표',
-              '법령비교',
-              '음성지원',
-              '점자뷰어',
+              '규정 간 비교',
             ] as const
           ).map((label) => (
             <button
@@ -2327,6 +2855,16 @@ export default function PolicyDetailPage() {
             </button>
           ))}
         </div>
+        {showA11y && (
+          <div className="px-4 py-3 border-t border-gray-200 bg-gray-50/70 space-y-2 print:hidden">
+            <SpeechControls chunks={speechChunks} label={policy.title} />
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              점자 정보 단말은 화면낭독기(NVDA·VoiceOver 등)를 통해 이 화면을 읽습니다.
+              별도 뷰어 없이 바로 읽히도록 전문 보기의 각 조문을 표제·본문 구조로 표시하고,
+              조·항·목 위치를 낭독용 설명으로 함께 제공합니다.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* 본문: 전문은 전폭, 분절 보기는 우측 비교 패널만 그리드 */}
@@ -2364,6 +2902,24 @@ export default function PolicyDetailPage() {
                     {selectedArticle?.hasRelatedLaw && <RelatedBadge label="법" />}
                     {selectedArticle?.hasRelatedRule && <RelatedBadge label="규" />}
                     {selectedArticle && <RevisionBadge article={selectedArticle} />}
+                    {selectedArticle && id && (
+                      <FavoriteButton
+                        policyId={id}
+                        articleId={selectedArticle.id}
+                        label={`${policy.title} ${formatArticleAnchor(selectedArticle)}`}
+                        className="text-gray-300 hover:text-gold-400"
+                      />
+                    )}
+                    {selectedArticle && (
+                      <button
+                        onClick={copyArticleLink}
+                        title={`이 조문을 가리키는 링크 복사 (${formatArticleAnchor(selectedArticle)})`}
+                        className="text-xs bg-navy-700/60 hover:bg-navy-600 px-2.5 py-1.5 rounded flex items-center gap-1"
+                      >
+                        <LinkIcon size={12} />
+                        링크 복사
+                      </button>
+                    )}
                     {canEdit && (
                       <button
                         onClick={openVersionEditor}
@@ -2491,17 +3047,30 @@ export default function PolicyDetailPage() {
                           <StatusBadge status="review" />
                         </span>
                         {user?.role === 'admin' && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setApproveTargetId(v.id);
-                              setApproveNote('');
-                            }}
-                            className="text-[11px] text-green-800 font-medium hover:underline shrink-0 inline-flex items-center gap-1"
-                          >
-                            <CheckCircle size={12} aria-hidden />
-                            시행 승인
-                          </button>
+                          <span className="shrink-0 inline-flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setApproveTargetId(v.id);
+                                setApproveNote('');
+                              }}
+                              className="text-[11px] text-green-800 font-medium hover:underline inline-flex items-center gap-1"
+                            >
+                              <CheckCircle size={12} aria-hidden />
+                              시행 승인
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRejectTargetId(v.id);
+                                setRejectReason('');
+                              }}
+                              className="text-[11px] text-red-700 font-medium hover:underline inline-flex items-center gap-1"
+                            >
+                              <Undo2 size={12} aria-hidden />
+                              반려
+                            </button>
+                          </span>
                         )}
                       </li>
                     ))}
@@ -2510,6 +3079,19 @@ export default function PolicyDetailPage() {
                     전문·변경 사유는 아래 버전 카드에서 바로 확인할 수 있습니다. (넓은 화면에서는 오른쪽 패널에서 판·법·규와
                     미리보기를 함께 다룹니다.)
                   </p>
+                </div>
+              )}
+              {articleViewMode === 'segment' && selectedArticle && versionActionMsg && (
+                <div className="px-4 py-2 border-b border-gray-200 bg-navy-50 flex items-start gap-2" role="status">
+                  <p className="text-xs text-navy-900 flex-1">{versionActionMsg}</p>
+                  <button
+                    type="button"
+                    onClick={() => setVersionActionMsg('')}
+                    className="text-navy-500 hover:text-navy-800 shrink-0"
+                    aria-label="알림 닫기"
+                  >
+                    <X size={13} />
+                  </button>
                 </div>
               )}
               {articleViewMode === 'segment' && selectedArticle && (
@@ -2536,15 +3118,36 @@ export default function PolicyDetailPage() {
                             </button>
                           )}
                           {version.status === 'review' && user?.role === 'admin' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setApproveTargetId(version.id);
+                                  setApproveNote('');
+                                }}
+                                className="text-xs text-green-700 hover:underline flex items-center gap-1"
+                              >
+                                <CheckCircle size={12} /> 시행 승인
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRejectTargetId(version.id);
+                                  setRejectReason('');
+                                }}
+                                className="text-xs text-red-700 hover:underline flex items-center gap-1"
+                              >
+                                <Undo2 size={12} /> 반려
+                              </button>
+                            </>
+                          )}
+                          {version.status === 'published' && user?.role === 'admin' && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setApproveTargetId(version.id);
-                                setApproveNote('');
-                              }}
-                              className="text-xs text-green-700 hover:underline flex items-center gap-1"
+                              onClick={() => setArchiveTarget(version)}
+                              className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1"
                             >
-                              <CheckCircle size={12} /> 시행 승인
+                              <Archive size={12} /> 폐지
                             </button>
                           )}
                         </div>
@@ -2554,6 +3157,12 @@ export default function PolicyDetailPage() {
                       </div>
                       {version.changeNote && (
                         <p className="text-xs text-gray-400 mt-1.5 italic">변경사유: {version.changeNote}</p>
+                      )}
+                      {version.status === 'draft' && version.reviewNote && (
+                        /* 반려된 초안. 사유가 보이지 않으면 편집자는 같은 내용을 다시 올린다. */
+                        <p className="mt-2 text-xs text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                          <strong>반려 사유:</strong> {version.reviewNote}
+                        </p>
                       )}
                     </div>
                   ))}
@@ -3393,7 +4002,51 @@ export default function PolicyDetailPage() {
             <div className="px-4 sm:px-6 py-4 overflow-auto print:overflow-visible print:p-0 print:min-h-0">
               <div className="hidden print:block border-b border-gray-300 pb-3 mb-4">
                 <h2 className="text-xl font-bold text-gray-900">{policy.title}</h2>
-                <p className="text-sm text-gray-600 mt-1">출력일: {new Date().toLocaleDateString('ko-KR')}</p>
+                <p className="text-sm text-gray-600 mt-1">
+                  출력일: {new Date().toLocaleDateString('ko-KR')}
+                  {printSelection.size > 0 && ` · 선택 조문 ${printSelection.size}건만 출력 (전문 아님)`}
+                </p>
+              </div>
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-xs print:hidden">
+                <button
+                  type="button"
+                  onClick={() => setSelectMode((v) => !v)}
+                  className={clsx(
+                    'px-2.5 py-1 rounded border',
+                    selectMode
+                      ? 'border-navy-600 bg-navy-700 text-white'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+                  )}
+                >
+                  {selectMode ? '조문 선택 중' : '조문 선택'}
+                </button>
+                {printSelection.size > 0 ? (
+                  <>
+                    <span className="text-navy-800 font-medium">
+                      선택 {printSelection.size}개 조문만 표시·인쇄합니다
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPrintSelection(new Set())}
+                      className="underline text-gray-600"
+                    >
+                      전체로 되돌리기
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-gray-500">
+                    전체 조문을 인쇄합니다. 좌측 목차에서 조문을 고르면 그 조만 인쇄됩니다.
+                  </span>
+                )}
+                {selectMode && (
+                  <button
+                    type="button"
+                    onClick={() => setPrintSelection(new Set(allJoNumbers))}
+                    className="underline text-gray-600"
+                  >
+                    전체 선택
+                  </button>
+                )}
               </div>
               <FullViewSearchToolbar
                 inputId="policy-full-view-search-modal"
@@ -3409,13 +4062,50 @@ export default function PolicyDetailPage() {
                 <TemplateRenderer
                   template={activeTemplate}
                   data={templateRenderData}
-                  fullViewGroups={fullViewGroups}
+                  fullViewGroups={printableGroups}
                   highlightQuery={fullViewSearchQuery}
                 />
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {showThreeWay && id && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-auto">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-6xl my-8">
+            <div className="bg-navy-800 text-white px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-medium">3단비교 — 규정 · 세칙 · 지침</span>
+              <button
+                type="button"
+                onClick={() => setShowThreeWay(false)}
+                className="text-white/80 hover:text-white text-sm"
+              >
+                닫기
+              </button>
+            </div>
+            <div className="p-4">
+              <ThreeWayComparePanel policyId={id} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showComparison && id && (
+        <ComparisonTableModal
+          policyId={id}
+          effectiveDates={effectiveDates}
+          onClose={() => setShowComparison(false)}
+        />
+      )}
+
+      {showRevisionReasons && id && (
+        <RevisionReasonsModal
+          policyId={id}
+          policy={policy}
+          canEdit={canEdit}
+          onClose={() => setShowRevisionReasons(false)}
+        />
       )}
 
       {showAttachmentsModal && (
@@ -3431,19 +4121,41 @@ export default function PolicyDetailPage() {
               </button>
             </div>
             <div className="p-4 space-y-3">
-              {uploadError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{uploadError}</div>}
+              {fileError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">{fileError}</div>}
               {files.length === 0 ? (
                 <p className="text-sm text-gray-500">등록된 첨부파일이 없습니다.</p>
               ) : (
                 <ul className="space-y-2 max-h-72 overflow-auto">
-                  {files.map((file: any) => (
-                    <li key={file.id} className="flex items-start justify-between gap-2 border border-gray-200 rounded px-3 py-2 text-sm">
-                      <a href={file.url} target="_blank" rel="noreferrer" className="text-navy-700 hover:underline break-all min-w-0">
-                        {file.originalName}
-                      </a>
-                      <span className="text-xs text-gray-500 flex-shrink-0">{formatSize(file.size)}</span>
-                    </li>
-                  ))}
+                  {files.map((file: any) => {
+                    const removing =
+                      deleteFileMutation.isPending && deleteFileMutation.variables === file.id;
+                    return (
+                      <li key={file.id} className="flex items-start justify-between gap-2 border border-gray-200 rounded px-3 py-2 text-sm">
+                        <a href={file.url} target="_blank" rel="noreferrer" className="text-navy-700 hover:underline break-all min-w-0">
+                          {file.originalName}
+                        </a>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs text-gray-500">{formatSize(file.size)}</span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              // 되돌릴 수 없다. 어느 파일인지 이름으로 확인시킨다.
+                              onClick={() => {
+                                if (!window.confirm(`「${file.originalName}」을(를) 삭제할까요?\n되돌릴 수 없습니다.`)) return;
+                                deleteFileMutation.mutate(file.id);
+                              }}
+                              disabled={deleteFileMutation.isPending}
+                              className="text-gray-400 hover:text-red-600 disabled:opacity-40 p-1"
+                              aria-label={`${file.originalName} 삭제`}
+                              title="삭제"
+                            >
+                              {removing ? <span className="text-xs">삭제 중…</span> : <Trash2 size={14} />}
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {canEdit && (
@@ -3906,13 +4618,32 @@ export default function PolicyDetailPage() {
                   autoFocus
                 />
               </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="approve-effective-date">
+                  시행일
+                </label>
+                <input
+                  id="approve-effective-date"
+                  type="date"
+                  className="input w-full"
+                  value={approveEffectiveDate}
+                  onChange={(e) => setApproveEffectiveDate(e.target.value)}
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  비워두면 오늘로 기록됩니다. 이 날짜가 <strong>시점 조회</strong>의 기준이 됩니다.
+                </p>
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     const note = approveNote.trim();
                     if (!note) return;
-                    approveMutation.mutate({ id: approveTargetId, changeNote: note });
+                    approveMutation.mutate({
+                      id: approveTargetId,
+                      changeNote: note,
+                      effectiveDate: approveEffectiveDate || undefined,
+                    });
                   }}
                   disabled={!approveNote.trim() || approveMutation.isPending}
                   className="btn-primary"
@@ -4007,6 +4738,179 @@ export default function PolicyDetailPage() {
         </div>
       )}
       {showPlanModal && <PlanModal onClose={() => setShowPlanModal(false)} />}
+      {activeToggleTarget !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
+            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">
+              {activeToggleTarget ? '시행중으로 변경' : '비활성으로 변경'}
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-700">
+                <span className="font-medium">{policy.title}</span> 을(를){' '}
+                <strong>{activeToggleTarget ? '시행중' : '비활성'}</strong> 으로 표시할까요?
+              </p>
+              {/* "비활성 = 안 보이게 됨"으로 읽기 쉽다. 실제로 무엇이 바뀌는지 적어 둔다. */}
+              <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs text-gray-700 space-y-1">
+                <p>
+                  <strong>바뀌는 것</strong>: 규정 목록·상세·체계도·즐겨찾기에 표시되는 상태 배지, 대시보드의
+                  시행중 규정 수.
+                </p>
+                <p>
+                  <strong>바뀌지 않는 것</strong>: 조문·본문·이력은 그대로 남고,{' '}
+                  <strong>검색에서도 계속 나옵니다.</strong> 폐지된 규정도 찾을 수 있어야 하기 때문입니다.
+                </p>
+              </div>
+              {toggleActiveMutation.isError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {(toggleActiveMutation.error as any)?.response?.data?.message || '상태를 바꾸지 못했습니다.'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => toggleActiveMutation.mutate(activeToggleTarget)}
+                  disabled={toggleActiveMutation.isPending}
+                  className="btn-primary"
+                >
+                  {toggleActiveMutation.isPending ? '처리 중…' : '변경'}
+                </button>
+                <button type="button" onClick={() => setActiveToggleTarget(null)} className="btn-secondary">
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rejectTargetId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
+            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">검토 반려</div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-600">
+                이 버전을 <strong>초안으로 되돌립니다.</strong> 내용은 지워지지 않고, 편집자가 고쳐서 다시 올릴 수 있습니다.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="reject-reason">
+                  반려 사유
+                </label>
+                <textarea
+                  id="reject-reason"
+                  className="input resize-none w-full"
+                  rows={4}
+                  placeholder="무엇을 고쳐야 하는지 적어 주세요. 편집자에게 그대로 보입니다."
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  autoFocus
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  사유는 되돌린 초안에 함께 표시됩니다. 감사 로그는 관리자만 볼 수 있어서 거기에만 적으면 편집자에게 닿지 않습니다.
+                </p>
+              </div>
+              {rejectMutation.isError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {(rejectMutation.error as any)?.response?.data?.message || '반려하지 못했습니다.'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const reason = rejectReason.trim();
+                    if (!reason) return;
+                    rejectMutation.mutate({ id: rejectTargetId, reason });
+                  }}
+                  disabled={!rejectReason.trim() || rejectMutation.isPending}
+                  className="btn-primary"
+                >
+                  {rejectMutation.isPending ? '처리 중…' : '반려'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRejectTargetId(null);
+                    setRejectReason('');
+                  }}
+                  className="btn-secondary"
+                >
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {archiveTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
+            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">게시본 폐지</div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-700">
+                <span className="font-mono text-xs bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">
+                  v{archiveTarget.versionNum}
+                </span>{' '}
+                을(를) 폐지할까요?
+              </p>
+              {/* 게시본이 하나뿐이면 조문이 본문 없이 남는다. 정당한 폐지도 있으므로 막지 않고 알린다. */}
+              <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
+                <p>폐지하면 이 버전은 게시 상태에서 내려갑니다. 내용과 이력은 남습니다.</p>
+                <p>
+                  이 조문의 <strong>마지막 게시본이면 전문 보기·인쇄에 본문 없이 나옵니다.</strong> 새 버전을 올려
+                  승인하거나, 조문 자체를 정리해야 합니다.
+                </p>
+              </div>
+              {archiveMutation.isError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {(archiveMutation.error as any)?.response?.data?.message || '폐지하지 못했습니다.'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => archiveMutation.mutate(archiveTarget.id)}
+                  disabled={archiveMutation.isPending}
+                  className="btn-primary"
+                >
+                  {archiveMutation.isPending ? '처리 중…' : '폐지'}
+                </button>
+                <button type="button" onClick={() => setArchiveTarget(null)} className="btn-secondary">
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reorderOpen && (
+        <ArticleReorderPanel
+          chapters={policy?.chapters}
+          saving={reorderSaving}
+          error={reorderError}
+          onCancel={() => setReorderOpen(false)}
+          onSave={async (order) => {
+            if (!id) return;
+            setReorderSaving(true);
+            setReorderError('');
+            try {
+              await policiesApi.reorderArticles(id, order);
+              await qc.invalidateQueries({ queryKey: ['policy', id] });
+              // 선택 중이던 조문의 번호가 바뀌었을 수 있다. 옛 번호를 들고 있으면
+              // 본문이 엉뚱한 조를 가리키므로 선택을 놓는다.
+              setSelectedArticle(null);
+              setReorderOpen(false);
+            } catch (e: any) {
+              setReorderError(
+                e?.response?.data?.message || '조 순서를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+              );
+            } finally {
+              setReorderSaving(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

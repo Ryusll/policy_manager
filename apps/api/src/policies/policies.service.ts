@@ -9,16 +9,40 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
+import { buildPolicyForest } from './policy-hierarchy';
+import {
+  applyChapterHeaderPatch,
+  newChapterHeader,
+  ChapterHeaderError,
+  type ChapterHeaderState,
+} from './chapter-header';
+import {
+  ReorderPlanError,
+  buildReorderPlan,
+  currentJoOrder,
+  type ReorderTarget,
+} from './article-reorder';
+import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
+import { buildComparisonRows, type CompareArticleInput } from './policy-compare';
+import {
+  buildThreeWayRows,
+  type ThreeWayArticle,
+  type ThreeWayPolicy,
+} from './policy-three-way';
 import {
   CreatePolicyDto,
   UpdatePolicyDto,
   CreateChapterDto,
+  CreateSectionDto,
+  UpdateSectionDto,
   UpdateChapterDto,
   CreateArticleDto,
   UpdateArticleDto,
   CreatePolicyAppendixDto,
   UpdatePolicyAppendixDto,
   CreatePolicyImportLogDto,
+  CreateRevisionReasonDto,
+  UpdateRevisionReasonDto,
 } from './policies.dto';
 
 @Injectable()
@@ -28,6 +52,62 @@ export class PoliciesService {
     private audit: AuditService,
     private variablesService: VariablesService,
   ) {}
+
+  /**
+   * 상위 규정 지정을 검증한다 (T-71).
+   *
+   * 순환(A→B→A)이 생기면 체계도를 그리는 쪽이 무한루프에 빠진다. DB 제약으로는 막을 수
+   * 없어서 여기서 조상 사슬을 거슬러 올라가며 확인한다. 사슬 길이는 규정 수를 넘지 않으므로
+   * 안전장치로 상한을 둔다(데이터가 이미 순환이면 루프를 못 빠져나온다).
+   */
+  private async assertParentAllowed(tenantId: string, policyId: string, parentId: string) {
+    if (parentId === policyId) {
+      throw new BadRequestException('규정을 자기 자신의 하위로 둘 수 없습니다.');
+    }
+    const parent = await this.prisma.policy.findFirst({
+      where: { id: parentId, tenantId },
+      select: { id: true },
+    });
+    if (!parent) throw new NotFoundException('상위 규정을 찾을 수 없습니다.');
+
+    const total = await this.prisma.policy.count({ where: { tenantId } });
+    let cursor: string | null = parentId;
+    for (let hops = 0; cursor && hops <= total; hops += 1) {
+      if (cursor === policyId) {
+        throw new BadRequestException('상위 규정으로 지정하면 체계가 순환합니다.');
+      }
+      const row = await this.prisma.policy.findFirst({
+        where: { id: cursor, tenantId },
+        select: { parentId: true },
+      });
+      cursor = row?.parentId ?? null;
+    }
+  }
+
+  /**
+   * 규정 체계도 (T-71). 상위·하위를 트리로 돌려준다.
+   *
+   * 한 번의 조회로 전부 받아 메모리에서 엮는다. 테넌트당 규정 수가 많아야 수천이고,
+   * 재귀 쿼리를 쓰면 Prisma 밖으로 나가야 해서 얻는 것보다 잃는 게 많다.
+   */
+  async findHierarchy(tenantId: string) {
+    const policies = await this.prisma.policy.findMany({
+      where: { tenantId },
+      select: {
+        id: true,
+        code: true,
+        title: true,
+        isActive: true,
+        parentId: true,
+        effectiveDate: true,
+        _count: { select: { chapters: true } },
+      },
+      orderBy: [{ code: 'asc' }],
+    });
+
+    const roots = buildPolicyForest(policies);
+    return { roots, total: policies.length };
+  }
 
   async findAll(tenantId: string) {
     return this.prisma.policy.findMany({
@@ -49,6 +129,7 @@ export class PoliciesService {
         template: true,
         chapters: {
           include: {
+            sections: { orderBy: { number: 'asc' } },
             articles: {
               include: {
                 versions: {
@@ -69,10 +150,269 @@ export class PoliciesService {
         appendices: {
           orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
         },
+        revisionReasons: {
+          orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+        },
       },
     });
     if (!policy) throw new NotFoundException('Policy not found');
     return policy;
+  }
+
+  /**
+   * 시점(as-of) 조회 — 기준일에 시행 중이던 본문을 재구성한다.
+   *
+   * 조문별로 "시행일이 기준일 이하인 시행분 중 가장 나중" 버전을 고른다.
+   * 기준일에 아직 시행되지 않은 조는 결과에서 제외한다(그날 존재하지 않던 조문).
+   * `findOne`과 같은 형태로 돌려주므로 전문 보기·인쇄·PDF가 그대로 재사용된다.
+   */
+  async findOneAsOf(tenantId: string, id: string, asOf: string) {
+    const asOfDate = parseDateOnly(asOf);
+    if (!asOfDate) {
+      throw new BadRequestException('기준일(date)은 YYYY-MM-DD 형식이어야 합니다.');
+    }
+
+    const policy = await this.prisma.policy.findFirst({
+      where: { id, tenantId },
+      include: {
+        template: true,
+        chapters: {
+          include: {
+            sections: { orderBy: { number: 'asc' } },
+            articles: {
+              include: {
+                versions: {
+                  // 시행 이력이 있는 버전만 후보(초안·검토중 제외)
+                  where: {
+                    status: { in: ['published', 'archived'] },
+                    effectiveDate: { not: null, lte: asOfDate },
+                  },
+                  orderBy: [{ effectiveDate: 'desc' }, { versionNum: 'desc' }],
+                  take: 1,
+                },
+              },
+              orderBy: [
+                { number: 'asc' },
+                { clauseNumber: { sort: 'asc', nulls: 'first' } },
+                { itemNumber: { sort: 'asc', nulls: 'first' } },
+              ],
+            },
+          },
+          orderBy: { number: 'asc' },
+        },
+        appendices: {
+          orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+        },
+        revisionReasons: {
+          where: { OR: [{ effectiveDate: null }, { effectiveDate: { lte: asOfDate } }] },
+          orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+        },
+      },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    let omittedArticles = 0;
+    const chapters = policy.chapters.map((chapter) => {
+      const articles = chapter.articles.filter((article) => {
+        if (article.versions.length > 0) return true;
+        omittedArticles += 1;
+        return false;
+      });
+      return { ...chapter, articles };
+    });
+
+    return {
+      ...policy,
+      chapters,
+      asOf: {
+        date: asOf,
+        omittedArticles,
+        // 시행일이 하나도 기록되지 않았다면 시점 조회가 무의미하다는 신호
+        hasEffectiveDates: await this.hasAnyEffectiveDate(id),
+      },
+    };
+  }
+
+  /**
+   * 신구조문대비표 — 두 시점 스냅샷을 조문 단위로 맞댄다.
+   * 국가법령정보센터의 신구법비교에 해당하되 대상이 우리 규정이라 외부 데이터가 필요 없다.
+   */
+  async compareAsOf(tenantId: string, id: string, from: string, to: string) {
+    const fromDate = parseDateOnly(from);
+    const toDate = parseDateOnly(to);
+    if (!fromDate || !toDate) {
+      throw new BadRequestException('비교 시점(from·to)은 YYYY-MM-DD 형식이어야 합니다.');
+    }
+    if (fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException('from은 to보다 앞선 날짜여야 합니다.');
+    }
+
+    const policy = await this.prisma.policy.findFirst({
+      where: { id, tenantId },
+      select: { id: true, code: true, title: true },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    const [beforeRows, afterRows] = await Promise.all([
+      this.articlesAsOf(id, fromDate),
+      this.articlesAsOf(id, toDate),
+    ]);
+
+    const { rows, summary } = buildComparisonRows(beforeRows, afterRows);
+    return { policy, from, to, summary, rows };
+  }
+
+  /**
+   * 3단비교 (T-56). 기준 규정 아래 두 단계(세칙·지침)를 나란히 놓는다.
+   *
+   * 짝짓기는 하위 조문 본문의 **상위 규정 인용**으로 한다(`policy-three-way.ts`).
+   * 조 번호를 그냥 맞추는 방식은 쓰지 않았다 — 세칙 제1조가 규정 제1조와 관계있다는
+   * 보장이 전혀 없어서 표가 그럴듯하게 틀린다.
+   */
+  async threeWay(tenantId: string, id: string) {
+    const base = await this.prisma.policy.findFirst({
+      where: { id, tenantId },
+      select: { id: true, code: true, title: true },
+    });
+    if (!base) throw new NotFoundException('Policy not found');
+
+    // 하위 2단계까지만 본다. 3단비교라는 이름 그대로다.
+    const children = await this.prisma.policy.findMany({
+      where: { tenantId, parentId: id },
+      select: { id: true, code: true, title: true },
+      orderBy: { code: 'asc' },
+    });
+    const grandchildren = children.length
+      ? await this.prisma.policy.findMany({
+          where: { tenantId, parentId: { in: children.map((c) => c.id) } },
+          select: { id: true, code: true, title: true },
+          orderBy: { code: 'asc' },
+        })
+      : [];
+
+    const levels: ThreeWayPolicy[] = [
+      { ...base, level: 0 },
+      ...children.map((c) => ({ ...c, level: 1 })),
+      ...grandchildren.map((g) => ({ ...g, level: 2 })),
+    ];
+
+    const articlesByPolicy = new Map<string, ThreeWayArticle[]>();
+    for (const policy of levels) {
+      articlesByPolicy.set(policy.id, await this.publishedArticles(policy.id));
+    }
+
+    const { rows, unmatched, matchedCount } = buildThreeWayRows(
+      articlesByPolicy.get(base.id) || [],
+      levels
+        .filter((p) => p.level > 0)
+        .map((policy) => ({ policy, articles: articlesByPolicy.get(policy.id) || [] })),
+    );
+
+    return {
+      base,
+      levels,
+      rows,
+      unmatched,
+      summary: {
+        baseArticles: rows.length,
+        related: matchedCount,
+        unmatched: unmatched.reduce((n, row) => n + row.related.length, 0),
+      },
+    };
+  }
+
+  /** 현재 게시된 본문 기준 조문 목록 (3단비교용) */
+  private async publishedArticles(policyId: string): Promise<ThreeWayArticle[]> {
+    const articles = await this.prisma.article.findMany({
+      where: { chapter: { policyId } },
+      include: {
+        versions: {
+          where: { status: 'published' },
+          orderBy: { versionNum: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: [
+        { number: 'asc' },
+        { clauseNumber: { sort: 'asc', nulls: 'first' } },
+        { itemNumber: { sort: 'asc', nulls: 'first' } },
+      ],
+    });
+    return articles.map((a) => ({
+      id: a.id,
+      number: a.number,
+      clauseNumber: a.clauseNumber,
+      itemNumber: a.itemNumber,
+      title: a.title || '',
+      content: a.versions[0]?.content || '',
+    }));
+  }
+
+  /** 특정 시점에 시행 중이던 조문을 비교용 평탄 목록으로 */
+  private async articlesAsOf(policyId: string, asOfDate: Date): Promise<CompareArticleInput[]> {
+    const articles = await this.prisma.article.findMany({
+      where: { chapter: { policyId } },
+      include: {
+        versions: {
+          where: {
+            status: { in: ['published', 'archived'] },
+            effectiveDate: { not: null, lte: asOfDate },
+          },
+          orderBy: [{ effectiveDate: 'desc' }, { versionNum: 'desc' }],
+          take: 1,
+        },
+      },
+      orderBy: [
+        { number: 'asc' },
+        { clauseNumber: { sort: 'asc', nulls: 'first' } },
+        { itemNumber: { sort: 'asc', nulls: 'first' } },
+      ],
+    });
+
+    return articles
+      .filter((article) => article.versions.length > 0)
+      .map((article) => {
+        const version = article.versions[0];
+        return {
+          id: article.id,
+          number: article.number,
+          clauseNumber: article.clauseNumber,
+          itemNumber: article.itemNumber,
+          title: article.title ?? '',
+          content: version.content ?? '',
+          effectiveDate: version.effectiveDate ? toDateOnlyString(version.effectiveDate) : null,
+        };
+      });
+  }
+
+  private async hasAnyEffectiveDate(policyId: string): Promise<boolean> {
+    const count = await this.prisma.articleVersion.count({
+      where: {
+        effectiveDate: { not: null },
+        article: { chapter: { policyId } },
+      },
+    });
+    return count > 0;
+  }
+
+  /** 시점 조회 슬라이더용: 이 규정에서 실제로 본문이 바뀐 날짜들 */
+  async listEffectiveDates(tenantId: string, id: string) {
+    const policy = await this.prisma.policy.findFirst({ where: { id, tenantId }, select: { id: true } });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    const rows = await this.prisma.articleVersion.findMany({
+      where: {
+        status: { in: ['published', 'archived'] },
+        effectiveDate: { not: null },
+        article: { chapter: { policyId: id } },
+      },
+      select: { effectiveDate: true },
+      distinct: ['effectiveDate'],
+      orderBy: { effectiveDate: 'desc' },
+    });
+    return rows
+      .map((r) => (r.effectiveDate ? toDateOnlyString(r.effectiveDate) : null))
+      .filter((d): d is string => !!d);
   }
 
   async create(tenantId: string, dto: CreatePolicyDto, userId: string) {
@@ -143,6 +483,9 @@ export class PoliciesService {
     }
     if (dto.templateId === null) {
       (dto as any).templateId = null;
+    }
+    if (dto.parentId) {
+      await this.assertParentAllowed(tenantId, id, dto.parentId);
     }
     const nextDto = { ...dto } as any;
     const hasDepartment = Object.prototype.hasOwnProperty.call(nextDto, 'department');
@@ -220,18 +563,9 @@ export class PoliciesService {
 
   async createChapter(tenantId: string, policyId: string, dto: CreateChapterDto, userId: string) {
     await this.findOne(tenantId, policyId);
-    const suppress = dto.suppressHeader === true;
-    const title = String(dto.title ?? '').trim();
-    if (!suppress && !title) {
-      throw new BadRequestException('장 제목을 입력하세요.');
-    }
+    const header = this.chapterHeader(() => newChapterHeader(dto));
     const ch = await this.prisma.chapter.create({
-      data: {
-        policyId,
-        number: dto.number,
-        title: title || '본문',
-        suppressHeader: suppress,
-      },
+      data: { policyId, number: dto.number, ...header },
     });
     await this.audit.log({
       tenantId,
@@ -250,7 +584,28 @@ export class PoliciesService {
       where: { id: chapterId, policyId },
     });
     if (!chapter) throw new NotFoundException('Chapter not found');
-    return this.prisma.chapter.update({ where: { id: chapterId }, data: dto });
+    // 생성에는 있고 수정에는 없던 검사다(T-84). 없으면 "제목 없는 보이는 장"을
+    // 만들 수 있고, 그 장은 화면·인쇄에 제목 없는 빈 머리글로 나온다.
+    const header = this.chapterHeader(() =>
+      applyChapterHeaderPatch(
+        { title: chapter.title, suppressHeader: chapter.suppressHeader },
+        dto,
+      ),
+    );
+    return this.prisma.chapter.update({
+      where: { id: chapterId },
+      data: { ...dto, ...header },
+    });
+  }
+
+  /** 불변식 위반을 400 으로 바꾼다(규칙 자체는 DB 없이 검사할 수 있게 밖에 둔다) */
+  private chapterHeader(run: () => ChapterHeaderState): ChapterHeaderState {
+    try {
+      return run();
+    } catch (e) {
+      if (e instanceof ChapterHeaderError) throw new BadRequestException(e.message);
+      throw e;
+    }
   }
 
   async removeChapter(tenantId: string, policyId: string, chapterId: string) {
@@ -262,19 +617,97 @@ export class PoliciesService {
     await this.prisma.chapter.delete({ where: { id: chapterId } });
   }
 
+  /**
+   * 조문에 지정된 절이 같은 장에 속하는지 검증한다.
+   * `undefined`(미지정)와 `null`(절에서 분리)을 구분해서 돌려준다.
+   */
+  private async resolveSectionId(
+    chapterId: string,
+    sectionId: string | null | undefined,
+  ): Promise<string | null | undefined> {
+    if (sectionId === undefined) return undefined;
+    if (sectionId === null || sectionId === '') return null;
+    const section = await this.prisma.section.findFirst({
+      where: { id: sectionId, chapterId },
+      select: { id: true },
+    });
+    if (!section) throw new BadRequestException('해당 장에 속한 절이 아닙니다.');
+    return section.id;
+  }
+
+  /** 절(節)은 선택 계층이다. 절을 지워도 소속 조문은 남고 sectionId만 해제된다(ADR-0011) */
+  private async findChapterOrThrow(tenantId: string, policyId: string, chapterId: string) {
+    await this.findOne(tenantId, policyId);
+    const chapter = await this.prisma.chapter.findFirst({ where: { id: chapterId, policyId } });
+    if (!chapter) throw new NotFoundException('Chapter not found');
+    return chapter;
+  }
+
+  async createSection(
+    tenantId: string,
+    policyId: string,
+    chapterId: string,
+    dto: CreateSectionDto,
+    userId: string,
+  ) {
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
+    const title = String(dto.title ?? '').trim();
+    if (!title) throw new BadRequestException('절 제목을 입력하세요.');
+    const section = await this.prisma.section.create({
+      data: { chapterId, number: dto.number, title },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'section.create',
+      entityType: 'Section',
+      entityId: section.id,
+      details: { policyId, chapterId },
+    });
+    return section;
+  }
+
+  async updateSection(
+    tenantId: string,
+    policyId: string,
+    chapterId: string,
+    sectionId: string,
+    dto: UpdateSectionDto,
+  ) {
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
+    const section = await this.prisma.section.findFirst({ where: { id: sectionId, chapterId } });
+    if (!section) throw new NotFoundException('Section not found');
+    const data: { number?: number; title?: string } = {};
+    if (dto.number !== undefined) data.number = dto.number;
+    if (dto.title !== undefined) {
+      const title = String(dto.title).trim();
+      if (!title) throw new BadRequestException('절 제목을 입력하세요.');
+      data.title = title;
+    }
+    return this.prisma.section.update({ where: { id: sectionId }, data });
+  }
+
+  async removeSection(tenantId: string, policyId: string, chapterId: string, sectionId: string) {
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
+    const section = await this.prisma.section.findFirst({ where: { id: sectionId, chapterId } });
+    if (!section) throw new NotFoundException('Section not found');
+    // onDelete: SetNull 로 소속 조문의 sectionId만 해제된다(조문은 보존)
+    await this.prisma.section.delete({ where: { id: sectionId } });
+  }
+
   async createArticle(
     tenantId: string,
     policyId: string,
     chapterId: string,
     dto: CreateArticleDto,
   ) {
-    await this.findOne(tenantId, policyId);
-    const chapter = await this.prisma.chapter.findFirst({ where: { id: chapterId, policyId } });
-    if (!chapter) throw new NotFoundException('Chapter not found');
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
+    const sectionId = await this.resolveSectionId(chapterId, dto.sectionId);
 
     const article = await this.prisma.article.create({
       data: {
         chapterId,
+        sectionId,
         number: dto.number,
         title: (dto.title ?? '').trim(),
         clauseNumber: dto.clauseNumber,
@@ -303,12 +736,17 @@ export class PoliciesService {
   }
 
   async updateArticle(tenantId: string, policyId: string, chapterId: string, articleId: string, dto: UpdateArticleDto) {
-    await this.findOne(tenantId, policyId);
+    // 장이 이 규정 소속인지까지 확인한다. 규정만 보면 남의 장·조문을 고칠 수 있다(T-41).
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
     const article = await this.prisma.article.findFirst({
       where: { id: articleId, chapterId },
     });
     if (!article) throw new NotFoundException('Article not found');
     const data: Record<string, unknown> = { ...dto };
+    // 절 이동: 같은 장의 절인지 검증. null이면 절에서 분리
+    if (dto.sectionId !== undefined) {
+      data.sectionId = await this.resolveSectionId(chapterId, dto.sectionId);
+    }
     for (const key of ['relatedPrecedentNote', 'relatedLawNote', 'relatedRuleNote'] as const) {
       if (data[key] !== undefined) {
         const t = String(data[key] ?? '').trim();
@@ -319,12 +757,80 @@ export class PoliciesService {
   }
 
   async removeArticle(tenantId: string, policyId: string, chapterId: string, articleId: string) {
-    await this.findOne(tenantId, policyId);
+    await this.findChapterOrThrow(tenantId, policyId, chapterId);
     const article = await this.prisma.article.findFirst({
       where: { id: articleId, chapterId },
     });
     if (!article) throw new NotFoundException('Article not found');
     await this.prisma.article.delete({ where: { id: articleId } });
+  }
+
+  /**
+   * 조 순서 일괄 재정렬 (T-60).
+   *
+   * 가져온 규정은 조 순서가 원문과 어긋나거나 장이 잘못 잡히는 일이 잦다. 조를 하나씩
+   * 고치던 것을 목차에서 끌어 놓고 한 번에 다시 매긴다. 조 번호는 장을 가로질러
+   * 이어지므로(제1장 제1·2조 → 제2장 제3조) 하나만 옮겨도 뒤가 전부 밀린다.
+   *
+   * 한 트랜잭션으로 처리한다. 중간에 끊기면 조 번호가 겹치거나 비는 상태가 남는데,
+   * 그건 목차·안정 링크(T-73)·인쇄가 동시에 무너진 상태다.
+   */
+  async reorderArticles(
+    tenantId: string,
+    policyId: string,
+    order: ReorderTarget[],
+    userId: string,
+  ) {
+    await this.findOne(tenantId, policyId);
+    const chapters = await this.prisma.chapter.findMany({
+      where: { policyId },
+      select: { id: true },
+    });
+    const rows = await this.prisma.article.findMany({
+      where: { chapter: { policyId } },
+      select: { id: true, chapterId: true, sectionId: true, number: true },
+    });
+
+    let changes;
+    try {
+      changes = buildReorderPlan(rows, order, chapters.map((c) => c.id));
+    } catch (e) {
+      if (e instanceof ReorderPlanError) throw new BadRequestException(e.message);
+      throw e;
+    }
+
+    if (changes.length === 0) return { changed: 0 };
+
+    await this.prisma.$transaction(
+      changes.map((c) =>
+        this.prisma.article.update({
+          where: { id: c.id },
+          data: { number: c.number, chapterId: c.chapterId, sectionId: c.sectionId },
+        }),
+      ),
+    );
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.articles.reorder',
+      entityType: 'Policy',
+      entityId: policyId,
+      details: { changed: changes.length, order: order.map((t) => t.jo) },
+    });
+
+    return { changed: changes.length };
+  }
+
+  /** 재정렬 화면이 시작점으로 쓸 현재 순서 */
+  async listJoOrder(tenantId: string, policyId: string) {
+    await this.findOne(tenantId, policyId);
+    const chapters = await this.prisma.chapter.findMany({
+      where: { policyId },
+      select: { id: true, number: true, title: true, articles: { select: { number: true } } },
+      orderBy: { number: 'asc' },
+    });
+    return { order: currentJoOrder(chapters) };
   }
 
   async createAppendix(tenantId: string, policyId: string, dto: CreatePolicyAppendixDto) {
@@ -369,6 +875,109 @@ export class PoliciesService {
     });
     if (!row) throw new NotFoundException('Appendix not found');
     await this.prisma.policyAppendix.delete({ where: { id: appendixId } });
+  }
+
+  // --- 제정·개정 이유(개정문) ---
+
+  async listRevisionReasons(tenantId: string, policyId: string) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    return this.prisma.policyRevisionReason.findMany({
+      where: { policyId },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async createRevisionReason(
+    tenantId: string,
+    policyId: string,
+    dto: CreateRevisionReasonDto,
+    userId: string,
+  ) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    const created = await this.prisma.policyRevisionReason.create({
+      data: {
+        policyId,
+        kind: dto.kind ?? 'amendment',
+        label: dto.label.trim(),
+        reason: dto.reason ?? '',
+        summary: dto.summary ?? null,
+        promulgatedDate: coerceNullableDate(dto.promulgatedDate),
+        effectiveDate: coerceNullableDate(dto.effectiveDate),
+        createdBy: userId,
+      },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.revision_reason.create',
+      entityType: 'PolicyRevisionReason',
+      entityId: created.id,
+      details: { policyId, kind: created.kind, label: created.label },
+    });
+    return created;
+  }
+
+  async updateRevisionReason(
+    tenantId: string,
+    policyId: string,
+    reasonId: string,
+    dto: UpdateRevisionReasonDto,
+    userId: string,
+  ) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    const row = await this.prisma.policyRevisionReason.findFirst({
+      where: { id: reasonId, policyId },
+    });
+    if (!row) throw new NotFoundException('Revision reason not found');
+
+    const data: Record<string, unknown> = {};
+    if (dto.kind !== undefined) data.kind = dto.kind;
+    if (dto.label !== undefined) data.label = dto.label.trim();
+    if (dto.reason !== undefined) data.reason = dto.reason;
+    if (dto.summary !== undefined) data.summary = dto.summary || null;
+    if (dto.promulgatedDate !== undefined) data.promulgatedDate = coerceNullableDate(dto.promulgatedDate);
+    if (dto.effectiveDate !== undefined) data.effectiveDate = coerceNullableDate(dto.effectiveDate);
+
+    const updated = await this.prisma.policyRevisionReason.update({
+      where: { id: reasonId },
+      data: data as any,
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.revision_reason.update',
+      entityType: 'PolicyRevisionReason',
+      entityId: reasonId,
+      details: { policyId, fields: Object.keys(data) },
+    });
+    return updated;
+  }
+
+  async removeRevisionReason(tenantId: string, policyId: string, reasonId: string, userId: string) {
+    await this.assertPolicyInTenant(tenantId, policyId);
+    const row = await this.prisma.policyRevisionReason.findFirst({
+      where: { id: reasonId, policyId },
+    });
+    if (!row) throw new NotFoundException('Revision reason not found');
+    await this.prisma.policyRevisionReason.delete({ where: { id: reasonId } });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'policy.revision_reason.delete',
+      entityType: 'PolicyRevisionReason',
+      entityId: reasonId,
+      details: { policyId },
+    });
+  }
+
+  /** 테넌트 경계 확인만 하는 가벼운 검사 (본문 전체를 끌어오는 findOne 대신) */
+  private async assertPolicyInTenant(tenantId: string, policyId: string) {
+    const policy = await this.prisma.policy.findFirst({
+      where: { id: policyId, tenantId },
+      select: { id: true },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+    return policy;
   }
 
   async listImportLogs(tenantId: string, take = 30) {

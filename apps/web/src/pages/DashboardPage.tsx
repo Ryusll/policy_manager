@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { recentlyRevised, upcomingEffective } from '../lib/policyRevisionFeed';
 import { Link, useNavigate } from 'react-router-dom';
 import { policiesApi } from '../api/policies';
 import { useAuthStore } from '../stores/authStore';
@@ -52,6 +53,10 @@ export default function DashboardPage() {
       .slice(0, 6);
   }, [policies]);
 
+  // 최근 개정 / 제·개정 예고 (T-78)
+  const revised = useMemo(() => recentlyRevised(policies as any[], 5), [policies]);
+  const upcoming = useMemo(() => upcomingEffective(policies as any[], 5), [policies]);
+
   const stats = useMemo(
     () => [
       { label: t('dashboard.stat.total'), value: policies.length, color: 'border-l-navy-600' },
@@ -96,6 +101,63 @@ export default function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {(revised.length > 0 || upcoming.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <div className="section-card">
+            <div className="section-card__head">
+              <h2>최근 개정</h2>
+              <Link to="/policies" className="text-xs text-navy-200 hover:text-white inline-flex items-center gap-1">
+                전체 <ArrowRight size={12} />
+              </Link>
+            </div>
+            {revised.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-500">개정일이 기록된 규정이 없습니다.</p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {revised.map((policy) => (
+                  <li key={policy.id}>
+                    <Link
+                      to={'/policies/' + policy.id}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-navy-50/80"
+                    >
+                      <span className="text-xs text-gray-500 tabular-nums shrink-0">{policy.dateKey}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-gray-900">{policy.title}</span>
+                      <span className="text-[11px] text-gray-400 font-mono shrink-0">{policy.code}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="section-card">
+            <div className="section-card__head">
+              <h2>제·개정 예고</h2>
+            </div>
+            {upcoming.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-500">시행 예정인 규정이 없습니다.</p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {upcoming.map((policy) => (
+                  <li key={policy.id}>
+                    <Link
+                      to={'/policies/' + policy.id}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-amber-50/60"
+                    >
+                      <span className="text-[11px] rounded px-1.5 py-0.5 border border-amber-200 bg-amber-50 text-amber-800 shrink-0 tabular-nums">
+                        {policy.daysLeft}일 후 시행
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-gray-900">{policy.title}</span>
+                      <span className="text-xs text-gray-500 tabular-nums shrink-0">{policy.dateKey}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="section-card">
         <div className="section-card__head">

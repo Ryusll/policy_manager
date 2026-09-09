@@ -9,7 +9,7 @@ import { VariablesModule } from './variables/variables.module';
 import { SearchModule } from './search/search.module';
 import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
-import { ExportModule } from './export/export.module';
+import { TenantBrandingModule } from './tenant-branding/tenant-branding.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PlanGuard } from './common/guards/plan.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -21,8 +21,10 @@ import { CommentsModule } from './comments/comments.module';
 import { TemplatesModule } from './templates/templates.module';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { RegulationParseModule } from './regulation-parse/regulation-parse.module';
+import { LawGoKrModule } from './lawgokr/lawgokr.module';
 import { PlatformBrandingModule } from './platform-branding/platform-branding.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { FavoritesModule } from './favorites/favorites.module';
 
 @Module({
   controllers: [HealthController],
@@ -36,7 +38,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     SearchModule,
     AdminModule,
     AuditModule,
-    ExportModule,
+    TenantBrandingModule,
     IntegrationsModule,
     BillingModule,
     UsersModule,
@@ -44,8 +46,10 @@ import { NotificationsModule } from './notifications/notifications.module';
     TemplatesModule,
     PlatformAdminModule,
     RegulationParseModule,
+    LawGoKrModule,
     PlatformBrandingModule,
     NotificationsModule,
+    FavoritesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

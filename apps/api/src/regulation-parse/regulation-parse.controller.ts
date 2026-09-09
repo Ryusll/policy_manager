@@ -17,7 +17,11 @@ import { existsSync, mkdirSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RegulationParseService } from './regulation-parse.service';
-import { CommitRegulationParseDto, UpdateRegulationParseTreeDto } from './regulation-parse.dto';
+import {
+  CommitRegulationParseDto,
+  CreateFromLawGoKrDto,
+  UpdateRegulationParseTreeDto,
+} from './regulation-parse.dto';
 import { Roles } from '../common/guards/decorators';
 
 @ApiTags('regulation-parse')
@@ -48,6 +52,17 @@ export class RegulationParseController {
   )
   async upload(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
     return this.regulationParseService.uploadAndParse(req.user.tenantId, req.user.id, file);
+  }
+
+  @Post('from-lawgokr')
+  @Roles('admin', 'editor')
+  @ApiOperation({
+    summary: '법제처 법령으로 파싱 세션 생성 (업로드 대신 외부 조회)',
+    description:
+      '응답은 `POST upload`와 같은 세션 형태다. 이후 미리보기·수정·커밋 절차가 동일하다.',
+  })
+  async createFromLawGoKr(@Request() req: any, @Body() dto: CreateFromLawGoKrDto) {
+    return this.regulationParseService.createFromLawGoKr(req.user.tenantId, req.user.id, dto.mst);
   }
 
   @Get(':id')

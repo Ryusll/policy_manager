@@ -28,9 +28,39 @@ import { templatesApi, type PolicyTemplate, type TemplateRevision } from '../api
 import { policiesApi } from '../api/policies';
 import TemplateEditor from '../components/policy-template/TemplateEditor';
 import TemplateRenderer from '../components/policy-template/TemplateRenderer';
+import { buildTemplateTokenData } from '../components/policy-template/templateTokens';
+import { buildFullViewGroups } from '../lib/fullViewGroups';
 import PlanModal from '../components/PlanModal';
+import { FavoritesPanel } from '../components/FavoritesPanel';
 
 const PRESET_IDS: ThemePresetId[] = ['forest', 'ocean', 'slate', 'wine'];
+
+/** 미리보기 대상 규정이 없을 때 쓰는 샘플 (조 루트 + 항 구조를 함께 보여준다) */
+const SAMPLE_PREVIEW_CHAPTERS = [
+  {
+    id: 'preview-ch-1',
+    number: 1,
+    title: '총칙',
+    articles: [
+      {
+        id: 'preview-art-1',
+        number: 1,
+        clauseNumber: null,
+        itemNumber: null,
+        title: '목적',
+        versions: [{ content: '이 규정은 회사 운영의 공정성과 효율성을 높이기 위한 기준을 정한다.' }],
+      },
+      {
+        id: 'preview-art-1-1',
+        number: 1,
+        clauseNumber: 1,
+        itemNumber: null,
+        title: '',
+        versions: [{ content: '이 규정에서 정하지 아니한 사항은 관계 법령과 사규에 따른다.' }],
+      },
+    ],
+  },
+];
 
 function tripletToCss(t: string) {
   return `rgb(${t.replace(/\s+/g, ' ').split(' ').join(',')})`;
@@ -45,7 +75,7 @@ export default function SettingsPage() {
   const canManageTemplatesByPlan = canManagePolicyTemplates(user?.plan);
   const advancedTemplateEnabled = canUseAdvancedTemplateEditor(user?.plan);
   const canManageTeam = isAdmin && inviteEnabledByPlan;
-  const [activeTab, setActiveTab] = useState<'ui' | 'team' | 'templates'>('ui');
+  const [activeTab, setActiveTab] = useState<'ui' | 'favorites' | 'team' | 'templates'>('ui');
   const [invite, setInvite] = useState({ email: '', password: '', name: '', role: 'editor' as 'admin' | 'editor' | 'viewer' });
   const [inviteMsg, setInviteMsg] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -66,7 +96,7 @@ export default function SettingsPage() {
   const [previewPolicyId, setPreviewPolicyId] = useState('');
   const [previewPolicy, setPreviewPolicy] = useState<any>(null);
   const [showTemplatePreviewModal, setShowTemplatePreviewModal] = useState(false);
-  const [restoreCandidate, setRestoreCandidate] = useState<any | null>(null);
+  const [restoreCandidate, setRestoreCandidate] = useState<any>(null);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>('');
   const [revisionQuery, setRevisionQuery] = useState('');
   const [revisionActionFilter, setRevisionActionFilter] = useState('all');
@@ -136,9 +166,14 @@ export default function SettingsPage() {
     setCAcc(customAccentHex);
   }, [customPrimaryHex, customAccentHex]);
 
-  const setBrandMark = useBrandStore((s) => s.setBrandMark);
-  const setBrandLogoDataUrl = useBrandStore((s) => s.setBrandLogoDataUrl);
-  const setBrandLogoSize = useBrandStore((s) => s.setBrandLogoSize);
+  const saveBrandToServer = useBrandStore((s) => s.saveToServer);
+  const brandLoaded = useBrandStore((s) => s.loaded);
+  const [brandSaving, setBrandSaving] = useState(false);
+  /**
+   * 브랜딩은 T-57에서 서버 저장으로 바뀌면서 **회사 전체에 반영**된다.
+   * localStorage 시절에는 각자 자기 브라우저만 바뀌어 아무나 만져도 그만이었다.
+   */
+  const brandEditable = customizationEnabled && isAdmin;
 
   type BrandDraft = {
     mark: string;
@@ -166,7 +201,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (activeTab !== 'ui') return;
     setBrandDraft(readBrandDraftFromStore());
-  }, [activeTab]);
+    // `brandLoaded` 를 넣은 이유: 서버 응답이 화면을 연 뒤에 오면 초안이 캐시 값에 머문다
+  }, [activeTab, brandLoaded]);
 
   const loadNotifyTeams = async () => {
     if (!isAdmin) return;
@@ -185,7 +221,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (activeTab !== 'team' || !isAdmin) return;
-    loadNotifyTeams();
+    void loadNotifyTeams();
   }, [activeTab, isAdmin]);
 
   const previewText = displayBrandMark(brandDraft.mark);
@@ -194,7 +230,7 @@ export default function SettingsPage() {
     Math.min(LOGO_SIZE_MAX, Math.max(LOGO_SIZE_MIN, Math.round(Number.isFinite(n) ? n : DEFAULT_LOGO_WIDTH)));
 
   const onPickLogo = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!customizationEnabled) {
+    if (!brandEditable) {
       e.target.value = '';
       return;
     }
@@ -231,6 +267,11 @@ export default function SettingsPage() {
       if (!selectedTemplateId && rows[0]) {
         setSelectedTemplateId(rows[0].id);
       }
+    } catch (e: any) {
+      // catch 가 없던 자리다(T-32 lint 로 발견). 목록을 못 받으면 스피너만 멎고
+      // 화면은 "템플릿 없음"처럼 보여서, 실패인지 정말 비어 있는지 알 수 없었다.
+      setTemplates([]);
+      setTemplateMsg(e?.response?.data?.message || '템플릿 목록을 불러오지 못했습니다.');
     } finally {
       setTemplateLoading(false);
     }
@@ -248,7 +289,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (activeTab !== 'templates') return;
     if (!canManageTemplatesByPlan) return;
-    loadTemplates();
+    void loadTemplates();
   }, [activeTab, canManageTemplatesByPlan]);
 
   useEffect(() => {
@@ -280,12 +321,12 @@ export default function SettingsPage() {
       chapterPageBreak: cfg.chapterPageBreak ?? false,
       showPageNumber: cfg.showPageNumber ?? false,
     });
-    loadTemplateRevisions(selectedTemplateId);
+    void loadTemplateRevisions(selectedTemplateId);
   }, [selectedTemplateId, templates]);
 
   useEffect(() => {
     if (activeTab !== 'templates' || !canManageTemplatesByPlan) return;
-    (async () => {
+    void (async () => {
       try {
         const list = await policiesApi.list();
         setPreviewPolicies(Array.isArray(list) ? list : []);
@@ -302,7 +343,7 @@ export default function SettingsPage() {
       setPreviewPolicy(null);
       return;
     }
-    (async () => {
+    void (async () => {
       try {
         const full = await policiesApi.get(previewPolicyId);
         setPreviewPolicy(full);
@@ -317,47 +358,32 @@ export default function SettingsPage() {
     [templates, selectedTemplateId],
   );
 
-  const templatePreviewGroups = useMemo(() => {
-    if (!previewPolicy?.chapters?.length) {
-      return [
-        {
-          id: 'preview-ch-1',
-          number: 1,
-          title: '총칙',
-          groups: [
-            {
-              articleNumber: 1,
-              items: [
-                {
-                  id: 'preview-art-1',
-                  clauseNumber: null,
-                  itemNumber: null,
-                  title: '목적',
-                  versions: [{ content: '이 규정은 회사 운영의 공정성과 효율성을 높이기 위한 기준을 정한다.' }],
-                },
-              ],
-            },
-          ],
-        },
-      ];
-    }
-    return previewPolicy.chapters.map((chapter: any) => {
-      const grouped = new Map<number, any[]>();
-      for (const article of chapter.articles || []) {
-        const key = Number(article.number || 0);
-        const list = grouped.get(key) || [];
-        list.push(article);
-        grouped.set(key, list);
-      }
-      const groups = Array.from(grouped.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([articleNumber, items]) => ({
-          articleNumber,
-          items,
-        }));
-      return { ...chapter, groups };
-    });
-  }, [previewPolicy]);
+  // 미리보기 토큰 데이터도 실제 렌더와 동일한 빌더를 사용한다.
+  // (예전에는 revisionDate·effectiveDate를 넘기지 않아 미리보기에서만 빈칸으로 보였다)
+  const templatePreviewTokenData = useMemo(
+    () =>
+      buildTemplateTokenData({
+        tenantName: user?.tenantName || '샘플회사',
+        policyTitle: previewPolicy?.title || templateDraft.name || '규정 미리보기',
+        policyCode: previewPolicy?.code || 'TMP-001',
+        revisionDate: previewPolicy?.revisionDate,
+        effectiveDate: previewPolicy?.effectiveDate,
+      }),
+    [
+      user?.tenantName,
+      previewPolicy?.title,
+      previewPolicy?.code,
+      previewPolicy?.revisionDate,
+      previewPolicy?.effectiveDate,
+      templateDraft.name,
+    ],
+  );
+
+  // 미리보기도 전문 보기와 같은 그룹 구조를 써야 조·항·목 들여쓰기가 실제 출력과 일치한다.
+  const templatePreviewGroups = useMemo(
+    () => buildFullViewGroups(previewPolicy?.chapters?.length ? previewPolicy.chapters : SAMPLE_PREVIEW_CHAPTERS),
+    [previewPolicy],
+  );
 
   const renderRevisionDiff = (rev: TemplateRevision) => {
     const before = rev.details?.before || null;
@@ -396,6 +422,7 @@ export default function SettingsPage() {
     'template.clone': '템플릿 복제',
     'template.setDefault': '기본 템플릿 지정',
     'template.delete': '템플릿 삭제',
+    'template.restore': '이력 복원',
   };
   const fieldLabelMap: Record<string, string> = {
     name: '템플릿 이름',
@@ -562,6 +589,7 @@ export default function SettingsPage() {
 
   const settingsTabs = [
     { id: 'ui' as const, label: t('settings.tabUi') },
+    { id: 'favorites' as const, label: '즐겨찾기' },
     { id: 'team' as const, label: t('settings.tabInvite'), disabled: !canManageTeam },
     { id: 'templates' as const, label: t('settings.tabTemplates'), disabled: !isAdmin || !canManageTemplatesByPlan },
   ];
@@ -595,6 +623,17 @@ export default function SettingsPage() {
         </nav>
 
         <div className={clsx('flex-1 min-w-0 space-y-6', activeTab === 'templates' ? 'max-w-none' : 'max-w-3xl')}>
+      {activeTab === 'favorites' && (
+        <div className="card p-5">
+          <h2 className="text-sm font-semibold text-gray-900 mb-1">즐겨찾기</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            규정 목록·조문 화면의 별로 담아둔 항목입니다. 조문은 조 번호 기준 링크라
+            규정을 다시 가져와도 살아 있습니다.
+          </p>
+          <FavoritesPanel />
+        </div>
+      )}
+
       {activeTab === 'ui' && (
         <>
       {/* 테마 */}
@@ -692,11 +731,17 @@ export default function SettingsPage() {
       <div className="bg-white border border-gray-300 shadow-sm p-5 space-y-5">
         <h2 className="text-sm font-semibold text-gray-800">{t('settings.brandSectionTitle')}</h2>
 
+        {customizationEnabled && !isAdmin && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+            브랜딩은 <strong>회사 전체</strong>에 적용되는 설정이라 관리자만 바꿀 수 있습니다. 현재 적용된 값은 아래에서 확인할 수 있습니다.
+          </p>
+        )}
+
         <div>
           <h3 className="text-xs font-medium text-gray-700 mb-2">{t('settings.logoTitle')}</h3>
           <p className="text-xs text-gray-500 mb-3">{t('settings.logoHint')}</p>
           <p className="text-xs text-navy-700 bg-navy-50 border border-navy-200 rounded px-2 py-1.5 mb-3">
-            로고·크기·텍스트 배지는 아래에서만 미리보기로 바뀝니다. <strong>저장</strong>을 눌러야 헤더·규정 인쇄 양식 등에 반영됩니다.
+            로고·크기·텍스트 배지는 아래에서만 미리보기로 바뀝니다. <strong>저장</strong>을 눌러야 헤더·규정 인쇄 양식 등에 반영되며, <strong>회사 구성원 모두</strong>의 화면에 적용됩니다.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickLogo} />
@@ -704,7 +749,7 @@ export default function SettingsPage() {
               type="button"
               className="btn-secondary text-sm"
               onClick={() => fileRef.current?.click()}
-              disabled={!customizationEnabled}
+              disabled={!brandEditable}
             >
               {t('settings.logoUpload')}
             </button>
@@ -716,7 +761,7 @@ export default function SettingsPage() {
                   setBrandDraft((prev) => ({ ...prev, logo: null }));
                   setBrandMsg('미리보기에서 로고를 뺐습니다. 저장하면 적용됩니다.');
                 }}
-                disabled={!customizationEnabled}
+                disabled={!brandEditable}
               >
                 {t('settings.logoRemove')}
               </button>
@@ -742,7 +787,7 @@ export default function SettingsPage() {
                     h: prev.h,
                   }))
                 }
-                disabled={!customizationEnabled}
+                disabled={!brandEditable}
                 className="input w-24"
               />
             </div>
@@ -760,7 +805,7 @@ export default function SettingsPage() {
                     h: clampLogoDim(+e.target.value),
                   }))
                 }
-                disabled={!customizationEnabled}
+                disabled={!brandEditable}
                 className="input w-24"
               />
             </div>
@@ -791,7 +836,7 @@ export default function SettingsPage() {
               maxLength={2}
               value={brandDraft.mark}
               onChange={(e) => setBrandDraft((prev) => ({ ...prev, mark: e.target.value }))}
-              disabled={!customizationEnabled}
+              disabled={!brandEditable}
               className="input w-32 font-medium"
               placeholder={DEFAULT_BRAND_MARK}
               aria-label={t('settings.brandMark')}
@@ -809,17 +854,30 @@ export default function SettingsPage() {
           <button
             type="button"
             className="btn-primary text-sm"
-            onClick={() => {
-              const mark = brandDraft.mark.trim().slice(0, 2) || DEFAULT_BRAND_MARK;
-              setBrandMark(mark);
-              setBrandLogoDataUrl(brandDraft.logo);
-              setBrandLogoSize(brandDraft.w, brandDraft.h);
-              setBrandDraft(readBrandDraftFromStore());
-              setBrandMsg('브랜드 설정을 저장했습니다. 헤더·인쇄에 반영되었습니다.');
+            onClick={async () => {
+              setLogoError('');
+              setBrandSaving(true);
+              try {
+                await saveBrandToServer({
+                  brandMark: brandDraft.mark,
+                  brandLogoDataUrl: brandDraft.logo,
+                  brandLogoWidth: brandDraft.w,
+                  brandLogoHeight: brandDraft.h,
+                });
+                setBrandDraft(readBrandDraftFromStore());
+                setBrandMsg('브랜드 설정을 저장했습니다. 회사 구성원 모두의 화면·인쇄에 반영됩니다.');
+              } catch (e: any) {
+                setBrandMsg('');
+                setLogoError(
+                  e?.response?.data?.message || '브랜드 설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+                );
+              } finally {
+                setBrandSaving(false);
+              }
             }}
-            disabled={!customizationEnabled}
+            disabled={!brandEditable || brandSaving}
           >
-            {t('settings.save')}
+            {brandSaving ? '저장 중…' : t('settings.save')}
           </button>
           <button
             type="button"
@@ -829,7 +887,7 @@ export default function SettingsPage() {
               setLogoError('');
               setBrandMsg('저장된 설정으로 되돌렸습니다.');
             }}
-            disabled={!customizationEnabled}
+            disabled={!brandEditable}
           >
             변경 취소
           </button>
@@ -846,7 +904,7 @@ export default function SettingsPage() {
               setLogoError('');
               setBrandMsg('미리보기를 기본값으로 바꿨습니다. 저장하면 반영됩니다.');
             }}
-            disabled={!customizationEnabled}
+            disabled={!brandEditable}
           >
             미리보기 기본값
           </button>
@@ -1702,14 +1760,7 @@ export default function SettingsPage() {
                           ? { layoutJson: { mode: 'html', rawHtml: templateDraft.html }, cssText: templateDraft.css }
                           : { layoutJson: { mode: 'basic', basicConfig: basicTemplateDraft }, cssText: '' }
                       }
-                      data={{
-                        tenant: { name: user?.tenantName || '샘플회사' },
-                        policy: {
-                          title: previewPolicy?.title || templateDraft.name || '규정 미리보기',
-                          code: previewPolicy?.code || 'TMP-001',
-                        },
-                        today: new Date().toLocaleDateString('ko-KR'),
-                      }}
+                      data={templatePreviewTokenData}
                       fullViewGroups={templatePreviewGroups}
                     />
                   </div>
@@ -1742,14 +1793,7 @@ export default function SettingsPage() {
                     ? { layoutJson: { mode: 'html', rawHtml: templateDraft.html }, cssText: templateDraft.css }
                     : { layoutJson: { mode: 'basic', basicConfig: basicTemplateDraft }, cssText: '' }
                 }
-                data={{
-                  tenant: { name: user?.tenantName || '샘플회사' },
-                  policy: {
-                    title: previewPolicy?.title || templateDraft.name || '규정 미리보기',
-                    code: previewPolicy?.code || 'TMP-001',
-                  },
-                  today: new Date().toLocaleDateString('ko-KR'),
-                }}
+                data={templatePreviewTokenData}
                 fullViewGroups={templatePreviewGroups}
               />
             </div>
@@ -1778,20 +1822,14 @@ export default function SettingsPage() {
                   type="button"
                   className="btn-primary text-sm"
                   onClick={async () => {
-                    const snap = restoreCandidate.details?.after || restoreCandidate.details?.snapshot;
-                    if (!selectedTemplateId || !snap) {
+                    if (!selectedTemplateId) {
                       setRestoreCandidate(null);
                       return;
                     }
                     try {
-                      await templatesApi.update(selectedTemplateId, {
-                        name: snap.name,
-                        description: snap.description || '',
-                        isDefault: !!snap.isDefault,
-                        isActive: snap.isActive !== false,
-                        layoutJson: snap.layoutJson || {},
-                        cssText: snap.cssText || '',
-                      });
+                      // 스냅샷은 서버가 이력에서 직접 읽는다 (T-58). 화면이 보내면
+                      // 복원 기록에 적힌 시점과 실제로 들어간 내용이 어긋날 수 있다.
+                      await templatesApi.restore(selectedTemplateId, restoreCandidate.id);
                       await loadTemplates();
                       await loadTemplateRevisions(selectedTemplateId);
                       setTemplateMsg('선택한 이력으로 복원했습니다.');

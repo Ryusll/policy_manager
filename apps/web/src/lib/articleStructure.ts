@@ -5,6 +5,8 @@ import { isArticleJoRoot, type ArticleLabelParts } from './legalArticleLabel';
 export type ArticleCreatePayload = {
   number: number;
   title: string;
+  /** 소속 절(선택 계층). 절에 속하지 않으면 undefined */
+  sectionId?: string;
   clauseNumber?: number;
   itemNumber?: number;
   content?: string;
@@ -22,6 +24,22 @@ export function isSubArticleRow(row: { clauseNumber?: number | null; itemNumber?
 
 export function chapterHasJoRoot(chapterArticles: ArticleLabelParts[], jo: number): boolean {
   return chapterArticles.some((a) => Number(a.number) === jo && isArticleJoRoot(a));
+}
+
+/**
+ * 다음 조 번호. 법령·규정 관례상 조 번호는 문서 전체에서 연속하므로
+ * 장 단위가 아니라 규정 전체의 최대 조 번호를 기준으로 계산한다.
+ */
+export function nextJoNumberForPolicy(
+  chapters: { articles?: ArticleLabelParts[] }[] | undefined | null,
+): number {
+  let max = 0;
+  for (const chapter of chapters || []) {
+    for (const article of chapter.articles || []) {
+      max = Math.max(max, Number(article.number) || 0);
+    }
+  }
+  return max + 1;
 }
 
 export function nextClauseNumberForJo(chapterArticles: ArticleLabelParts[], jo: number): number {
@@ -66,6 +84,7 @@ export function buildArticleCreateRequests(
   const hasMain = chapterHasJoRoot(chapterArticles, form.number);
 
   const tags = {
+    ...(form.sectionId ? { sectionId: form.sectionId } : {}),
     hasPrecedent: form.hasPrecedent,
     hasRelatedLaw: form.hasRelatedLaw,
     hasRelatedRule: form.hasRelatedRule,

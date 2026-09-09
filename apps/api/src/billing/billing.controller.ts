@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Request, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { BillingService } from './billing.service';
 import { BillingWebhookDto, CheckoutDto } from './billing.dto';
@@ -22,6 +22,15 @@ export class BillingController {
       req.user.tenant?.slug || '',
       dto.targetPlan,
     );
+  }
+
+  @Get('history')
+  @ApiBearerAuth()
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({ summary: '결제·구독 이력 (admin only)' })
+  history(@Request() req: any) {
+    return this.billingService.history(req.user.tenantId);
   }
 
   @Public()

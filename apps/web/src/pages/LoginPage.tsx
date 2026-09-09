@@ -14,9 +14,14 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const { setAuth } = useAuthStore();
   const [form, setForm] = useState({ email: '', password: '', tenantSlug: 'demo' });
-  const [error, setError] = useState(() =>
-    searchParams.get('error') ? t('login.oauthError') : '',
-  );
+  // 서버는 실패 사유를 `reason` 으로 붙여 준다(T-42). 모르는 코드면 일반 문구로 떨어진다.
+  const [error, setError] = useState(() => {
+    if (!searchParams.get('error')) return '';
+    const reason = searchParams.get('reason');
+    const key = `login.oauth.${reason ?? ''}`;
+    const specific = reason ? t(key) : '';
+    return specific && specific !== key ? specific : t('login.oauthError');
+  });
   const [loading, setLoading] = useState(false);
 
   const roleLabel = useMemo(
