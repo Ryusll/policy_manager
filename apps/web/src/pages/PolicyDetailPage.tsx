@@ -3199,7 +3199,13 @@ export default function PolicyDetailPage() {
                           )}
                         </div>
                       </div>
-                      <div className="bg-gray-50 border border-gray-200 rounded p-3 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                      <div
+                        className={clsx(
+                          'bg-gray-50 border border-gray-200 rounded p-3 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed',
+                          BODY_SCALE_CLASS,
+                        )}
+                        style={bodyScaleStyle(bodyScale)}
+                      >
                         <ArticleBodyInline text={version.content} />
                       </div>
                       {version.changeNote && (
