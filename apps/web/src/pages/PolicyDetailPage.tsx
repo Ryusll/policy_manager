@@ -55,7 +55,17 @@ import {
   formatKoDate,
   sortArticlesForToc,
 } from '../lib/legalArticleLabel';
+import CrossPolicyComparePanel from '../components/CrossPolicyComparePanel';
 import { buildPolicyPlainText, policyPlainTextFilename } from '../lib/policyPlainText';
+import {
+  bodyScaleStyle,
+  BODY_SCALE_CLASS,
+  canStepBodyScale,
+  loadBodyScale,
+  saveBodyScale,
+  stepBodyScale,
+  DEFAULT_BODY_SCALE,
+} from '../lib/bodyScale';
 import {
   buildFullViewGroups,
   collectJoNumbers,
@@ -506,6 +516,13 @@ export default function PolicyDetailPage() {
   const fullViewModalRef = useRef<HTMLDivElement>(null);
   // 업로드·삭제가 같은 모달에서 같은 자리에 오류를 띄운다
   const [fileError, setFileError] = useState('');
+  // 본문 글자 크기(T-75). 초기값을 저장소에서 바로 읽어 첫 렌더부터 적용한다.
+  const [bodyScale, setBodyScale] = useState(loadBodyScale);
+  const changeBodyScale = useCallback(
+    (delta: number) => setBodyScale((prev) => saveBodyScale(stepBodyScale(prev, delta))),
+    [],
+  );
+  const [showCrossCompare, setShowCrossCompare] = useState(false);
   const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showFullTextModal, setShowFullTextModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
@@ -2839,21 +2856,51 @@ export default function PolicyDetailPage() {
           >
             음성지원·접근성
           </button>
-          {(
-            [
-              '규정 간 비교',
-            ] as const
-          ).map((label) => (
+          {/* 본문 글자 크기(T-75). 브라우저 전체 확대와 달리 본문만 키워
+              목차·도구줄은 제자리에 둔다. 인쇄물은 영향받지 않는다. */}
+          <div
+            className="inline-flex items-center rounded border border-navy-300 bg-white overflow-hidden"
+            role="group"
+            aria-label="본문 글자 크기"
+          >
             <button
-              key={label}
               type="button"
-              disabled
-              title="추후 제공 예정 (법령정보센터 수준으로 확장)"
-              className="text-[11px] px-2 py-1 rounded border border-gray-200 bg-white text-gray-400 cursor-not-allowed"
+              onClick={() => changeBodyScale(-1)}
+              disabled={!canStepBodyScale(bodyScale, -1)}
+              className="px-2 py-1 text-[11px] text-navy-800 hover:bg-navy-50 disabled:opacity-30 disabled:hover:bg-white"
+              aria-label="본문 글자 작게"
+              title="본문 글자 작게"
             >
-              {label}
+              가−
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setBodyScale(saveBodyScale(DEFAULT_BODY_SCALE))}
+              disabled={bodyScale === DEFAULT_BODY_SCALE}
+              className="px-1.5 py-1 text-[11px] tabular-nums text-navy-700 border-x border-navy-200 hover:bg-navy-50 disabled:hover:bg-white"
+              aria-label={`본문 글자 크기 ${bodyScale}%, 눌러서 기본으로`}
+              title="기본 크기로"
+            >
+              {bodyScale}%
+            </button>
+            <button
+              type="button"
+              onClick={() => changeBodyScale(1)}
+              disabled={!canStepBodyScale(bodyScale, 1)}
+              className="px-2 py-1 text-[11px] text-navy-800 hover:bg-navy-50 disabled:opacity-30 disabled:hover:bg-white"
+              aria-label="본문 글자 크게"
+              title="본문 글자 크게"
+            >
+              가+
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowCrossCompare(true)}
+            className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+          >
+            규정 간 비교
+          </button>
         </div>
         {showA11y && (
           <div className="px-4 py-3 border-t border-gray-200 bg-gray-50/70 space-y-2 print:hidden">
@@ -3526,7 +3573,11 @@ export default function PolicyDetailPage() {
                     onPrev={goToPrevFullViewHit}
                     onNext={goToNextFullViewHit}
                   />
-                  <div ref={fullViewMainRef} className="p-4 space-y-3">
+                  <div
+                    ref={fullViewMainRef}
+                    className={clsx('p-4 space-y-3', BODY_SCALE_CLASS)}
+                    style={bodyScaleStyle(bodyScale)}
+                  >
                     <TemplateRenderer
                       template={activeTemplate}
                       data={templateRenderData}
@@ -4058,7 +4109,11 @@ export default function PolicyDetailPage() {
                 onPrev={goToPrevFullViewHit}
                 onNext={goToNextFullViewHit}
               />
-              <div ref={fullViewModalRef} className="space-y-3">
+              <div
+                ref={fullViewModalRef}
+                className={clsx('space-y-3', BODY_SCALE_CLASS)}
+                style={bodyScaleStyle(bodyScale)}
+              >
                 <TemplateRenderer
                   template={activeTemplate}
                   data={templateRenderData}
@@ -4105,6 +4160,14 @@ export default function PolicyDetailPage() {
           policy={policy}
           canEdit={canEdit}
           onClose={() => setShowRevisionReasons(false)}
+        />
+      )}
+
+      {showCrossCompare && policy && (
+        <CrossPolicyComparePanel
+          policyId={policy.id}
+          policyTitle={`${policy.code} ${policy.title}`}
+          onClose={() => setShowCrossCompare(false)}
         />
       )}
 

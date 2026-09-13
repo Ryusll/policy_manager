@@ -111,7 +111,17 @@
   }
 }
 
+/* 본문 글자 크기(T-75). 배율이 없으면 1 이라 아무 영향이 없다. */
+.policy-body-scale {
+  zoom: var(--policy-body-scale, 1);
+}
+
 @media print {
+  /* 화면에서 키운 글씨가 인쇄물 조판까지 바꾸면 "내가 본 것과 다른 문서"가 나온다 */
+  .policy-body-scale {
+    zoom: 1 !important;
+  }
+
   html,
   body {
     height: auto !important;

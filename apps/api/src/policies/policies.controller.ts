@@ -197,6 +197,16 @@ export class PoliciesController {
     return this.policiesService.compareAsOf(req.user.tenantId, id, from, to);
   }
 
+  @Get(':id/compare-with')
+  @ApiOperation({ summary: '규정 간 비교 — 서로 다른 두 규정을 조문 위치로 대비 (T-91)' })
+  compareWithPolicy(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Query('targetId') targetId: string,
+  ) {
+    return this.policiesService.compareWithPolicy(req.user.tenantId, id, targetId);
+  }
+
   @Get(':id/as-of')
   @ApiOperation({ summary: '시점 조회 — 기준일에 시행 중이던 본문' })
   findOneAsOf(@Request() req: any, @Param('id') id: string, @Query('date') date: string) {

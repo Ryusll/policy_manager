@@ -23,7 +23,11 @@ import {
   type ReorderTarget,
 } from './article-reorder';
 import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
-import { buildComparisonRows, type CompareArticleInput } from './policy-compare';
+import {
+  buildComparisonRows,
+  buildCrossPolicyRows,
+  type CompareArticleInput,
+} from './policy-compare';
 import {
   buildThreeWayRows,
   type ThreeWayArticle,
@@ -263,6 +267,41 @@ export class PoliciesService {
   }
 
   /**
+   * 규정 간 비교 (T-91). 서로 다른 두 규정을 나란히 놓는다.
+   *
+   * `compareAsOf` 는 같은 규정의 두 시점이라 `articleId` 로 짝을 짓지만, 여기는
+   * 공유하는 id 가 없어 위치(조·항·목 번호)로 맞댄다. 그 한계는
+   * `buildCrossPolicyRows` 주석과 응답의 `summary.suspect` 에 드러난다.
+   *
+   * **두 규정 모두 테넌트 소속인지 각각 확인한다.** 기준 규정만 보고 대상 id 를
+   * 그대로 쓰면 남의 회사 규정 본문이 비교표에 실려 나간다.
+   */
+  async compareWithPolicy(tenantId: string, id: string, targetId: string) {
+    if (id === targetId) {
+      throw new BadRequestException('같은 규정끼리는 비교할 수 없습니다.');
+    }
+    const [left, right] = await Promise.all([
+      this.prisma.policy.findFirst({
+        where: { id, tenantId },
+        select: { id: true, code: true, title: true },
+      }),
+      this.prisma.policy.findFirst({
+        where: { id: targetId, tenantId },
+        select: { id: true, code: true, title: true },
+      }),
+    ]);
+    if (!left || !right) throw new NotFoundException('Policy not found');
+
+    const [leftRows, rightRows] = await Promise.all([
+      this.articlesCurrent(left.id),
+      this.articlesCurrent(right.id),
+    ]);
+
+    const { rows, summary } = buildCrossPolicyRows(leftRows, rightRows);
+    return { left, right, summary, rows };
+  }
+
+  /**
    * 3단비교 (T-56). 기준 규정 아래 두 단계(세칙·지침)를 나란히 놓는다.
    *
    * 짝짓기는 하위 조문 본문의 **상위 규정 인용**으로 한다(`policy-three-way.ts`).
@@ -349,6 +388,46 @@ export class PoliciesService {
   }
 
   /** 특정 시점에 시행 중이던 조문을 비교용 평탄 목록으로 */
+  /**
+   * 규정의 "지금 본문" (T-91).
+   *
+   * `articlesAsOf` 와 다르다. 그쪽은 **시행일 기준 스냅샷**이라 시행일이 없거나
+   * 아직 오지 않은 게시본을 빼는데, 전문 보기(`findOne`)는 시행일과 무관하게
+   * **최신 게시본**을 보여 준다. 규정 간 비교가 `asOf` 를 쓰면 화면에는 있는
+   * 조문이 비교표에서 사라져 "왜 다르냐"는 질문이 생긴다. 화면과 같은 기준을 쓴다.
+   */
+  private async articlesCurrent(policyId: string): Promise<CompareArticleInput[]> {
+    const articles = await this.prisma.article.findMany({
+      where: { chapter: { policyId } },
+      include: {
+        versions: {
+          where: { status: 'published' },
+          orderBy: { versionNum: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: [
+        { number: 'asc' },
+        { clauseNumber: { sort: 'asc', nulls: 'first' } },
+        { itemNumber: { sort: 'asc', nulls: 'first' } },
+      ],
+    });
+
+    return articles
+      .filter((article) => article.versions.length > 0)
+      .map((article) => ({
+        id: article.id,
+        number: article.number,
+        clauseNumber: article.clauseNumber,
+        itemNumber: article.itemNumber,
+        title: article.title ?? '',
+        content: article.versions[0].content ?? '',
+        effectiveDate: article.versions[0].effectiveDate
+          ? toDateOnlyString(article.versions[0].effectiveDate)
+          : null,
+      }));
+  }
+
   private async articlesAsOf(policyId: string, asOfDate: Date): Promise<CompareArticleInput[]> {
     const articles = await this.prisma.article.findMany({
       where: { chapter: { policyId } },

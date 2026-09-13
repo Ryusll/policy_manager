@@ -112,6 +112,10 @@ export const policiesApi = {
   /** 신구조문대비표 — 두 시점 본문을 조문 단위로 대비 */
   compare: (policyId: string, from: string, to: string): Promise<PolicyComparison> =>
     client.get('/policies/' + policyId + '/compare', { params: { from, to } }).then((r) => r.data),
+  compareWith: (policyId: string, targetId: string): Promise<CrossPolicyComparison> =>
+    client
+      .get('/policies/' + policyId + '/compare-with', { params: { targetId } })
+      .then((r) => r.data),
 
   /**
    * 한/글 내보내기 (T-85). 확장자가 `.hwpx` 인 이유는 `.hwp` 가 한컴 독점 바이너리라
@@ -148,6 +152,29 @@ export type PolicyRevisionReason = {
   promulgatedDate: string | null;
   effectiveDate: string | null;
   createdAt: string;
+};
+
+/** 규정 간 비교 (T-91) — 서로 다른 두 규정을 조문 위치로 맞댄 결과 */
+export type CrossPolicyKind = 'same' | 'different' | 'left-only' | 'right-only';
+
+export type CrossPolicyRow = {
+  key: string;
+  number: number;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+  kind: CrossPolicyKind;
+  left: { title: string; content: string } | null;
+  right: { title: string; content: string } | null;
+  diff: CompareDiffPart[] | null;
+  /** 번호는 같은데 제목이 다르다 — 번호로 맞춘 짝이 의심스럽다는 신호 */
+  titleDiffers: boolean;
+};
+
+export type CrossPolicyComparison = {
+  left: { id: string; code: string; title: string };
+  right: { id: string; code: string; title: string };
+  summary: { same: number; different: number; leftOnly: number; rightOnly: number; suspect: number };
+  rows: CrossPolicyRow[];
 };
 
 export type CompareKind = 'added' | 'removed' | 'changed' | 'same';
