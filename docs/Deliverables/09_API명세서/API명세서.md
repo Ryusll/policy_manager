@@ -1,6 +1,6 @@
 # API 명세서
 
-작성일: 2026-07-21
+작성일: 2026-07-21 (최종 갱신: 2026-09-21)
 근거: `apps/api/src/**/*.controller.ts` 전수 확인. 전역 prefix `/api` (예: 실제 경로는 `/api/policies`). Swagger 대화형 문서: `/api/docs`.
 
 ## 인증/인가 공통 규칙
@@ -224,6 +224,59 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | api-access | JWT | Enterprise API 연동 안내 정보 |
+
+## 법령 개정 연계 — **설계 · 미구현** (2026-09-21 신설)
+
+> ⚠️ **아래 엔드포인트는 아직 없다.** 이 문서의 다른 절이 실제 컨트롤러를 옮긴 것인 반면 이 절만 **설계**다.
+> 근거는 특허 명세서 `26PD0271KR`이고 상세는 [18_법령개정연계_설계 6절](../18_법령개정연계_설계/법령개정연계_설계안.md),
+> 요구사항은 [03_SRS 12절 REQ-LAW](../03_SRS_요구사항명세/SRS_요구사항명세.md), 작업은 [17_작업관리대장 S7](../17_작업관리대장/작업관리대장.md).
+
+### laws (`/api/laws`) — 법령, **테넌트 공용**
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | (root) | admin·editor | 추적 중인 법령 목록. `lastCheckedAt` 포함 — **언제 확인한 것인지 화면에서 보여야 한다** |
+| POST | (root) | admin·editor | 법제처 MST로 법령 등록(추적 시작). 조·항·목을 `LawArticle` 로 저장 |
+| GET | :id/articles | admin·editor | 법령조항 목록 |
+| DELETE | :id | admin | 추적 해제. **연결(`LawLink`)이 남아 있으면 409** |
+
+> 법령 데이터에는 `tenantId` 가 없다(모든 고객사가 같은 법을 본다 — [ADR-0020](../10_ADR_의사결정기록/ADR.md)).
+> 조회는 테넌트 무관이지만 **쓰기는 admin·editor 로 제한**한다 — 한 테넌트가 등록한 법령을 다른 테넌트도 쓰게 되므로.
+
+### law-links (`/api/law-links`) — 법령 관계 정보, ⚠️ **테넌트별**
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | `?articleId=` | admin·editor | 이 **사내 조문**에 걸린 법령조항 |
+| GET | `?lawArticleId=` | admin·editor | 이 **법령조항**에 걸린 *우리 회사* 조문. ⚠️ `LawArticle` 에 `tenantId` 가 없으므로 **여기서 경계를 건다** |
+| POST | (root) | admin·editor | 연결 생성(수동). 관계 유형·적용 범위·근거 문구 |
+| POST | suggest | admin·editor | 본문 인용 패턴으로 자동 추천 → `confirmState=suggested` 로 생성 |
+| PATCH | :id | admin·editor | 확정/반려/관계 유형 수정 |
+| DELETE | :id | admin·editor | |
+
+### law-changes (`/api/law-changes`) — 변경 이벤트
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | (root) | admin·editor | 변경 이벤트 목록(법령·기간 필터) |
+| POST | (root) | admin·editor | 수동 등록 (`receivedVia=manual`) |
+
+### law-sync (`/api/admin/law-sync`) — 주기 동기화, `global_admin` 전용
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| POST | run | global_admin | **cron 이 호출한다.** API 컨테이너 안 스케줄러를 쓰지 않는 이유는 2대로 늘리면 두 번 돌기 때문(T-92 백업과 같은 방식) |
+| GET | runs | global_admin | 동기화 이력. **실패를 "개정 없음"과 구별해 기록** — 법제처는 실패해도 HTTP 200 에 에러 본문을 준다 |
+
+### amendments (`/api/amendments`) — 개정 후보, ⚠️ **테넌트별**
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | (root) | admin·editor | 후보 목록 (상태·규정 필터) |
+| GET | :id | admin·editor | 후보 + **변경 근거** + 변경 전후 비교 |
+| POST | generate | admin·editor | 변경 이벤트로 후보 생성. **확정된 관계만 사용** |
+| PATCH | :id | admin·editor | 초안 손질 — 법 문구를 그대로 넣으면 문장이 깨지므로 후보는 어디까지나 초안이다 |
+| POST | :id/review | admin·editor | 검토 요청 |
+| POST | :id/approve | admin·editor | **승인 → 후속 버전 발행.** 한 트랜잭션. 조문 식별자 유지 + 사내 규정 시행일 부여 |
+| POST | :id/reject | admin·editor | 반려 (**사유 필수**) — 발행 보류 |
+
+> **viewer 에게는 열지 않는다.** 개정 초안은 확정 전 내부 문서다.
+> `approve` 는 **사람의 승인을 요구하는 것이 제품 요구사항이자 특허 청구항의 구성요소**다 — 자동 발행 경로를 만들지 않는다([ADR-0021](../10_ADR_의사결정기록/ADR.md)).
 
 ## health (`/api/health`)
 | Method | Path | 인증 | 설명 |
