@@ -60,8 +60,13 @@ function parseHo(norm: string): { no: number; branch: number | null } | null {
   return { no: Number(m[1]), branch: m[2] ? Number(m[2]) : null };
 }
 
-/** 식별자용 — `3`, `3의2` */
-function numberWithBranch(no: number, branch: number | null): string {
+/**
+ * 식별자용 — `3`, `3의2`.
+ *
+ * `law-links`(T-101)의 인용 추출기가 같은 규칙으로 `nodeKey`를 재구성해야 하므로
+ * export 한다 — 두 곳이 각자 구현하면 표기가 갈라질 수 있다.
+ */
+export function numberWithBranch(no: number, branch: number | null): string {
   return branch ? `${no}의${branch}` : String(no);
 }
 

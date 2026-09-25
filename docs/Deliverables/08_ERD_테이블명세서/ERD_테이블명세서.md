@@ -192,7 +192,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | 테이블 | 상태 |
 |---|---|
 | `LawSource` / `Law` / `LawArticle` | ✅ **스키마에 있다** (T-100, 마이그레이션 `20260925090000_law_entities`) |
-| `LawLink` | 설계만 (T-101) |
+| `LawLink` | ✅ **스키마에 있다** (T-101, 마이그레이션 `20260925142102_law_links`) |
 | `LawChangeEvent` / `AmendmentCandidate` | 설계만 (T-103·T-106) |
 | `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
 

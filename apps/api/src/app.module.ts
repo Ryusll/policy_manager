@@ -23,6 +23,7 @@ import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { RegulationParseModule } from './regulation-parse/regulation-parse.module';
 import { LawGoKrModule } from './lawgokr/lawgokr.module';
 import { LawsModule } from './laws/laws.module';
+import { LawLinksModule } from './law-links/law-links.module';
 import { PlatformBrandingModule } from './platform-branding/platform-branding.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
@@ -49,6 +50,7 @@ import { FavoritesModule } from './favorites/favorites.module';
     RegulationParseModule,
     LawGoKrModule,
     LawsModule,
+    LawLinksModule,
     PlatformBrandingModule,
     NotificationsModule,
     FavoritesModule,

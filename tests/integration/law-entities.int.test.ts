@@ -82,12 +82,19 @@ describe('T-100 법령 엔티티', () => {
       expect(fromB.status).toBe(200);
       expect(fromB.body.length).toBe(articles.body.length);
 
-      // 재등록: 행이 쌓이지 않고 갈아끼워진다. 내용이 같으면 지문도 같다
+      // 재등록: 행이 쌓이지 않고 갱신된다. 내용이 같으면 지문도 같다
       const second = await api('/laws', { method: 'POST', token: a.token, json: { mst } });
       expect(second.status).toBe(200);
       expect(second.body.id).toBe(first.body.id);
       expect(second.body.articleCount).toBe(first.body.articleCount);
       expect(second.body.versionKey).toBe(first.body.versionKey);
+
+      // ★ LawArticle.id 가 재등록 전후로 유지되어야 한다 — T-101 의 LawLink 가 이 id 를
+      // 참조하므로, 재등록마다 id 가 바뀌면 만들어 둔 연결이 전부 끊긴다.
+      const articlesAfter = await api(`/laws/${first.body.id}/articles`, { token: a.token });
+      const idsBefore = articles.body.map((x: any) => x.id).sort();
+      const idsAfter = articlesAfter.body.map((x: any) => x.id).sort();
+      expect(idsAfter).toEqual(idsBefore);
 
       const removed = await api(`/laws/${first.body.id}`, { method: 'DELETE', token: a.token });
       expect(removed.status).toBe(200);

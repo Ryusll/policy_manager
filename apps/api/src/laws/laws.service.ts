@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { buildLawArticleRows } from './law-rows';
@@ -51,9 +51,15 @@ export class LawsService {
   /**
    * 법제처 MST 로 법령을 등록하고 조·항·호를 저장한다(추적 시작).
    *
-   * 이미 등록된 법령이면 본문을 다시 받아 조항을 **통째로 갈아끼운다**. 조문이 삭제된
-   * 개정에서 옛 행이 남으면 변경 감지가 사라진 조문을 계속 살아 있는 것으로 본다.
-   * 지금은 갈아끼우기만 하고 변경 이벤트는 만들지 않는다 — 그건 T-103 의 몫이다.
+   * 이미 등록된 법령이면 본문을 다시 받아 **nodeKey 기준으로 갱신**한다. 조문이 삭제된
+   * 개정에서 옛 행이 남으면 변경 감지가 사라진 조문을 계속 살아 있는 것으로 보므로,
+   * 새 응답에 없는 nodeKey 는 지운다. 지금은 갱신만 하고 변경 이벤트는 만들지 않는다
+   * — 그건 T-103 의 몫이다.
+   *
+   * ⚠️ **`deleteMany` + `createMany` 로 통째로 갈아끼우면 안 된다** — T-100 초판은 그렇게
+   * 했었다. 내용이 하나도 안 바뀐 재등록(예: T-104 주기 폴링)에서도 매번 새 uuid 가
+   * 발급돼, `LawLink`(T-101)가 참조하는 `LawArticle.id` 가 재등록마다 통째로 바뀌고
+   * 만든 연결이 전부 끊긴다. `nodeKey` 로 upsert 해 같은 자리는 id 를 유지한다.
    */
   async register(mst: string, sourceCode?: string) {
     const source = await this.ensureSource(sourceCode);
@@ -103,23 +109,42 @@ export class LawsService {
         },
       });
 
-      await tx.lawArticle.deleteMany({ where: { lawId: law.id } });
-      await tx.lawArticle.createMany({
-        data: rows.map((row) => ({
-          lawId: law.id,
-          nodeKey: row.nodeKey,
-          articleNo: row.articleNo,
-          clauseNo: row.clauseNo,
-          itemNo: row.itemNo,
-          label: row.label,
-          title: row.title,
-          content: row.content,
-          versionKey: row.versionKey,
-          // 법제처는 조문별 시행일을 따로 주기도 하지만 매퍼가 아직 옮기지 않는다.
-          // 법령 시행일을 그대로 쓴다 — T-103 에서 조문별 값이 들어오면 거기서 갈린다.
-          effectiveDate: lawEffectiveDate,
-          sortOrder: row.sortOrder,
-        })),
+      for (const row of rows) {
+        await tx.lawArticle.upsert({
+          where: { lawId_nodeKey: { lawId: law.id, nodeKey: row.nodeKey } },
+          update: {
+            articleNo: row.articleNo,
+            clauseNo: row.clauseNo,
+            itemNo: row.itemNo,
+            label: row.label,
+            title: row.title,
+            content: row.content,
+            versionKey: row.versionKey,
+            // 법제처는 조문별 시행일을 따로 주기도 하지만 매퍼가 아직 옮기지 않는다.
+            // 법령 시행일을 그대로 쓴다 — T-103 에서 조문별 값이 들어오면 거기서 갈린다.
+            effectiveDate: lawEffectiveDate,
+            sortOrder: row.sortOrder,
+          },
+          create: {
+            lawId: law.id,
+            nodeKey: row.nodeKey,
+            articleNo: row.articleNo,
+            clauseNo: row.clauseNo,
+            itemNo: row.itemNo,
+            label: row.label,
+            title: row.title,
+            content: row.content,
+            versionKey: row.versionKey,
+            effectiveDate: lawEffectiveDate,
+            sortOrder: row.sortOrder,
+          },
+        });
+      }
+      // 새 응답에 없는 nodeKey — 조문이 실제로 삭제된 개정. LawLink 가 있었다면 함께
+      // 지워진다(FK onDelete: Cascade) — T-101 은 이 경우를 "연결 끊김"으로 감지하지
+      // 않는다. 재등록 자체가 드물고, 흔한 경로(내용만 바뀐 재등록)는 위 upsert 로 유지된다.
+      await tx.lawArticle.deleteMany({
+        where: { lawId: law.id, nodeKey: { notIn: rows.map((r) => r.nodeKey) } },
       });
 
       return { ...law, articleCount: rows.length, skipped };
@@ -160,12 +185,22 @@ export class LawsService {
   /**
    * 추적 해제.
    *
-   * T-101 의 `LawLink` 가 아직 없으므로 지금은 조항만 함께 지운다. 연결이 생기면
-   * **연결이 남아 있을 때 거부**해야 한다(설계안 6절) — 그 검사는 T-101 에서 추가한다.
-   * 지금 지워도 되는 이유: 이 법령을 가리키는 다른 테이블이 아직 없다.
+   * **법령 관계 정보(`LawLink`, T-101)가 하나라도 걸려 있으면 거부한다**(설계안 6절).
+   * `LawArticle`의 FK 는 `onDelete: Cascade`라 그냥 지우면 링크가 조용히 함께 사라지는데,
+   * 그건 어느 회사가 이 법에 걸어 둔 대응을 통째로 날리는 일이다 — 조용히 벌어지면 안 된다.
+   * 테넌트 무관하게 **하나라도** 있으면 막는다(법령은 공용이므로 다른 테넌트의 연결도 본다).
    */
   async remove(id: string) {
     await this.findOne(id);
+    const linked = await this.prisma.lawLink.findFirst({
+      where: { lawArticle: { lawId: id } },
+      select: { id: true },
+    });
+    if (linked) {
+      throw new ConflictException(
+        '이 법령의 조항에 연결된 법령 관계 정보가 있어 추적을 해제할 수 없습니다. 먼저 연결을 정리하세요.',
+      );
+    }
     await this.prisma.law.delete({ where: { id } });
     return { ok: true };
   }
