@@ -184,10 +184,17 @@ tenantId FK, billingCustomerId FK?(SetNull), provider, providerSubscriptionId, p
 ### BillingPayment (`billing_payments`)
 tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymentId, providerOrderId, amount(int), currency(기본 "KRW"), status(PaymentStatus: succeeded/failed/refunded), paidAt, refundAt, metadata(json). 인덱스: `[tenantId, createdAt]`, `[status, paidAt]`, `[provider, providerPaymentId]`.
 
-## 3. 법령 개정 연계 (설계 — **아직 스키마에 없다**)
+## 3. 법령 개정 연계
 
-특허 명세서를 근거로 한 **설계안**이다. 실제 `schema.prisma` 에는 아직 없다.
-전체 맥락·처리 흐름·API 는 [18_법령개정연계_설계](../18_법령개정연계_설계/법령개정연계_설계안.md)를 본다.
+특허 명세서를 근거로 한 설계다. 전체 맥락·처리 흐름·API 는
+[18_법령개정연계_설계](../18_법령개정연계_설계/법령개정연계_설계안.md)를 본다.
+
+| 테이블 | 상태 |
+|---|---|
+| `LawSource` / `Law` / `LawArticle` | ✅ **스키마에 있다** (T-100, 마이그레이션 `20260925090000_law_entities`) |
+| `LawLink` | 설계만 (T-101) |
+| `LawChangeEvent` / `AmendmentCandidate` | 설계만 (T-103·T-106) |
+| `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
 
 ### 3.1 관계 개요
 
@@ -219,10 +226,11 @@ Variable 1───N VariableUsage      (사용 위치 필드 추가)
 
 ### 3.3 신규 테이블
 
-#### LawSource (`law_sources`) — 법령원
+#### LawSource (`law_sources`) — 법령원 ✅ 구현됨
 id, code(unique, 예 `law.go.kr`), name, baseUrl, isActive.
+등록 시 `law.go.kr` 행을 upsert 로 보장한다(별도 시드 불필요).
 
-#### Law (`laws`) — 법령, 테넌트 공용
+#### Law (`laws`) — 법령, 테넌트 공용 ✅ 구현됨
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | id | uuid PK | |
@@ -231,16 +239,34 @@ id, code(unique, 예 `law.go.kr`), name, baseUrl, isActive.
 | lawName / lawNo | string / string? | 법령명 / 법령번호 |
 | promulgatedDate | date? | 공포일 |
 | effectiveDate | date? | **법령 시행일** (≠ 사내 규정 시행일) |
-| versionKey | string? | 현재 수신본의 지문. 바뀌면 개정 |
+| versionKey | string? | 현재 수신본의 지문. 바뀌면 개정. 조항 지문을 **문서 순서대로** 이어 해시한다 |
 | lastCheckedAt | datetime? | 마지막 폴링 시각 |
 
 `@@unique([sourceId, externalId])`, 인덱스 `[lastCheckedAt]`(폴링 대상 선정).
 
-#### LawArticle (`law_articles`) — 법령조항, 테넌트 공용
-lawId FK, articleNo(조), clauseNo(항, null 허용), itemNo(목, null 허용), title?, content(text), versionKey, effectiveDate?.
-`@@unique([lawId, articleNo, clauseNo, itemNo])`, 인덱스 `[lawId]`.
+#### LawArticle (`law_articles`) — 법령조항, 테넌트 공용 ✅ 구현됨
+lawId FK, **nodeKey**, articleNo(조), clauseNo(항, null 허용), itemNo(호, null 허용),
+label(사람이 읽는 표기), title?, content(text), versionKey, effectiveDate?, sortOrder.
+`@@unique([lawId, nodeKey])`, 인덱스 `[lawId, sortOrder]`.
 
 **청구항의 "법령조항 식별자"가 이 레코드의 `id`** 다.
+
+##### 설계안과 달라진 점 — 식별자를 `nodeKey` 로 (T-100)
+
+설계안은 `@@unique([lawId, articleNo, clauseNo, itemNo])` 였는데 두 가지가 깨진다.
+
+1. **Postgres 는 UNIQUE 에서 NULL 을 서로 다른 값으로 본다.** 조 본문 행은
+   `clauseNo`·`itemNo` 가 둘 다 NULL 이라 **중복이 전혀 막히지 않는다**(같은 조를 두 번
+   넣어 확인). `Favorite` 에서 이미 같은 함정을 만났다 — 위 `favorites` 항목 참고.
+2. **`articleNo Int` 로는 제3조와 제3조의2 를 구분할 수 없다.** 근로기준법 실제 데이터
+   478개 조항 중 **92개가 가지번호**다. 설계 원안대로면 이 92건이 전부 충돌한다.
+
+그래서 식별은 `nodeKey` 문자열 하나로 한다(`3의2/1/2` = 제3조의2 제1항 제2호,
+`5//` = 제5조). 숫자 컬럼 3개는 조회·정렬용으로 남긴다.
+
+`itemNo` 가 설계의 "목"이 아니라 **호**인 것도 같은 맥락이다. 법령은 조>항>호>목 4단인데
+우리 모델은 3단이라, 남는 목(가./나.)은 행을 더 만들지 않고 부모 호 본문에 합친다
+(`commit-rows.ts` 와 같은 판단). 목 본문이 부모 지문에 포함되므로 변경 감지는 걸린다.
 
 #### LawLink (`law_links`) — 법령 관계 정보 ⚠️ 테넌트별
 | 필드 | 타입 | 설명 |
