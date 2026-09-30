@@ -193,13 +193,14 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 |---|---|
 | `LawSource` / `Law` / `LawArticle` | ✅ **스키마에 있다** (T-100, 마이그레이션 `20260925090000_law_entities`) |
 | `LawLink` | ✅ **스키마에 있다** (T-101, 마이그레이션 `20260925142102_law_links`) |
-| `LawChangeEvent` / `AmendmentCandidate` | 설계만 (T-103·T-106) |
+| `LawChangeEvent` | ✅ **스키마에 있다** (T-103, 마이그레이션 `20260930124231_law_change_events`) |
+| `AmendmentCandidate` | 설계만 (T-106) |
 | `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
 
 ### 3.1 관계 개요
 
 ```
-LawSource 1───N Law 1───N LawArticle ───┬─N LawChangeEvent
+LawSource 1───N Law 1───N LawArticle ───┬─N LawChangeEvent   (lawId 도 직접 가진다 — 조문 삭제 시 lawArticleId 는 SetNull)
                                         │
                                         └─N LawLink N───1 Article   (사내 조문)
                                              ▲ tenantId 필수
@@ -287,9 +288,16 @@ label(사람이 읽는 표기), title?, content(text), versionKey, effectiveDate
 **이 테이블이 청구항 3의 "관계 그래프"의 간선이다.** 법령조항 노드에서 출발해 여러 규정의 사내 조문 노드로 퍼진다.
 `Article.relatedLawNote`(자유 텍스트 메모)를 대체하는 것이 아니라 **기계가 따라갈 수 있는 형태를 새로 만드는 것**이다.
 
-#### LawChangeEvent (`law_change_events`) — 변경 이벤트, 테넌트 공용
-lawArticleId FK, beforeContent(text?), afterContent(text), beforeVersionKey?, afterVersionKey, promulgatedDate(공포일), lawEffectiveDate(법령 시행일), receivedVia(enum LawEventChannel: poll/manual/webhook — **수신경로**), detectedAt.
-인덱스 `[lawArticleId, detectedAt]`, `[lawEffectiveDate]`.
+#### LawChangeEvent (`law_change_events`) — 변경 이벤트, 테넌트 공용 ✅ 구현됨 (T-103)
+lawId FK(cascade), lawArticleId FK?(**SetNull**), nodeKey, changeType(enum LawChangeType: created/modified/deleted), beforeContent(text?), afterContent(text?), beforeVersionKey?, afterVersionKey?, promulgatedDate(공포일), lawEffectiveDate(법령 시행일), receivedVia(enum LawEventChannel: poll/manual/webhook — **수신경로**), detectedAt.
+인덱스 `[lawArticleId, detectedAt]`, `[lawId, detectedAt]`, `[lawEffectiveDate]`.
+
+`POST /api/laws` 재등록이 만든다 — 조항별 `versionKey` 를 직전 값과 비교해 신설·변경·삭제만 남긴다(공백만 다르면 지문이 같아 제외).
+**최초 등록은 만들지 않는다** — 비교할 이전 상태가 없는데 그대로 돌리면 조문 수만큼 "신설"이 쌓인다.
+
+설계안 대비 달라진 점:
+- 조문이 삭제되는 개정도 기록하려고 `lawArticleId`·`afterContent`·`afterVersionKey` 를 null 허용으로, FK 를 `SetNull` 로 뒀다. 설계안대로 필수 FK + Cascade 면 "삭제됨" 이벤트가 조문과 함께 지워진다. 그래서 `lawId`·`nodeKey` 를 이벤트에 직접 둔다 — 조문이 지워진 뒤에도 어느 법·어느 조문인지 남는다.
+- `changeType` 추가 — 신설·삭제를 before/after 가 null 인지로 매번 되짚지 않게.
 
 #### AmendmentCandidate (`amendment_candidates`) — 후보 레코드 ⚠️ 테넌트별
 | 필드 | 타입 | 설명 |

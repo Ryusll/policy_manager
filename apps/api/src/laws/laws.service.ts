@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import type { LawEventChannel } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { buildLawArticleRows } from './law-rows';
 import { lawAggregateVersionKey } from './law-version-key';
+import { detectLawArticleChanges, type ExistingLawArticleSnapshot } from './law-change-detect';
 
 /** 법제처 DRF. 지금은 유일한 법령원이다 */
 const DEFAULT_SOURCE = {
@@ -53,15 +55,19 @@ export class LawsService {
    *
    * 이미 등록된 법령이면 본문을 다시 받아 **nodeKey 기준으로 갱신**한다. 조문이 삭제된
    * 개정에서 옛 행이 남으면 변경 감지가 사라진 조문을 계속 살아 있는 것으로 보므로,
-   * 새 응답에 없는 nodeKey 는 지운다. 지금은 갱신만 하고 변경 이벤트는 만들지 않는다
-   * — 그건 T-103 의 몫이다.
+   * 새 응답에 없는 nodeKey 는 지운다. 재등록마다 조항별 versionKey 를 이전 값과 비교해
+   * 달라진 조항만 `LawChangeEvent` 로 남긴다(T-103) — 공백만 다른 재등록은 versionKey
+   * 정규화가 이미 흡수하므로 여기서 다시 걸러낼 필요가 없다.
    *
    * ⚠️ **`deleteMany` + `createMany` 로 통째로 갈아끼우면 안 된다** — T-100 초판은 그렇게
    * 했었다. 내용이 하나도 안 바뀐 재등록(예: T-104 주기 폴링)에서도 매번 새 uuid 가
    * 발급돼, `LawLink`(T-101)가 참조하는 `LawArticle.id` 가 재등록마다 통째로 바뀌고
    * 만든 연결이 전부 끊긴다. `nodeKey` 로 upsert 해 같은 자리는 id 를 유지한다.
+   *
+   * @param receivedVia 변경 이벤트의 수신경로. HTTP 로 오는 지금은 전부 `manual`.
+   *   T-104 가 주기 폴링에서 이 메서드를 그대로 재사용하며 `poll` 을 넘긴다.
    */
-  async register(mst: string, sourceCode?: string) {
+  async register(mst: string, sourceCode?: string, receivedVia: LawEventChannel = 'manual') {
     const source = await this.ensureSource(sourceCode);
     const { meta, tree } = await this.lawGoKr.getLaw(mst);
     const { rows, skipped } = buildLawArticleRows(tree.roots);
@@ -109,8 +115,21 @@ export class LawsService {
         },
       });
 
+      // T-103: 변경 감지의 "이전" 스냅샷 — 아래 upsert 루프가 값을 갈아끼우기 전에 찍는다
+      const existingBefore = await tx.lawArticle.findMany({
+        where: { lawId: law.id },
+        select: { id: true, nodeKey: true, content: true, versionKey: true },
+      });
+      const existingArticles: ExistingLawArticleSnapshot[] = existingBefore.map((a) => ({
+        lawArticleId: a.id,
+        nodeKey: a.nodeKey,
+        content: a.content,
+        versionKey: a.versionKey,
+      }));
+
+      const articleIdByNodeKey = new Map<string, string>();
       for (const row of rows) {
-        await tx.lawArticle.upsert({
+        const saved = await tx.lawArticle.upsert({
           where: { lawId_nodeKey: { lawId: law.id, nodeKey: row.nodeKey } },
           update: {
             articleNo: row.articleNo,
@@ -139,10 +158,37 @@ export class LawsService {
             sortOrder: row.sortOrder,
           },
         });
+        articleIdByNodeKey.set(row.nodeKey, saved.id);
       }
+
+      // T-103: 이전 스냅샷과 이번 응답을 견줘 실제로 달라진 조항만 이벤트로 남긴다
+      // (최초 등록은 비교 대상이 없어 빈 결과 — detectLawArticleChanges 주석 참고).
+      // deleteMany(아래) 보다 반드시 먼저다 — 삭제될 조문의 lawArticleId 가 아직 살아
+      // 있어야 이벤트에 담을 수 있다(그 뒤 deleteMany 가 SetNull 로 FK 만 끊는다).
+      const changes = detectLawArticleChanges(existingArticles, rows, articleIdByNodeKey);
+      if (changes.length) {
+        await tx.lawChangeEvent.createMany({
+          data: changes.map((change) => ({
+            lawId: law.id,
+            lawArticleId: change.lawArticleId,
+            nodeKey: change.nodeKey,
+            changeType: change.type,
+            beforeContent: change.type === 'created' ? null : change.before.content,
+            afterContent: change.type === 'deleted' ? null : change.after.content,
+            beforeVersionKey: change.type === 'created' ? null : change.before.versionKey,
+            afterVersionKey: change.type === 'deleted' ? null : change.after.versionKey,
+            promulgatedDate: toDate(meta.promulgationDate),
+            lawEffectiveDate,
+            receivedVia,
+          })),
+        });
+      }
+
       // 새 응답에 없는 nodeKey — 조문이 실제로 삭제된 개정. LawLink 가 있었다면 함께
       // 지워진다(FK onDelete: Cascade) — T-101 은 이 경우를 "연결 끊김"으로 감지하지
       // 않는다. 재등록 자체가 드물고, 흔한 경로(내용만 바뀐 재등록)는 위 upsert 로 유지된다.
+      // 위에서 만든 deleted LawChangeEvent 의 lawArticleId 는 여기서 SetNull 로 끊긴다 —
+      // 본문은 이미 이벤트에 스냅샷으로 있으므로 잃는 정보가 없다.
       await tx.lawArticle.deleteMany({
         where: { lawId: law.id, nodeKey: { notIn: rows.map((r) => r.nodeKey) } },
       });

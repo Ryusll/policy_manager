@@ -1278,8 +1278,8 @@
       <tbody>
         <tr><td>① 규정 문서 파싱 → 조문 버전 저장</td><td><span class="badge ok">보유</span></td><td><code>regulation-parse</code> + <code>Article</code>/<code>ArticleVersion</code></td></tr>
         <tr><td>② 법령조항 ↔ 사내 조문 연결</td><td><span class="badge ok">보유</span></td><td><code>LawLink</code>(T-101). 관계 유형·근거 문구·확정 상태 + 본문 인용 자동 추천(<code>POST /law-links/suggest</code>). 화면(T-102): 조문 상세 "걸린 법", 법령 상세 "영향받는 우리 조문"</td></tr>
-        <tr><td><b>③ 변경 이벤트 수신</b></td><td><span class="badge bad">없음</span></td><td><code>lawgokr</code>는 요청 시에만 조회하는 프록시. 아무것도 저장하지 않는다</td></tr>
-        <tr><td><b>④ 영향 조문 식별</b></td><td><span class="badge bad">없음</span></td><td>③이 없으면 성립 불가(연결은 T-101로 있다)</td></tr>
+        <tr><td>③ 변경 이벤트 수신</td><td><span class="badge warn">부분</span></td><td><code>LawChangeEvent</code>(T-103). 재등록 때 조항별 <code>versionKey</code>를 직전 값과 비교해 신설·변경·삭제를 저장한다. <b>주기 폴링(T-104)은 아직</b> — 지금은 담당자가 다시 등록할 때만 감지한다</td></tr>
+        <tr><td><b>④ 영향 조문 식별</b></td><td><span class="badge bad">없음</span></td><td>재료(연결 T-101·변경 이벤트 T-103)는 있다. 변경된 법령조항에서 사내 조문으로 가는 역방향 조회(T-105)가 아직</td></tr>
         <tr><td>④ 기준일 유효 발행 버전(제1 조문)</td><td><span class="badge ok">보유</span></td><td>시점 조회(as-of, 07절)</td></tr>
         <tr><td><b>⑤ 개정 후보 본문 + 변경 근거 생성</b></td><td><span class="badge bad">없음</span></td><td>—</td></tr>
         <tr><td>⑤ 변경 전후 비교 정보</td><td><span class="badge ok">보유</span></td><td>대비표(T-56)의 낱말 단위 diff</td></tr>

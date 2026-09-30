@@ -639,8 +639,9 @@ model Law {
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  source   LawSource    @relation(fields: [sourceId], references: [id], onDelete: Restrict)
-  articles LawArticle[]
+  source       LawSource        @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  articles     LawArticle[]
+  changeEvents LawChangeEvent[]
 
   @@unique([sourceId, externalId])
   @@index([lastCheckedAt])
@@ -684,6 +685,10 @@ model LawArticle {
 
   law Law @relation(fields: [lawId], references: [id], onDelete: Cascade)
   links LawLink[]
+  /// onDelete: SetNull — 조문이 삭제되는 개정에서도(register() 의 deleteMany) 그
+  /// "삭제됨" 이벤트 자체는 남아야 한다. 본문은 이벤트에 스냅샷으로 이미 들어 있어
+  /// FK 가 끊겨도 잃는 정보가 없다
+  changeEvents LawChangeEvent[]
 
   @@unique([lawId, nodeKey])
   @@index([lawId, sortOrder])
@@ -750,4 +755,66 @@ enum LawLinkState {
   confirmed
   /// 사용자가 아니라고 판단
   rejected
+}
+
+/// 변경 이벤트 — 청구항 1 ③, 청구항 3. `LawsService.register()` 가 재등록마다
+/// 조항별 versionKey 를 비교해 만든다(T-103).
+///
+/// 설계안(18절)은 `lawArticleId` 하나만 두고 필수로 뒀는데, 실제로 만들면서 둘을 더했다.
+///  1. `lawId` 를 직접 들고 있다 — `lawArticleId` 가 조문 삭제로 null 이 될 수 있어서다
+///     (아래), 그때도 "어느 법인지"는 남아야 "법령·법령조항 식별자" 요건이 유지된다.
+///  2. `nodeKey` 를 복사해 둔다 — 같은 이유로, 삭제된 조문을 사람이 읽을 표기로 남긴다.
+/// `changeType` 은 설계안에 없었지만 대장의 DoD("조항 신설·삭제")가 명시적으로 구분해야
+/// 하는 결과라 필드로 뒀다 — before/after 가 null 인지로 매번 되짚게 하지 않는다.
+model LawChangeEvent {
+  id     String @id @default(uuid())
+  lawId  String @map("law_id")
+  /// 조문이 나중에 삭제되면 SetNull 로 끊긴다. 그래도 이벤트 자체(스냅샷)는 남는다
+  lawArticleId String? @map("law_article_id")
+  /// `LawArticle.nodeKey` 복사본. lawArticleId 가 null 이 된 뒤에도 "어느 조문인지" 표기용
+  nodeKey String @map("node_key")
+
+  changeType LawChangeType @map("change_type")
+  /// 변경 전 본문. 신설(created)이면 null
+  beforeContent String? @map("before_content") @db.Text
+  /// 변경 후 본문. 삭제(deleted)면 null
+  afterContent String? @map("after_content") @db.Text
+  beforeVersionKey String? @map("before_version_key")
+  afterVersionKey  String? @map("after_version_key")
+
+  /// 공포일 — 이 변경을 발생시킨 개정의 공포일(법령 단위 값, 조문별 값은 법제처가 안 줌)
+  promulgatedDate DateTime? @map("promulgated_date") @db.Date
+  /// 법령 시행일. 사내 규정 시행일(ArticleVersion.effectiveDate)과 다르다
+  lawEffectiveDate DateTime? @map("law_effective_date") @db.Date
+  /// 수신경로 — T-104 가 poll 을 쓴다. 지금은 register() 호출부가 전부 manual
+  receivedVia LawEventChannel @map("received_via")
+  detectedAt  DateTime        @default(now()) @map("detected_at")
+
+  law        Law         @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  lawArticle LawArticle? @relation(fields: [lawArticleId], references: [id], onDelete: SetNull)
+
+  /// 조문 상세 이력, 영향 분석(T-105)의 "이 법령조항 최근 변경" 조회
+  @@index([lawArticleId, detectedAt])
+  /// 법령 단위 동기화 이력(T-104)
+  @@index([lawId, detectedAt])
+  @@index([lawEffectiveDate])
+  @@map("law_change_events")
+}
+
+enum LawChangeType {
+  /// 신설 — 이전 등록에 없던 조문
+  created
+  /// 실제 내용 변경 (공백만 다르면 versionKey 가 같아 여기 안 걸린다)
+  modified
+  /// 삭제 — 이번 등록 응답에서 사라진 조문
+  deleted
+}
+
+enum LawEventChannel {
+  /// 주기 조회로 발견 (T-104)
+  poll
+  /// 담당자가 직접 등록(현재 register() 의 유일한 경로)
+  manual
+  /// 외부 통지 — 미사용, 확장 여지
+  webhook
 }
