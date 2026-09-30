@@ -1277,7 +1277,7 @@
       <thead><tr><th>청구항 1의 단계</th><th>상태</th><th>현재</th></tr></thead>
       <tbody>
         <tr><td>① 규정 문서 파싱 → 조문 버전 저장</td><td><span class="badge ok">보유</span></td><td><code>regulation-parse</code> + <code>Article</code>/<code>ArticleVersion</code></td></tr>
-        <tr><td>② 법령조항 ↔ 사내 조문 연결</td><td><span class="badge ok">보유</span></td><td><code>LawLink</code>(T-101). 관계 유형·근거 문구·확정 상태 + 본문 인용 자동 추천(<code>POST /law-links/suggest</code>)</td></tr>
+        <tr><td>② 법령조항 ↔ 사내 조문 연결</td><td><span class="badge ok">보유</span></td><td><code>LawLink</code>(T-101). 관계 유형·근거 문구·확정 상태 + 본문 인용 자동 추천(<code>POST /law-links/suggest</code>). 화면(T-102): 조문 상세 "걸린 법", 법령 상세 "영향받는 우리 조문"</td></tr>
         <tr><td><b>③ 변경 이벤트 수신</b></td><td><span class="badge bad">없음</span></td><td><code>lawgokr</code>는 요청 시에만 조회하는 프록시. 아무것도 저장하지 않는다</td></tr>
         <tr><td><b>④ 영향 조문 식별</b></td><td><span class="badge bad">없음</span></td><td>③이 없으면 성립 불가(연결은 T-101로 있다)</td></tr>
         <tr><td>④ 기준일 유효 발행 버전(제1 조문)</td><td><span class="badge ok">보유</span></td><td>시점 조회(as-of, 07절)</td></tr>

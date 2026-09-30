@@ -88,6 +88,7 @@ import { usersApi } from '../api/users';
 import { toast } from '../stores/toastStore';
 import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
 import { FavoriteButton } from '../components/FavoriteButton';
+import { LawLinksPanel } from '../components/LawLinksPanel';
 import { SpeechControls } from '../components/SpeechControls';
 import { buildPolicySpeech } from '../lib/speech';
 import {
@@ -3396,6 +3397,7 @@ export default function PolicyDetailPage() {
                           </div>
                         </div>
                       )}
+                      {selectedArticle && <LawLinksPanel articleId={selectedArticle.id} canEdit={canEdit} />}
                     </div>
                   </section>
                 )}
@@ -3755,6 +3757,7 @@ export default function PolicyDetailPage() {
                         </div>
                       </div>
                     )}
+                    {selectedArticle && <LawLinksPanel articleId={selectedArticle.id} canEdit={canEdit} />}
                   </div>
                 </div>
               )}

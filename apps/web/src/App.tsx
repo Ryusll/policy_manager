@@ -15,6 +15,8 @@ import AboutPage from './pages/AboutPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import PlatformAdminPage from './pages/PlatformAdminPage';
 import AuditLogPage from './pages/AuditLogPage';
+import LawsPage from './pages/LawsPage';
+import LawDetailPage from './pages/LawDetailPage';
 import ToastHost from './components/ui/ToastHost';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -65,6 +67,8 @@ export default function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="integrations" element={<IntegrationsPage />} />
           <Route path="audit-logs" element={<AuditLogPage />} />
+          <Route path="laws" element={<LawsPage />} />
+          <Route path="laws/:id" element={<LawDetailPage />} />
           <Route path="admin" element={<PlatformAdminPage />} />
           <Route path="platform-admin" element={<PlatformAdminPage />} />
           <Route path="about" element={<AboutPage />} />
