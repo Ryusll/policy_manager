@@ -7,18 +7,22 @@ interface Step {
   titleKey: string;
   descKey: string;
   position: 'right' | 'bottom' | 'left' | 'top';
+  /** 대상 요소 바깥으로 하이라이트를 넓히는 px. 0이면 요소 크기에 딱 맞춘다. */
+  padding: number;
 }
 
+// 네비게이션 탭은 이웃 탭·헤더 윗줄과 바로 맞닿아 있어서, 여백을 주면 옆 요소까지 번져 보인다
 const STEP_DEFS: Step[] = [
-  { targetId: 'nav-dashboard', titleKey: 'tour.step1.title', descKey: 'tour.step1.desc', position: 'right' },
-  { targetId: 'nav-policies', titleKey: 'tour.step2.title', descKey: 'tour.step2.desc', position: 'right' },
-  { targetId: 'nav-search', titleKey: 'tour.step3.title', descKey: 'tour.step3.desc', position: 'right' },
-  { targetId: 'nav-variables', titleKey: 'tour.step4.title', descKey: 'tour.step4.desc', position: 'right' },
+  { targetId: 'nav-dashboard', titleKey: 'tour.step1.title', descKey: 'tour.step1.desc', position: 'right', padding: 0 },
+  { targetId: 'nav-policies', titleKey: 'tour.step2.title', descKey: 'tour.step2.desc', position: 'right', padding: 0 },
+  { targetId: 'nav-search', titleKey: 'tour.step3.title', descKey: 'tour.step3.desc', position: 'right', padding: 0 },
+  { targetId: 'nav-variables', titleKey: 'tour.step4.title', descKey: 'tour.step4.desc', position: 'right', padding: 0 },
   {
     targetId: 'tour-user-info',
     titleKey: 'tour.step5.title',
     descKey: 'tour.step5.desc',
     position: 'bottom',
+    padding: 4,
   },
 ];
 
@@ -50,8 +54,11 @@ export default function OnboardingTour({ onFinish }: Props) {
   };
 
   const current = steps[step];
-  const PADDING = 8;
   const TOOLTIP_W = 300;
+  const padding = current.padding;
+  // 여백이 없으면 대상 요소의 모서리(직각)를 그대로 따라간다
+  const radius = padding > 0 ? 6 : 0;
+  const STROKE = 2;
 
   useLayoutEffect(() => {
     let cancelled = false;
@@ -146,25 +153,26 @@ export default function OnboardingTour({ onFinish }: Props) {
               <mask id={maskId}>
                 <rect width="100%" height="100%" fill="white" />
                 <rect
-                  x={box.left - PADDING}
-                  y={box.top - PADDING}
-                  width={box.width + PADDING * 2}
-                  height={box.height + PADDING * 2}
-                  rx="6"
+                  x={box.left - padding}
+                  y={box.top - padding}
+                  width={box.width + padding * 2}
+                  height={box.height + padding * 2}
+                  rx={radius}
                   fill="black"
                 />
               </mask>
             </defs>
             <rect width="100%" height="100%" fill="rgba(0,0,0,0.55)" mask={`url(#${maskId})`} />
+            {/* SVG 테두리는 선 중앙이 경계라 바깥으로 절반 삐져나온다 — 안쪽으로 당겨서 바깥 가장자리를 구멍과 일치시킨다 */}
             <rect
-              x={box.left - PADDING}
-              y={box.top - PADDING}
-              width={box.width + PADDING * 2}
-              height={box.height + PADDING * 2}
-              rx="6"
+              x={box.left - padding + STROKE / 2}
+              y={box.top - padding + STROKE / 2}
+              width={box.width + padding * 2 - STROKE}
+              height={box.height + padding * 2 - STROKE}
+              rx={Math.max(0, radius - STROKE / 2)}
               fill="none"
               stroke="#d4a574"
-              strokeWidth="2"
+              strokeWidth={STROKE}
             />
           </svg>
         ) : (
