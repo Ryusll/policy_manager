@@ -8,6 +8,7 @@ import UserMenu from './UserMenu';
 import { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import PlanModal from './PlanModal';
+import ProfileModal from './ProfileModal';
 import OnboardingTour, { STORAGE_KEY } from './OnboardingTour';
 import { useI18n } from '../i18n/useI18n';
 import { AppBrandLockup } from './AppBrandLockup';
@@ -42,6 +43,7 @@ export default function Layout() {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [showTour, setShowTour] = useState(false);
 
   const navItems = useMemo(() => {
@@ -74,6 +76,36 @@ export default function Layout() {
     if (!done) {
       setTimeout(() => setShowTour(true), 600);
     }
+  }, []);
+
+  // 관리자가 이름·이메일·역할을 바꿨다면 저장소에 남은 값은 지난 로그인 때의 것이다.
+  // 화면을 열 때 한 번 서버 값으로 맞춘다. 권한 자체는 서버가 요청마다 DB 에서 다시 읽으므로
+  // 이미 최신이고, 여기서 맞추는 것은 화면에 보이는 이름과 메뉴 노출이다.
+  useEffect(() => {
+    let cancelled = false;
+    authApi
+      .me()
+      .then((fresh) => {
+        if (cancelled || !fresh) return;
+        const current = useAuthStore.getState().user;
+        if (!current || current.id !== fresh.id) return;
+        if (
+          current.name === fresh.name &&
+          current.email === fresh.email &&
+          current.role === fresh.role
+        ) {
+          return;
+        }
+        useAuthStore
+          .getState()
+          .setUser({ ...current, name: fresh.name, email: fresh.email, role: fresh.role });
+      })
+      .catch(() => {
+        // 만료·오프라인은 다른 요청이 같은 경로(갱신 → 로그인 화면)로 처리한다
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -127,6 +159,7 @@ export default function Layout() {
             <div className="flex items-center gap-2 sm:gap-3 text-sm flex-shrink-0" id="tour-user-info">
               <NotificationBell />
               <UserMenu
+                onOpenProfile={() => setShowProfileModal(true)}
                 onOpenPlan={() => setShowPlanModal(true)}
                 onOpenTour={() => setShowTour(true)}
                 onLogout={handleLogout}
@@ -242,6 +275,7 @@ export default function Layout() {
 
       {/* 모달들 */}
       {showPlanModal && <PlanModal onClose={() => setShowPlanModal(false)} />}
+      {showProfileModal && <ProfileModal onClose={() => setShowProfileModal(false)} />}
       {showTour && <OnboardingTour onFinish={() => setShowTour(false)} />}
     </div>
   );

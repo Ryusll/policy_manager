@@ -1,5 +1,13 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsEnum, IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class CreateUserDto {
@@ -24,4 +32,45 @@ export class CreateUserDto {
   @ApiProperty({ enum: ['admin', 'editor', 'viewer'] })
   @IsEnum(['admin', 'editor', 'viewer'])
   role: 'admin' | 'editor' | 'viewer';
+}
+
+const trim = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim() : value;
+
+/** 내 정보 수정 — 이름만. 이메일·역할은 관리자 경로(`PATCH /users/:id`)에서만 바꾼다 */
+export class UpdateMyProfileDto {
+  @ApiProperty({ maxLength: 100 })
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name: string;
+}
+
+/**
+ * 관리자의 사용자 정보 수정. 보낸 항목만 바꾼다.
+ *
+ * `@IsOptional` 대신 `@ValidateIf(!== undefined)` 를 쓴 이유: `@IsOptional` 은 `null` 도
+ * "없음"으로 통과시켜, 필수 컬럼인 이름·이메일·역할에 `null` 이 그대로 흘러간다.
+ */
+export class UpdateUserDto {
+  @ApiPropertyOptional({ maxLength: 100 })
+  @ValidateIf((o: UpdateUserDto) => o.name !== undefined)
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name?: string;
+
+  // 로그인·구글 연결이 소문자 이메일로 사용자를 찾는다(CreateUserDto 와 같은 이유)
+  @ApiPropertyOptional()
+  @ValidateIf((o: UpdateUserDto) => o.email !== undefined)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsEmail()
+  email?: string;
+
+  @ApiPropertyOptional({ enum: ['admin', 'editor', 'viewer'] })
+  @ValidateIf((o: UpdateUserDto) => o.role !== undefined)
+  @IsEnum(['admin', 'editor', 'viewer'])
+  role?: 'admin' | 'editor' | 'viewer';
 }

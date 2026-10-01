@@ -41,6 +41,8 @@
 |---|---|---|---|
 | GET | (root) | admin, editor | 테넌트 사용자 목록 |
 | POST | (root) | admin | 팀원 초대(사용자 생성). **플랜 게이트 없음** — 플랜별 사용자 상한(`maxUsersForPlan`: Starter 10 / Pro 50)만 강제한다. 문서에 오래 "Pro+"로 적혀 있었으나 코드와 다르다(결정 대기 D-07) |
+| PATCH | me | 로그인한 모든 역할 | **내 이름 수정**(플랜·역할 무관). 이름 외의 항목(`role`·`email` 등)을 보내면 **400** — 일반 사용자가 이 경로로 역할을 올리지 못하게 DTO 가 막는다 (T-113) |
+| PATCH | :id | admin | **같은 기관 사용자의 이름·이메일·역할 수정.** 보낸 항목만 바뀌고, 값이 그대로면 감사 로그를 남기지 않는다. **플랜 게이트 없음**(이미 있는 구성원을 고치는 일이라 초대와 달리 유료 경계가 아니다). 다른 조직 사용자는 **404**, 같은 조직의 이메일 중복(대소문자 무시)은 **409**, **조직의 마지막 admin 을 내리면 409**(동시 요청에도 — 조직 단위로 직렬화). 역할은 JWT 가 아니라 요청마다 DB 에서 읽으므로 **다음 요청부터 즉시** 적용된다. 비밀번호·`platformRole` 은 이 경로로 못 바꾼다(400). 감사 액션: 이름·이메일 `user.updated`, 역할 `user.role_changed` (T-113) |
 
 ## policies (`/api/policies`)
 | Method | Path | 인증 | 설명 |
@@ -316,6 +318,8 @@
 
 ## users
 **CreateUserDto** — `email`(이메일), `password`(최소 6자), `name`, `role`(admin|editor|viewer)
+**UpdateMyProfileDto** — `name`(문자열, trim, 1~100자)
+**UpdateUserDto** — `name?`(trim, 1~100자), `email?`(이메일, 자동 trim+소문자), `role?`(admin|editor|viewer). 하나도 보내지 않으면 400. `null` 도 400 — `@IsOptional` 은 `null` 을 "없음"으로 통과시켜 필수 컬럼에 `null` 이 흘러가므로 `@ValidateIf(!== undefined)` 를 썼다
 
 ## policies
 **CreatePolicyDto** — `code`, `title`, `description?`, `department?`(≤100), `category?`(≤100), `templateId?`

@@ -33,6 +33,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'template.restore': '템플릿 이력 복원',
   'branding.update': '회사 브랜딩 변경',
   'user.invited': '사용자 초대',
+  'user.updated': '사용자 정보 수정',
+  'user.role_changed': '사용자 역할 변경',
   'admin.import_policies': '규정 일괄 가져오기',
   'revision.notify_sent': '개정 알림 발송',
   'tenant.plan_changed': '요금제 변경',

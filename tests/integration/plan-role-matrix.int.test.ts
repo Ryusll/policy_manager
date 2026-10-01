@@ -143,6 +143,23 @@ describe('플랜 × 권한 조합 (T-59)', () => {
   );
 
   matrix(
+    '사용자 정보 수정 — 플랜 무관, admin 전용',
+    (token, plan) =>
+      api(`/users/${tenantOf[plan].user.id}`, {
+        method: 'PATCH',
+        token,
+        json: { name: '조합점검' },
+      }),
+    { starter: adminOnly(200), pro: adminOnly(200), enterprise: adminOnly(200) },
+  );
+
+  matrix(
+    '내 정보(이름) 수정 — 플랜·역할 무관, 로그인한 사람은 모두',
+    (token) => api('/users/me', { method: 'PATCH', token, json: { name: '조합점검' } }),
+    { starter: all(200), pro: all(200), enterprise: all(200) },
+  );
+
+  matrix(
     '규정 생성 — 플랜 무관, viewer 만 차단',
     (token, plan) =>
       api('/policies', {

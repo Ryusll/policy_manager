@@ -32,6 +32,7 @@ import { buildTemplateTokenData } from '../components/policy-template/templateTo
 import { buildFullViewGroups } from '../lib/fullViewGroups';
 import PlanModal from '../components/PlanModal';
 import { FavoritesPanel } from '../components/FavoritesPanel';
+import MembersPanel from '../components/MembersPanel';
 
 const PRESET_IDS: ThemePresetId[] = ['forest', 'ocean', 'slate', 'wine'];
 
@@ -75,7 +76,7 @@ export default function SettingsPage() {
   const canManageTemplatesByPlan = canManagePolicyTemplates(user?.plan);
   const advancedTemplateEnabled = canUseAdvancedTemplateEditor(user?.plan);
   const canManageTeam = isAdmin && inviteEnabledByPlan;
-  const [activeTab, setActiveTab] = useState<'ui' | 'favorites' | 'team' | 'templates'>('ui');
+  const [activeTab, setActiveTab] = useState<'ui' | 'favorites' | 'team' | 'members' | 'templates'>('ui');
   const [invite, setInvite] = useState({ email: '', password: '', name: '', role: 'editor' as 'admin' | 'editor' | 'viewer' });
   const [inviteMsg, setInviteMsg] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -591,6 +592,8 @@ export default function SettingsPage() {
     { id: 'ui' as const, label: t('settings.tabUi') },
     { id: 'favorites' as const, label: '즐겨찾기' },
     { id: 'team' as const, label: t('settings.tabInvite'), disabled: !canManageTeam },
+    // 초대와 달리 플랜과 무관하다 — 이미 있는 구성원의 정보를 고치는 일이라 유료 경계를 만들지 않는다
+    { id: 'members' as const, label: t('settings.tabMembers'), disabled: !isAdmin },
     { id: 'templates' as const, label: t('settings.tabTemplates'), disabled: !isAdmin || !canManageTemplatesByPlan },
   ];
 
@@ -1131,6 +1134,22 @@ export default function SettingsPage() {
               {groupMsg && <p className="text-xs text-navy-700">{groupMsg}</p>}
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'members' && isAdmin && (
+        <div className="card p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800">{t('members.title')}</h2>
+            <p className="text-xs text-gray-500 mt-1">{t('members.hint')}</p>
+          </div>
+          <MembersPanel />
+        </div>
+      )}
+
+      {activeTab === 'members' && !isAdmin && (
+        <div className="bg-amber-50 border border-amber-200 rounded p-4 text-sm text-amber-800">
+          {t('members.adminOnly')}
         </div>
       )}
 
