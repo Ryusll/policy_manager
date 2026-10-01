@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { authApi } from '../api/auth';
@@ -23,15 +23,6 @@ export default function LoginPage() {
     return specific && specific !== key ? specific : t('login.oauthError');
   });
   const [loading, setLoading] = useState(false);
-
-  const roleLabel = useMemo(
-    () => ({
-      admin: t('role.admin'),
-      editor: t('role.editor'),
-      viewer: t('role.viewer'),
-    }),
-    [t, locale],
-  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,30 +196,6 @@ export default function LoginPage() {
               <Link to="/register" className="text-navy-700 font-medium hover:underline">
                 {t('login.registerLink')}
               </Link>
-            </div>
-
-            <div className="px-5 pb-5">
-              <div className="bg-gray-50 border border-gray-200 rounded p-3 text-xs text-gray-500">
-                <div className="font-medium mb-1.5 text-gray-600">{t('login.testHeading')}</div>
-                <table className="w-full">
-                  <tbody>
-                    <tr>
-                      <td className="py-0.5 pr-2 text-gray-500">{roleLabel.admin}</td>
-                      <td>admin@demo.com / password123</td>
-                    </tr>
-                    <tr>
-                      <td className="py-0.5 pr-2 text-gray-500">{roleLabel.editor}</td>
-                      <td>editor@demo.com / password123</td>
-                    </tr>
-                    <tr>
-                      <td className="py-0.5 pr-2 text-gray-500">{roleLabel.viewer}</td>
-                      <td>viewer@demo.com / password123</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p className="mt-2 text-[11px] text-gray-500">{t('login.testTenantNote')}</p>
-                <p className="mt-1 text-[11px] text-gray-400">{t('login.seedHint')}</p>
-              </div>
             </div>
           </div>
         </div>

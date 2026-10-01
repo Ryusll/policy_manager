@@ -55,14 +55,10 @@ export const messages: Record<Locale, Msg> = {
     'login.invalidCredentials':
       '이메일·비밀번호·기관 코드를 확인하세요. DB가 비어 있으면 API에서 시드(seed)를 실행해야 합니다.',
     'login.googleOnly': '이 계정은 Google 로그인만 사용할 수 있습니다.',
-    'login.seedHint':
-      '로그인이 안 되면 터미널에서: docker compose exec api npx prisma db seed',
-    'login.testTenantNote': '위 테스트 계정은 기관 코드가 demo 일 때만 동작합니다.',
     'login.tenantHint':
       '같은 기관 코드로 로그인한 사용자는 규정·검색 결과가 공유됩니다. 데모(demo)는 모두 같은 샌드박스입니다. 별도 공간이 필요하면 회원가입으로 새 기관을 만드세요.',
     'login.noAccount': '아직 계정이 없으신가요?',
     'login.registerLink': '회원가입',
-    'login.testHeading': '테스트 계정',
     'login.google': 'Google로 계속하기',
     'login.googleHint': '위에서 선택한 기관 코드로 Google 계정을 연결합니다.',
     'login.dividerOr': '또는',
@@ -418,14 +414,10 @@ export const messages: Record<Locale, Msg> = {
     'login.invalidCredentials':
       'Check email, password, and organization code. If the database is empty, run the API seed.',
     'login.googleOnly': 'This account can only sign in with Google.',
-    'login.seedHint':
-      'If sign-in fails, run: docker compose exec api npx prisma db seed',
-    'login.testTenantNote': 'Demo accounts only work when organization code is demo.',
     'login.tenantHint':
       'Users with the same organization code share policies and search results. The demo tenant is a shared sandbox. Create a new organization via sign-up for a private space.',
     'login.noAccount': 'No account yet?',
     'login.registerLink': 'Sign up',
-    'login.testHeading': 'Demo accounts',
     'login.google': 'Continue with Google',
     'login.googleHint': 'Links your Google account to the organization code above.',
     'login.dividerOr': 'or',
