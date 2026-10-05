@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { useI18n } from '../i18n/useI18n';
@@ -20,6 +21,11 @@ export default function ProfileModal({ onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pw, setPw] = useState({ current: '', next: '', confirm: '' });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState('');
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -28,11 +34,11 @@ export default function ProfileModal({ onClose }: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !saving) onClose();
+      if (e.key === 'Escape' && !saving && !pwSaving) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, saving]);
+  }, [onClose, saving, pwSaving]);
 
   if (!user) return null;
 
@@ -59,6 +65,27 @@ export default function ProfileModal({ onClose }: Props) {
     }
   };
 
+  const pwMismatch = pw.confirm.length > 0 && pw.next !== pw.confirm;
+  const pwReady = pw.current.length > 0 && pw.next.length >= 8 && pw.next === pw.confirm;
+
+  const submitPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (pwSaving || !pwReady) return;
+    setPwSaving(true);
+    setPwError('');
+    try {
+      await usersApi.changePassword({ currentPassword: pw.current, newPassword: pw.next });
+      // 서버가 모든 세션의 갱신을 끊었다 — 이 화면도 다시 로그인하게 한다
+      useAuthStore.getState().logout();
+      toast(t('password.done'), 'success');
+      navigate('/login');
+    } catch (err) {
+      setPwError(apiErrorMessage(err, t('password.error')));
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
   const roleLabel: Record<string, string> = {
     admin: t('role.admin'),
     editor: t('role.editor'),
@@ -72,13 +99,13 @@ export default function ProfileModal({ onClose }: Props) {
         if (e.target === e.currentTarget && !saving) onClose();
       }}
     >
-      <form
+      <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="profile-modal-title"
-        onSubmit={submit}
-        className="bg-white w-full max-w-md border border-gray-300 shadow-2xl"
+        className="w-full max-w-md max-h-full overflow-y-auto shadow-2xl"
       >
+      <form onSubmit={submit} className="bg-white border border-gray-300">
         <div className="bg-navy-900 text-white px-5 py-3 flex items-center justify-between">
           <h2 id="profile-modal-title" className="text-sm font-medium">
             {t('profile.title')}
@@ -143,6 +170,54 @@ export default function ProfileModal({ onClose }: Props) {
           </div>
         </div>
       </form>
+      <div className="bg-white border border-t-0 border-gray-300 px-5 pb-5">
+        <button
+          type="button"
+          className="text-xs text-navy-700 underline"
+          aria-expanded={pwOpen}
+          onClick={() => setPwOpen((o) => !o)}
+        >
+          {t('password.section')}
+        </button>
+        {pwOpen && (
+          <form onSubmit={submitPassword} className="mt-3 space-y-3">
+            {(
+              [
+                ['current', 'password.current', 'current-password'],
+                ['next', 'password.new', 'new-password'],
+                ['confirm', 'password.confirm', 'new-password'],
+              ] as const
+            ).map(([key, label, autoComplete]) => (
+              <div key={key}>
+                <label htmlFor={`pw-${key}`} className="block text-xs text-gray-600 mb-1">
+                  {t(label)}
+                </label>
+                <input
+                  id={`pw-${key}`}
+                  type="password"
+                  className="input"
+                  autoComplete={autoComplete}
+                  value={pw[key]}
+                  onChange={(e) => setPw({ ...pw, [key]: e.target.value })}
+                />
+              </div>
+            ))}
+            <p className="text-[11px] text-gray-400">{t('password.hint')}</p>
+            {pwMismatch && <p className="text-xs text-red-700">{t('password.mismatch')}</p>}
+            {pwError && (
+              <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+                {pwError}
+              </p>
+            )}
+            <div className="flex justify-end">
+              <button type="submit" className="btn-primary text-sm" disabled={pwSaving || !pwReady}>
+                {pwSaving ? t('password.submitting') : t('password.submit')}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+      </div>
     </div>
   );
 }

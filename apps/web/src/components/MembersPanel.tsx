@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil } from 'lucide-react';
+import { KeyRound, Pencil } from 'lucide-react';
 import { clsx } from 'clsx';
 import { usersApi, type TenantUser, type UpdateUserPayload } from '../api/users';
 import { useAuthStore } from '../stores/authStore';
@@ -27,6 +27,10 @@ export default function MembersPanel() {
   const [draft, setDraft] = useState({ name: '', email: '', role: 'viewer' as Role });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [resetId, setResetId] = useState<string | null>(null);
+  const [resetPw, setResetPw] = useState('');
+  const [resetSaving, setResetSaving] = useState(false);
+  const [resetError, setResetError] = useState('');
 
   const roleLabel: Record<string, string> = {
     admin: t('role.admin'),
@@ -38,9 +42,33 @@ export default function MembersPanel() {
   const adminCount = useMemo(() => (users ?? []).filter((u) => u.role === 'admin').length, [users]);
 
   const startEdit = (u: TenantUser) => {
+    setResetId(null);
     setEditingId(u.id);
     setDraft({ name: u.name, email: u.email, role: u.role as Role });
     setError('');
+  };
+
+  const startReset = (u: TenantUser) => {
+    setEditingId(null);
+    setResetId(u.id);
+    setResetPw('');
+    setResetError('');
+  };
+
+  const submitReset = async (u: TenantUser) => {
+    if (resetSaving || resetPw.length < 8) return;
+    setResetSaving(true);
+    setResetError('');
+    try {
+      await usersApi.resetPassword(u.id, resetPw);
+      toast(t('members.resetDone'), 'success');
+      setResetId(null);
+      setResetPw('');
+    } catch (err) {
+      setResetError(apiErrorMessage(err, t('members.resetError')));
+    } finally {
+      setResetSaving(false);
+    }
   };
 
   const cancel = () => {
@@ -100,7 +128,8 @@ export default function MembersPanel() {
 
         if (!editing) {
           return (
-            <li key={u.id} className="p-3 flex items-center gap-3">
+            <li key={u.id} className="p-3">
+              <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-navy-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
                 {u.name.charAt(0) || '?'}
               </div>
@@ -133,6 +162,58 @@ export default function MembersPanel() {
                 <Pencil size={12} />
                 {t('members.edit')}
               </button>
+              {!isMe && (
+                <button
+                  type="button"
+                  className="shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                  disabled={editingId !== null}
+                  aria-label={`${t('members.resetPassword')}: ${u.name}`}
+                  onClick={() => startReset(u)}
+                >
+                  <KeyRound size={12} />
+                  {t('members.resetPassword')}
+                </button>
+              )}
+              </div>
+              {resetId === u.id && (
+                <form
+                  className="mt-3 ml-11 space-y-2"
+                  onSubmit={(e: FormEvent) => {
+                    e.preventDefault();
+                    void submitReset(u);
+                  }}
+                >
+                  <p className="text-[11px] text-gray-500">{t('members.resetHint')}</p>
+                  <input
+                    type="password"
+                    className="input"
+                    autoFocus
+                    autoComplete="new-password"
+                    aria-label={t('members.resetNew')}
+                    placeholder={t('members.resetNew')}
+                    value={resetPw}
+                    onChange={(e) => setResetPw(e.target.value)}
+                  />
+                  {resetError && (
+                    <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+                      {resetError}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button type="submit" className="btn-primary text-xs py-1.5" disabled={resetSaving || resetPw.length < 8}>
+                      {resetSaving ? t('members.saving') : t('members.save')}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs py-1.5"
+                      disabled={resetSaving}
+                      onClick={() => setResetId(null)}
+                    >
+                      {t('members.cancel')}
+                    </button>
+                  </div>
+                </form>
+              )}
             </li>
           );
         }

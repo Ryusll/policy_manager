@@ -9,7 +9,14 @@ import { Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { CreateUserDto, UpdateMyProfileDto, UpdateUserDto } from './users.dto';
+import {
+  ChangePasswordDto,
+  CreateUserDto,
+  ResetPasswordDto,
+  UpdateMyProfileDto,
+  UpdateUserDto,
+} from './users.dto';
+import { passwordProblem } from './password-policy';
 import { maxUsersForPlan } from '../common/plan-limits';
 import { diffUserUpdate, hasChanges, removesLastAdmin, UserUpdateInput } from './user-update';
 
@@ -82,6 +89,68 @@ export class UsersService {
       throw new BadRequestException('변경할 항목이 없습니다.');
     }
     return this.applyUpdate(tenantId, actorUserId, targetId, dto);
+  }
+
+  /**
+   * 내 비밀번호 변경 — 현재 비밀번호를 알아야 한다. 토큰만 훔친 사람이 비밀번호를 바꿔
+   * 계정을 가로채지 못하게 하려는 것이다. 틀리면 401 이 아니라 400 이다: 401 은 화면의
+   * 토큰 갱신·로그아웃 경로를 타서 "비밀번호를 잘못 쳤을 뿐인데 로그아웃"이 된다.
+   */
+  async changeMyPassword(tenantId: string, userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findFirst({ where: { id: userId, tenantId } });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    if (!user.passwordHash) {
+      throw new BadRequestException(
+        'Google 로그인 계정은 비밀번호가 없습니다. 조직 관리자에게 비밀번호 설정을 요청하세요.',
+      );
+    }
+    if (!(await bcrypt.compare(dto.currentPassword, user.passwordHash))) {
+      throw new BadRequestException('현재 비밀번호가 맞지 않습니다.');
+    }
+    const problem = passwordProblem(dto.newPassword, dto.currentPassword);
+    if (problem) throw new BadRequestException(problem);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      // refreshToken 을 비워 다른 기기의 세션이 갱신되지 못하게 한다(접근 토큰 만료 후 로그인 화면)
+      data: { passwordHash: await bcrypt.hash(dto.newPassword, 10), refreshToken: null },
+    });
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'user.password_changed',
+      entityType: 'user',
+      entityId: userId,
+    });
+    return { success: true };
+  }
+
+  /**
+   * 관리자의 비밀번호 재설정 — 이 앱에는 이메일 발송이 없어 "찾기" 링크를 만들 수 없다.
+   * 관리자가 임시 비밀번호를 정해 전달하고, 받은 사람이 "비밀번호 변경"으로 바꾼다.
+   * **본인은 안 된다**: 현재 비밀번호 확인을 건너뛰는 경로가 되기 때문이다.
+   */
+  async resetPassword(tenantId: string, actorUserId: string, targetId: string, dto: ResetPasswordDto) {
+    if (actorUserId === targetId) {
+      throw new BadRequestException('본인 비밀번호는 "내 정보 > 비밀번호 변경"에서 바꾸세요.');
+    }
+    const target = await this.prisma.user.findFirst({ where: { id: targetId, tenantId } });
+    if (!target) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    const problem = passwordProblem(dto.newPassword);
+    if (problem) throw new BadRequestException(problem);
+
+    await this.prisma.user.update({
+      where: { id: targetId },
+      data: { passwordHash: await bcrypt.hash(dto.newPassword, 10), refreshToken: null },
+    });
+    await this.audit.log({
+      tenantId,
+      userId: actorUserId,
+      action: 'user.password_reset',
+      entityType: 'user',
+      entityId: targetId,
+    });
+    return { success: true };
   }
 
   private async applyUpdate(

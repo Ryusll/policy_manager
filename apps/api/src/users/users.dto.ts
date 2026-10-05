@@ -74,3 +74,21 @@ export class UpdateUserDto {
   @IsEnum(['admin', 'editor', 'viewer'])
   role?: 'admin' | 'editor' | 'viewer';
 }
+
+export class ChangePasswordDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  currentPassword: string;
+
+  // 길이·바이트 한도·"현재와 같음"은 passwordProblem 이 문구까지 만들어 준다
+  @ApiProperty({ minLength: 8 })
+  @IsString()
+  newPassword: string;
+}
+
+export class ResetPasswordDto {
+  @ApiProperty({ minLength: 8 })
+  @IsString()
+  newPassword: string;
+}
