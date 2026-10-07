@@ -561,6 +561,12 @@ export default function PoliciesPage() {
         <div className="card overflow-hidden">
           <div className="section-card__head">{t('policies.createTitle')}</div>
           <div className="p-5">
+            <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border border-navy-200 bg-navy-50/60 px-3 py-2 text-xs text-navy-900">
+              <p className="flex-1 leading-relaxed">{t('policies.importPdfHint')}</p>
+              <Link to="/policies/import" className="btn-secondary text-xs py-1.5 shrink-0 inline-flex items-center gap-1">
+                <FileUp size={13} /> {t('policies.importPdfCta')}
+              </Link>
+            </div>
             <div className="mb-3 inline-flex rounded border border-gray-300 overflow-hidden text-xs">
               <button
                 type="button"

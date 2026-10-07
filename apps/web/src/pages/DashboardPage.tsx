@@ -3,7 +3,7 @@ import { recentlyRevised, upcomingEffective } from '../lib/policyRevisionFeed';
 import { Link, useNavigate } from 'react-router-dom';
 import { policiesApi } from '../api/policies';
 import { useAuthStore } from '../stores/authStore';
-import { FileText, Search, Plus, ArrowRight } from 'lucide-react';
+import { FileText, FileUp, Search, Plus, ArrowRight } from 'lucide-react';
 import { useMemo } from 'react';
 import { useI18n } from '../i18n/useI18n';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -173,9 +173,16 @@ export default function DashboardPage() {
             description={t('policies.subtitle', { n: 0 })}
             action={
               canCreate ? (
-                <Link to="/policies" className="btn-primary text-sm">
-                  <Plus size={14} /> {t('dashboard.addPolicy')}
-                </Link>
+                // 이미 쓰고 있는 규정을 옮겨 오는 경우가 대부분이라 PDF 가져오기를 앞에 둔다.
+                // 손으로 옮겨 적으면 조·항을 하나씩 넣어야 한다(대표 피드백, 2026-10-07).
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Link to="/policies/import" className="btn-primary text-sm">
+                    <FileUp size={14} /> {t('dashboard.importPdf')}
+                  </Link>
+                  <Link to="/policies" className="btn-secondary text-sm">
+                    <Plus size={14} /> {t('dashboard.addPolicy')}
+                  </Link>
+                </div>
               ) : undefined
             }
           />

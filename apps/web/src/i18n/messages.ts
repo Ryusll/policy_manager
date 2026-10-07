@@ -120,6 +120,10 @@ export const messages: Record<Locale, Msg> = {
     'dashboard.inactive': '비활성',
     'dashboard.empty': '등록된 규정이 없습니다.',
     'dashboard.addPolicy': '규정 등록하기',
+    'dashboard.importPdf': 'PDF 파일로 가져오기',
+    'policies.importPdfHint':
+      '기존 규정 PDF가 있으면 "PDF로 가져오기"가 빠릅니다. 조·항·호를 자동으로 나눠 미리 보여 주고, 등록하면 바로 시행 상태가 됩니다.',
+    'policies.importPdfCta': 'PDF로 가져오기',
 
     'policies.title': '규정 목록',
     'policies.subtitle': '총 {n}건의 규정이 등록되어 있습니다.',
@@ -529,6 +533,10 @@ export const messages: Record<Locale, Msg> = {
     'dashboard.inactive': 'Inactive',
     'dashboard.empty': 'No policies yet.',
     'dashboard.addPolicy': 'Add a policy',
+    'dashboard.importPdf': 'Import from PDF',
+    'policies.importPdfHint':
+      'Have the policy as a PDF? "Import from PDF" splits articles and paragraphs for you, shows a preview, and publishes on import.',
+    'policies.importPdfCta': 'Import from PDF',
 
     'policies.title': 'Policies',
     'policies.subtitle': '{n} policies registered.',
