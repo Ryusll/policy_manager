@@ -69,7 +69,11 @@ export default function PolicyImportPage() {
   useEffect(() => {
     if (!session) return;
     if (!form.title && session.fileName) {
-      setForm((f) => ({ ...f, title: session.fileName.replace(/\.pdf$/i, '').trim() }));
+      // 문서 첫머리의 제목("취업규칙")이 있으면 그걸 쓴다. 파일 이름은 "scan_0412.pdf" 같은 경우가 많다.
+      const first = session.parseTree?.roots?.[0];
+      const heading = first?.articleNumber === 'PREAMBLE' ? (first.content || '').split('\n')[0].trim() : '';
+      const title = heading && heading.length <= 40 ? heading : session.fileName.replace(/\.pdf$/i, '').trim();
+      setForm((f) => ({ ...f, title }));
     }
   }, [session, form.title]);
 
@@ -118,6 +122,12 @@ export default function PolicyImportPage() {
   });
 
   const flat = useMemo(() => flattenParseTree(roots), [roots]);
+  // 조문이 되는 노드만 센다. 머리말·장·절과 부칙·별표는 조문이 아니다.
+  const articleCount = useMemo(
+    () => flat.filter((n) => !/^(PREAMBLE|SUPP|ANNEX|FORM|(?:SS|CH|S|P)\d)/.test(n.articleNumber)).length,
+    [flat],
+  );
+  const appendixCount = useMemo(() => flat.filter((n) => /^(SUPP|ANNEX|FORM)$/.test(n.articleNumber)).length, [flat]);
   // 법제처 세션이면 서지사항이 extractMeta 에 실려 온다(출처를 되짚을 때 필요하다)
   const lawMeta: LawGoKrSessionMeta | null =
     session?.extractMeta?.source === 'lawgokr' ? (session.extractMeta as LawGoKrSessionMeta) : null;
@@ -125,7 +135,7 @@ export default function PolicyImportPage() {
   const status = session?.status ?? 'pending';
   const isBusy = status === 'pending' || status === 'processing';
   const canCommit =
-    !!form.code.trim() && !!form.title.trim() && flat.length > 0 && status === 'ready';
+    !!form.code.trim() && !!form.title.trim() && articleCount > 0 && status === 'ready';
 
   const pickFile = (file: File) => {
     setUploadError('');
@@ -293,7 +303,8 @@ export default function PolicyImportPage() {
                   상태: {status}
                   {session?.extractMeta?.engine ? ` · 추출 엔진: ${session.extractMeta.engine}` : ''}
                   {lawMeta ? ' · 출처: 법제처' : ''}
-                  {` · 조항 ${flat.length}건`}
+                  {` · 조항 ${articleCount}건`}
+                  {appendixCount > 0 ? ` · 부칙·별표 ${appendixCount}건` : ''}
                 </p>
                 {lawMeta && (
                   <p className="text-[11px] text-gray-500 mt-0.5 tabular-nums">
@@ -416,7 +427,7 @@ export default function PolicyImportPage() {
                 onClick={() => commitMutation.mutate()}
               >
                 <Check size={15} />
-                {commitMutation.isPending ? '등록 중…' : `조항 ${flat.length}건으로 규정 만들기`}
+                {commitMutation.isPending ? '등록 중…' : `조항 ${articleCount}건으로 규정 만들기`}
               </button>
               {!canCommit && status === 'ready' && (
                 <span className="text-[11px] text-gray-500">코드와 제목을 입력하세요.</span>
@@ -447,6 +458,31 @@ export default function PolicyImportPage() {
     </div>
   );
 }
+
+/** 파서 내부 코드(L3-2, C1, CH1 …)를 원문 표기로 바꾼다. 화면에 코드가 그대로 보이면 무엇인지 알 수 없다. */
+function parseNodeLabel(norm: string): string {
+  const s = (norm || '').trim();
+  const fixed: Record<string, string> = { PREAMBLE: '머리말', SUPP: '부칙', ANNEX: '별표', FORM: '서식' };
+  if (fixed[s]) return fixed[s];
+  let m = /^L(\d+)(?:-(\d+))?$/.exec(s);
+  if (m) return m[2] ? `제${m[1]}조의${m[2]}` : `제${m[1]}조`;
+  m = /^(SS|CH|S|P)(\d+)(?:-(\d+))?$/.exec(s);
+  if (m) {
+    const unit = { P: '편', CH: '장', S: '절', SS: '관' }[m[1] as 'P' | 'CH' | 'S' | 'SS'];
+    return m[3] ? `제${m[2]}${unit}의${m[3]}` : `제${m[2]}${unit}`;
+  }
+  m = /^C(\d+)$/.exec(s);
+  if (m) return Number(m[1]) <= 20 ? String.fromCharCode(0x2460 + Number(m[1]) - 1) : `제${m[1]}항`;
+  if (/^\d+(?:\.\d+)*$/.test(s)) return `${s}.`;
+  m = /^H([가-힣])$/.exec(s);
+  if (m) return `${m[1]}.`;
+  m = /^(?:Hp([가-힣])|PN(\d+))$/.exec(s);
+  if (m) return `(${m[1] ?? m[2]})`;
+  return s;
+}
+
+/** 항·호·목의 제목 칸에는 번호 표기만 온다. 번호를 두 번 보여 주지 않는다. */
+const ITEM_LABEL_RE = /^(?:제\s*\d+(?:\s*의\s*\d+)?\s*[항호목]|[\u2460-\u2473]|\d+(?:\.\d+)*[.)．]?|[가-힣][.)．:：]?|\(\d+\)|\([가-힣]\))$/;
 
 function ParseNodeRow({
   node,
@@ -496,16 +532,25 @@ function ParseNodeRow({
             </div>
           ) : (
             <button type="button" className="text-left w-full" onClick={onEdit}>
-              <span className="text-xs font-semibold text-navy-800">{node.articleNumber}</span>
-              {node.articleTitle ? (
-                <span className="text-xs text-gray-900 ml-1.5">{node.articleTitle}</span>
-              ) : null}
+              {/^(SUPP|ANNEX|FORM)$/.test(node.articleNumber) ? (
+                // 부칙·별표는 제목에 이미 "부칙 <2024. 1. 1.>"처럼 종류가 들어 있다
+                <span className="text-xs font-semibold text-navy-800">
+                  {node.articleTitle || parseNodeLabel(node.articleNumber)}
+                </span>
+              ) : (
+                <>
+                  <span className="text-xs font-semibold text-navy-800">{parseNodeLabel(node.articleNumber)}</span>
+                  {node.articleTitle && !ITEM_LABEL_RE.test(node.articleTitle.trim()) && node.articleTitle !== '머리말' ? (
+                    <span className="text-xs text-gray-900 ml-1.5">{node.articleTitle}</span>
+                  ) : null}
+                </>
+              )}
               {node.pageNumber ? (
                 <span className="text-[10px] text-gray-400 ml-1.5">p.{node.pageNumber}</span>
               ) : null}
               {node.content ? (
                 <p className="text-[11px] text-gray-600 mt-1 line-clamp-2 whitespace-pre-wrap">{node.content}</p>
-              ) : (
+              ) : node.children?.length ? null : (
                 <p className="text-[11px] text-gray-400 mt-1">(본문 없음)</p>
               )}
             </button>

@@ -266,7 +266,7 @@ export class RegulationParseService {
       {
         code: dto.code.trim(),
         title: dto.title.trim(),
-        description: dto.description?.trim(),
+        description: dto.description?.trim() || preambleAsDescription(plan.preamble, dto.title),
       },
       userId,
     );
@@ -321,6 +321,16 @@ export class RegulationParseService {
       });
     }
 
+    // 부칙·별표·서식은 조문이 아니라 규정의 부칙·별표 탭으로 보낸다
+    for (const [sortOrder, appendix] of plan.appendices.entries()) {
+      await this.policiesService.createAppendix(tenantId, policy.id, {
+        kind: appendix.kind,
+        title: appendix.title.slice(0, 200),
+        body: appendix.body,
+        sortOrder,
+      });
+    }
+
     await this.prisma.regulationParseSession.update({
       where: { id },
       data: {
@@ -331,4 +341,22 @@ export class RegulationParseService {
 
     return { policyId: policy.id, sessionId: id, articleCount: plan.rows.length };
   }
+}
+
+/**
+ * 첫 조 앞의 글을 규정 설명으로 쓴다. 문서 제목만 있는 흔한 경우(규정명과 같다)는 버린다 —
+ * 설명 칸에 규정명이 한 번 더 들어가 봐야 쓸모가 없다.
+ */
+function preambleAsDescription(preamble: string, title: string): string | undefined {
+  const squash = (s: string) => s.replace(/\s+/g, '');
+  const seen = new Set([squash(title)]);
+  const lines = preamble
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => {
+      if (!l || seen.has(squash(l))) return false;
+      seen.add(squash(l));
+      return true;
+    });
+  return lines.length ? lines.join('\n').slice(0, 2000) : undefined;
 }

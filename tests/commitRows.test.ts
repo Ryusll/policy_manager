@@ -124,7 +124,7 @@ describe('buildCommitRows — PDF 경로', () => {
   });
 
   it('빈 트리는 빈 계획', () => {
-    expect(buildCommitPlan([])).toEqual({ chapters: [], rows: [] });
+    expect(buildCommitPlan([])).toEqual({ chapters: [], rows: [], preamble: '', appendices: [] });
   });
 });
 
