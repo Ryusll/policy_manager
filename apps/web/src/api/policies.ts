@@ -259,6 +259,14 @@ export const filesApi = {
   },
   download: (policyId: string, filename: string) =>
     `/api/policies/${policyId}/files/${filename}`,
+  /**
+   * 첨부파일 내용을 로그인 정보와 함께 받는다. 서버는 토큰을 헤더로만 받으므로
+   * `<a href>`로 바로 열면 401이 난다 — 받아서 브라우저 안에서 연다.
+   */
+  fetchBlob: (policyId: string, filename: string): Promise<Blob> =>
+    client
+      .get('/policies/' + policyId + '/files/' + encodeURIComponent(filename), { responseType: 'blob' })
+      .then((r) => r.data),
   delete: (policyId: string, filename: string) =>
     client.delete('/policies/' + policyId + '/files/' + filename),
 };

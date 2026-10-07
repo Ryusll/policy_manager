@@ -3,13 +3,18 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { spawnSync } from 'child_process';
-import { existsSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'fs';
+import { dirname, join } from 'path';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { PoliciesService } from '../policies/policies.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
+import { AuditService } from '../audit/audit.service';
+import { policyUploadDir } from '../policies/upload-path';
+import { buildStoredName, decodeMultipartFilename } from '../policies/upload-name';
+import { regulationParseSourcePath } from './regulation-parse-paths';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import {
   buildRegulationTreeFromLines,
@@ -50,11 +55,28 @@ function assertTree(roots: unknown): RegulationArticleNode[] {
 
 @Injectable()
 export class RegulationParseService {
+  private readonly log = new Logger(RegulationParseService.name);
+
   constructor(
     private prisma: PrismaService,
     private policiesService: PoliciesService,
     private lawGoKrService: LawGoKrService,
+    private audit: AuditService,
   ) {}
+
+  /** 등록하지 않고 버려진 세션의 원문 PDF를 지운다(업로드할 때마다 가볍게 청소) */
+  private removeStaleSources(dir: string, keepPath: string) {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    try {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (path === keepPath || !name.toLowerCase().endsWith('.pdf')) continue;
+        if (statSync(path).mtimeMs < weekAgo) unlinkSync(path);
+      }
+    } catch {
+      /* 청소 실패는 업로드를 막지 않는다 */
+    }
+  }
 
   private scriptPath(): string {
     return join(__dirname, '..', '..', 'scripts', 'pdf_extract.py');
@@ -108,11 +130,15 @@ export class RegulationParseService {
       data: {
         tenantId,
         userId,
-        fileName: file.originalname,
+        // multer 는 한글 파일명을 latin1 로 읽는다 — 그대로 두면 미리보기·원문 첨부 이름이 깨진다
+        fileName: decodeMultipartFilename(file.originalname),
         mimeType: mime,
         status: 'processing',
       },
     });
+    this.removeStaleSources(dirname(file.path), file.path);
+    // 파싱에 성공하면 원문을 지우지 않고 세션 이름으로 보관했다가, 규정을 등록할 때 첨부파일로 옮긴다
+    let keptSource = false;
 
     try {
       const extracted = this.runPythonExtract(file.path);
@@ -136,11 +162,21 @@ export class RegulationParseService {
       }
 
       const { roots } = buildRegulationTreeFromLines(extracted.lines);
+      let sourceFile: string | undefined;
+      try {
+        sourceFile = `${session.id}.pdf`;
+        renameSync(file.path, join(dirname(file.path), sourceFile));
+        keptSource = true;
+      } catch (e: any) {
+        sourceFile = undefined;
+        this.log.warn(`원문 PDF를 보관하지 못했습니다 [${session.id}]: ${e?.message || e}`);
+      }
       const extractMeta = {
         engine: extracted.engine,
         fallback_from: extracted.fallback_from,
         line_count: extracted.lines.length,
         full_text_length: (extracted.full_text || '').length,
+        ...(sourceFile ? { sourceFile } : {}),
       };
 
       await this.prisma.regulationParseSession.update({
@@ -162,14 +198,49 @@ export class RegulationParseService {
         },
       });
     } finally {
-      try {
-        unlinkSync(file.path);
-      } catch {
-        /* ignore */
+      if (!keptSource) {
+        try {
+          unlinkSync(file.path);
+        } catch {
+          /* ignore */
+        }
       }
     }
 
     return this.prisma.regulationParseSession.findUniqueOrThrow({ where: { id: session.id } });
+  }
+
+  /**
+   * 가져온 원문 PDF를 규정 첨부파일로 옮긴다 — 상세 화면의 "원문 PDF"로 바로 보이고,
+   * 웹 본문과 나란히 놓고 대조할 수 있다. 실패해도 규정 등록은 그대로 둔다(첨부는 나중에 올릴 수 있다).
+   */
+  private async attachSourcePdf(
+    tenantId: string,
+    userId: string,
+    policyId: string,
+    sourceFile: unknown,
+    fileName: string | null,
+  ) {
+    const src = regulationParseSourcePath(tenantId, sourceFile);
+    if (!src || !existsSync(src)) return;
+    try {
+      const dir = policyUploadDir(tenantId, policyId);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const storedName = buildStoredName(fileName || '원문.pdf');
+      copyFileSync(src, join(dir, storedName));
+      const size = statSync(src).size;
+      unlinkSync(src);
+      await this.audit.log({
+        tenantId,
+        userId,
+        action: 'policy.file.upload',
+        entityType: 'Policy',
+        entityId: policyId,
+        details: { fileName: fileName || '원문.pdf', storedName, size, source: 'regulation-parse' },
+      });
+    } catch (e: any) {
+      this.log.warn(`원문 PDF를 첨부하지 못했습니다 [${policyId}]: ${e?.message || e}`);
+    }
   }
 
   /**
@@ -331,6 +402,14 @@ export class RegulationParseService {
         sortOrder,
       });
     }
+
+    await this.attachSourcePdf(
+      tenantId,
+      userId,
+      policy.id,
+      (session.extractMeta as { sourceFile?: unknown } | null)?.sourceFile,
+      session.fileName,
+    );
 
     await this.prisma.regulationParseSession.update({
       where: { id },

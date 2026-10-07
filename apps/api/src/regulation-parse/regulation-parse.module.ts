@@ -3,9 +3,10 @@ import { RegulationParseController } from './regulation-parse.controller';
 import { RegulationParseService } from './regulation-parse.service';
 import { PoliciesModule } from '../policies/policies.module';
 import { LawGoKrModule } from '../lawgokr/lawgokr.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [PoliciesModule, LawGoKrModule],
+  imports: [PoliciesModule, LawGoKrModule, AuditModule],
   controllers: [RegulationParseController],
   providers: [RegulationParseService],
 })

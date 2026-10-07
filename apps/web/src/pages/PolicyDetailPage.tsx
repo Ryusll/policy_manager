@@ -1240,6 +1240,55 @@ export default function PolicyDetailPage() {
     return null;
   }).filter(Boolean) ?? [];
   const pdfFiles = files.filter((file: any) => /\.pdf$/i.test(file.originalName || ''));
+
+  /**
+   * 첨부파일 열기. 서버가 토큰을 헤더로만 받아서 `<a href>`로는 401이 났다(첨부가 열리지 않던 문제).
+   * 로그인 정보와 함께 받아 PDF·그림은 새 탭에서 열고, 나머지는 내려받는다.
+   */
+  const openPolicyFile = useCallback(
+    async (file: any, mode: 'open' | 'download' = 'open') => {
+      if (!id) return;
+      try {
+        const blob = await filesApi.fetchBlob(id, file.id);
+        const url = URL.createObjectURL(blob);
+        const viewable = /\.(pdf|png|jpe?g)$/i.test(file.originalName || '');
+        if (mode === 'open' && viewable) {
+          window.open(url, '_blank', 'noopener');
+        } else {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = file.originalName || file.id;
+          a.click();
+        }
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } catch {
+        toast('첨부파일을 열지 못했습니다.', 'error');
+      }
+    },
+    [id],
+  );
+
+  // 원문 PDF 나란히 보기 — 넓은 화면에서 웹 본문 옆에 원문을 띄워 대조한다
+  const [sourcePdfUrl, setSourcePdfUrl] = useState<string | null>(null);
+  const [sourcePdfLoading, setSourcePdfLoading] = useState(false);
+  const toggleSourcePdf = useCallback(async () => {
+    if (sourcePdfUrl) {
+      URL.revokeObjectURL(sourcePdfUrl);
+      setSourcePdfUrl(null);
+      return;
+    }
+    const first = pdfFiles[0];
+    if (!first || !id) return;
+    setSourcePdfLoading(true);
+    try {
+      const blob = await filesApi.fetchBlob(id, first.id);
+      setSourcePdfUrl(URL.createObjectURL(new Blob([blob], { type: 'application/pdf' })));
+    } catch {
+      toast('원문 PDF를 불러오지 못했습니다.', 'error');
+    } finally {
+      setSourcePdfLoading(false);
+    }
+  }, [sourcePdfUrl, pdfFiles, id]);
   const compareRows = useMemo(() => {
     if (!diffResult?.v1?.content || !diffResult?.v2?.content) return [];
     const beforeLines = String(diffResult.v1.content).split('\n');
@@ -2805,17 +2854,15 @@ export default function PolicyDetailPage() {
             전문 .txt
           </button>
           {files.map((f: any) => (
-            <a
+            <button
+              type="button"
               key={f.id || f.url}
-              href={f.url}
-              target="_blank"
-              rel="noreferrer"
+              onClick={() => void openPolicyFile(f, 'download')}
               className="inline-flex items-center gap-1 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 text-navy-800"
-              download={f.originalName}
             >
               <Download size={14} aria-hidden />
               {f.originalName}
-            </a>
+            </button>
           ))}
           <button
             type="button"
@@ -3590,15 +3637,14 @@ export default function PolicyDetailPage() {
                         <p className="text-[11px] font-semibold text-gray-600 mb-1">원문 PDF 다운로드</p>
                         <div className="space-y-1 max-h-20 overflow-auto">
                           {pdfFiles.slice(0, 4).map((file: any) => (
-                            <a
+                            <button
+                              type="button"
                               key={file.id}
-                              href={file.url}
-                              className="block text-[11px] text-navy-700 hover:underline truncate"
-                              target="_blank"
-                              rel="noreferrer"
+                              onClick={() => void openPolicyFile(file)}
+                              className="block w-full text-left text-[11px] text-navy-700 hover:underline truncate"
                             >
                               {file.originalName}
-                            </a>
+                            </button>
                           ))}
                           {pdfFiles.length === 0 && <p className="text-[11px] text-gray-500">PDF 파일이 없습니다.</p>}
                         </div>
@@ -3683,6 +3729,19 @@ export default function PolicyDetailPage() {
 
               {articleViewMode === 'full' && (
                 <div className="max-lg:order-first">
+                  {pdfFiles.length > 0 && (
+                    <div className="hidden lg:flex items-center justify-end gap-2 px-4 pt-3 print:hidden">
+                      <button
+                        type="button"
+                        onClick={() => void toggleSourcePdf()}
+                        disabled={sourcePdfLoading}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 text-navy-800 disabled:opacity-50"
+                      >
+                        <FileText size={14} aria-hidden />
+                        {sourcePdfLoading ? '원문 불러오는 중…' : sourcePdfUrl ? '원문 PDF 닫기' : '원문 PDF 나란히 보기'}
+                      </button>
+                    </div>
+                  )}
                   <FullViewSearchToolbar
                     inputId="policy-full-view-search"
                     query={fullViewSearchQuery}
@@ -3693,17 +3752,26 @@ export default function PolicyDetailPage() {
                     onPrev={goToPrevFullViewHit}
                     onNext={goToNextFullViewHit}
                   />
-                  <div
-                    ref={fullViewMainRef}
-                    className={clsx('p-4 space-y-3', BODY_SCALE_CLASS)}
-                    style={bodyScaleStyle(bodyScale)}
-                  >
-                    <TemplateRenderer
-                      template={activeTemplate}
-                      data={templateRenderData}
-                      fullViewGroups={fullViewGroups}
-                      highlightQuery={fullViewSearchQuery}
-                    />
+                  <div className={clsx(sourcePdfUrl && 'lg:grid lg:grid-cols-2 lg:gap-3 lg:items-start')}>
+                    <div
+                      ref={fullViewMainRef}
+                      className={clsx('p-4 space-y-3', BODY_SCALE_CLASS)}
+                      style={bodyScaleStyle(bodyScale)}
+                    >
+                      <TemplateRenderer
+                        template={activeTemplate}
+                        data={templateRenderData}
+                        fullViewGroups={fullViewGroups}
+                        highlightQuery={fullViewSearchQuery}
+                      />
+                    </div>
+                    {sourcePdfUrl && (
+                      <iframe
+                        title="원문 PDF"
+                        src={sourcePdfUrl}
+                        className="hidden lg:block sticky top-3 w-full h-[calc(100vh-6rem)] border border-gray-300 bg-gray-100 print:hidden"
+                      />
+                    )}
                   </div>
                 </div>
               )}
@@ -4315,9 +4383,13 @@ export default function PolicyDetailPage() {
                       deleteFileMutation.isPending && deleteFileMutation.variables === file.id;
                     return (
                       <li key={file.id} className="flex items-start justify-between gap-2 border border-gray-200 rounded px-3 py-2 text-sm">
-                        <a href={file.url} target="_blank" rel="noreferrer" className="text-navy-700 hover:underline break-all min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => void openPolicyFile(file)}
+                          className="text-left text-navy-700 hover:underline break-all min-w-0"
+                        >
                           {file.originalName}
-                        </a>
+                        </button>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <span className="text-xs text-gray-500">{formatSize(file.size)}</span>
                           {canEdit && (

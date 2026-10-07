@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import { extname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -23,6 +23,7 @@ import {
   UpdateRegulationParseTreeDto,
 } from './regulation-parse.dto';
 import { Roles } from '../common/guards/decorators';
+import { regulationParseDir } from './regulation-parse-paths';
 
 @ApiTags('regulation-parse')
 @ApiBearerAuth()
@@ -39,8 +40,7 @@ export class RegulationParseController {
       limits: { fileSize: 30 * 1024 * 1024 },
       storage: diskStorage({
         destination: (req: any, _file, cb) => {
-          const tid = req.user?.tenantId || 'default';
-          const dir = join(process.cwd(), 'uploads', tid, 'regulation-parse');
+          const dir = regulationParseDir(req.user?.tenantId);
           if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
