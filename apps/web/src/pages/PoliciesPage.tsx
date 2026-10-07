@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { policiesApi } from '../api/policies';
+import { policiesApi, versionsApi } from '../api/policies';
 import { Plus, FileText, FileUp, Trash2, Search, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
@@ -169,6 +169,12 @@ export default function PoliciesPage() {
             ...(article.itemNumber != null ? { itemNumber: article.itemNumber } : {}),
           });
         }
+      }
+      // 기존 규정을 옮겨 오는 것이라 이미 시행 중인 내용이다 — PDF 가져오기처럼 바로 시행한다.
+      // 그러지 않으면 조문이 전부 초안으로 남아 전문 보기에 "시행중 버전이 없습니다"만 뜬다.
+      // 시행 승인은 관리자 권한이라, 편집자가 가져오면 초안으로 두고 관리자가 상세 화면에서 한꺼번에 시행한다.
+      if (user?.role === 'admin') {
+        await versionsApi.publishDrafts(policy.id, { changeNote: '기존 규정 가져오기 자동 게시' });
       }
       await policiesApi.createImportLog({
         policyId: policy.id,

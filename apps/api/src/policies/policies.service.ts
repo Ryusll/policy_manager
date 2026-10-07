@@ -127,7 +127,12 @@ export class PoliciesService {
     });
   }
 
-  async findOne(tenantId: string, id: string) {
+  /**
+   * @param opts.includePending 편집 권한자에게만 켠다. 시행본이 없는 조문에 최신 초안을
+   *   `pendingVersion`으로 붙여, 넣은 내용이 "시행 전 초안"으로라도 보이게 한다.
+   *   열람자에게 시행되지 않은 문구를 보여 주면 안 된다.
+   */
+  async findOne(tenantId: string, id: string, opts: { includePending?: boolean } = {}) {
     const policy = await this.prisma.policy.findFirst({
       where: { id, tenantId },
       include: {
@@ -142,6 +147,8 @@ export class PoliciesService {
                   orderBy: { versionNum: 'desc' },
                   take: 1,
                 },
+                // 목차의 "의견 있음" 점 — 처리 안 된 의견이 있을 때만 찍는다
+                _count: { select: { comments: { where: { isResolved: false } } } },
               },
               orderBy: [
                 { number: 'asc' },
@@ -161,7 +168,25 @@ export class PoliciesService {
       },
     });
     if (!policy) throw new NotFoundException('Policy not found');
-    return policy;
+    if (!opts.includePending) return policy;
+
+    const ids = policy.chapters.flatMap((c) => c.articles.map((a) => a.id));
+    const pending = ids.length
+      ? await this.prisma.articleVersion.findMany({
+          where: { articleId: { in: ids }, status: { in: ['draft', 'review'] } },
+          orderBy: [{ articleId: 'asc' }, { versionNum: 'desc' }],
+          select: { id: true, articleId: true, versionNum: true, status: true, content: true, updatedAt: true },
+        })
+      : [];
+    const latest = new Map<string, (typeof pending)[number]>();
+    for (const v of pending) if (!latest.has(v.articleId)) latest.set(v.articleId, v);
+    return {
+      ...policy,
+      chapters: policy.chapters.map((c) => ({
+        ...c,
+        articles: c.articles.map((a) => ({ ...a, pendingVersion: latest.get(a.id) ?? null })),
+      })),
+    };
   }
 
   /**

@@ -39,6 +39,22 @@ export class ApproveVersionDto {
   effectiveDate?: string;
 }
 
+/**
+ * 아직 한 번도 시행된 적 없는 조문의 초안을 한꺼번에 시행한다.
+ * 기존 규정을 옮겨 적거나 새 규정을 처음 만들 때, 조문마다 검토 요청·승인을 반복하지 않게 한다.
+ */
+export class PublishDraftsDto {
+  @ApiProperty({ description: '시행 사유(필수). 예: 제정, 기존 규정 등록' })
+  @IsString()
+  @MinLength(1, { message: '시행 사유를 입력하세요.' })
+  changeNote: string;
+
+  @ApiProperty({ required: false, description: '시행일 (YYYY-MM-DD). 생략하면 오늘.' })
+  @IsOptional()
+  @IsDateString()
+  effectiveDate?: string;
+}
+
 export class RejectVersionDto {
   @ApiProperty({ description: '반려 사유(필수). 사유 없이 되돌리면 편집자는 왜 반려됐는지 알 수 없다.' })
   @IsString()

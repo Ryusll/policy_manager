@@ -3,7 +3,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { VersionsService } from './versions.service';
-import { CreateVersionDto, UpdateVersionDto, ApproveVersionDto, RejectVersionDto } from './versions.dto';
+import { CreateVersionDto, UpdateVersionDto, ApproveVersionDto, RejectVersionDto, PublishDraftsDto } from './versions.dto';
 import { Roles } from '../common/guards/decorators';
 
 @ApiTags('versions')
@@ -58,6 +58,20 @@ export class VersionsController {
     return this.versionsService.approve(
       req.user.tenantId,
       id,
+      req.user.id,
+      dto.changeNote,
+      dto.effectiveDate,
+    );
+  }
+
+  @Post('policies/:policyId/publish-drafts')
+  @Roles('admin')
+  @HttpCode(200)
+  @ApiOperation({ summary: '시행된 적 없는 조문의 초안을 한꺼번에 시행 (최초 등록용)' })
+  publishDrafts(@Request() req: any, @Param('policyId') policyId: string, @Body() dto: PublishDraftsDto) {
+    return this.versionsService.publishInitialDrafts(
+      req.user.tenantId,
+      policyId,
       req.user.id,
       dto.changeNote,
       dto.effectiveDate,

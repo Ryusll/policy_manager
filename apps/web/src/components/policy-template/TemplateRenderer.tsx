@@ -129,13 +129,14 @@ function JoGroupBlock({
         {highlightText(formatArticleJo(group.articleNumber), highlightQuery)}
       </h3>
       <div className="space-y-2">
-        {joGroupRenderRows(group).map(({ article, depth }, idx) => (
+        {joGroupRenderRows(group).map(({ article, depth }, idx, rows) => (
           <FullViewArticleRow
             key={article.id ?? `${group.articleNumber}-${idx}`}
             article={article}
             plClass={DEPTH_PADDING[depth]}
             highlightQuery={highlightQuery}
             showArticleTitle={showArticleTitle}
+            hasSubRows={rows.length > 1}
           />
         ))}
       </div>
@@ -148,11 +149,14 @@ function FullViewArticleRow({
   plClass,
   highlightQuery,
   showArticleTitle,
+  hasSubRows,
 }: {
   article: any;
   plClass: string;
   highlightQuery: string;
   showArticleTitle: boolean;
+  /** 같은 조에 항·목이 있는지. 그런 조의 머리 행은 원래 본문 없이 제목만 있다 */
+  hasSubRows: boolean;
 }) {
   const sub =
     article.itemNumber != null
@@ -186,10 +190,48 @@ function FullViewArticleRow({
         )}
       >
         {inlineSub ? <span className="font-medium text-gray-800">{sub} </span> : null}
-        {highlightText(article.versions?.[0]?.content || '시행중 버전이 없습니다.', highlightQuery)}
+        <ArticleBodyText article={article} hasSubRows={hasSubRows} highlightQuery={highlightQuery} />
       </div>
     </div>
   );
+}
+
+/**
+ * 조문 본문 — 시행본이 있으면 그것을 보인다.
+ *
+ * 시행본이 없고 초안만 있으면(편집 권한자에게만 `pendingVersion`이 온다) 초안을 "시행 전"
+ * 표시와 함께 보인다. 예전에는 넣은 내용 대신 "시행중 버전이 없습니다."만 떠서, 조·항을
+ * 손으로 넣은 사람은 저장이 안 된 줄 알았다. PDF·한글 내보내기는 시행본만 담는다.
+ */
+function ArticleBodyText({
+  article,
+  hasSubRows,
+  highlightQuery,
+}: {
+  article: any;
+  hasSubRows: boolean;
+  highlightQuery: string;
+}) {
+  const published = article.versions?.[0]?.content;
+  if (published) return <>{highlightText(published, highlightQuery)}</>;
+  const pending = article.pendingVersion;
+  if (pending?.content) {
+    return (
+      <>
+        <span
+          className="mr-1.5 inline-flex items-center rounded border border-dashed border-amber-400 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 align-middle"
+          title="저장은 됐지만 아직 시행 승인 전입니다. 열람 권한 사용자에게는 보이지 않습니다."
+        >
+          {pending.status === 'review' ? '검토중 · 시행 전' : '초안 · 시행 전'}
+        </span>
+        <span className="text-gray-600">{highlightText(pending.content, highlightQuery)}</span>
+      </>
+    );
+  }
+  // 항·목을 거느린 조의 머리 행(제2조 적용범위 등)은 본문이 없는 게 정상이다
+  const isJoHead = article.clauseNumber == null && article.itemNumber == null;
+  if (isJoHead && hasSubRows) return null;
+  return <span className="text-gray-400">시행중 버전이 없습니다.</span>;
 }
 
 export default function TemplateRenderer({

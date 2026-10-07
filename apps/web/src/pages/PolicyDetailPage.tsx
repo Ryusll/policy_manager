@@ -226,11 +226,19 @@ function TocArticleButton({
     article.itemNumber == null &&
     Number(article.clauseNumber) === 1 &&
     String(article.title ?? '').trim() === joTitle;
+  // 제목 없는 항·목은 번호(②)만 보이면 내용이 들어갔는지 알 수 없다 — 본문 앞부분을 붙인다
+  const bodyPreview = String(article.versions?.[0]?.content || article.pendingVersion?.content || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const subLabel =
+    !hangTitleIsJoTitle && String(article.title || '').trim()
+      ? `${articleShortLabel(article)} ${article.title}`
+      : `${articleShortLabel(article)}${bodyPreview ? ` ${bodyPreview}` : ''}`;
   const label = isArticleJoRoot(article)
     ? `${formatArticleJo(article.number)} ${article.title || ''}`.trim()
-    : hangTitleIsJoTitle
-      ? articleShortLabel(article)
-      : `${articleShortLabel(article)} ${article.title || ''}`.trim();
+    : subLabel;
+  const hasOpenComments = Number(article._count?.comments ?? 0) > 0;
+  const draftOnly = !article.versions?.[0] && article.pendingVersion;
   return (
     <button
       type="button"
@@ -244,7 +252,9 @@ function TocArticleButton({
       )}
     >
       <FileText size={12} className="text-gray-400 flex-shrink-0" />
-      <span className="h-2 w-2 rounded-full bg-amber-400 flex-shrink-0" title="의견 있음" />
+      {hasOpenComments ? (
+        <span className="h-2 w-2 rounded-full bg-amber-400 flex-shrink-0" title="처리 안 된 의견 있음" />
+      ) : null}
       <span className="flex-1 truncate">
         <span className={clsx('whitespace-nowrap', isArticleJoRoot(article) && 'font-medium')}>{label}</span>
       </span>
@@ -254,7 +264,11 @@ function TocArticleButton({
         {article.hasRelatedRule && <RelatedBadge label="규" />}
         <RevisionBadge article={article} />
       </span>
-      {article.versions?.[0] && <StatusBadge status={article.versions[0].status} />}
+      {article.versions?.[0] ? (
+        <StatusBadge status={article.versions[0].status} />
+      ) : draftOnly ? (
+        <StatusBadge status={article.pendingVersion.status} />
+      ) : null}
     </button>
   );
 }
@@ -970,6 +984,39 @@ export default function PolicyDetailPage() {
     },
   });
 
+  // 시행본 없이 초안만 있는 조문 — 넣은 내용이 열람자에게는 안 보이는 상태
+  const draftOnlyCount = useMemo(
+    () =>
+      (policy?.chapters ?? []).reduce(
+        (n: number, c: any) =>
+          n + (c.articles ?? []).filter((a: any) => !a.versions?.[0] && a.pendingVersion).length,
+        0,
+      ),
+    [policy],
+  );
+  const [publishDraftsForm, setPublishDraftsForm] = useState<{ changeNote: string; effectiveDate: string } | null>(
+    null,
+  );
+  const publishDraftsMutation = useMutation({
+    mutationFn: (form: { changeNote: string; effectiveDate: string }) =>
+      versionsApi.publishDrafts(id!, {
+        changeNote: form.changeNote.trim(),
+        ...(form.effectiveDate ? { effectiveDate: form.effectiveDate } : {}),
+      }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      setPublishDraftsForm(null);
+      setLawToolMsg(`조문 ${res.published}건을 시행했습니다.`);
+      setTimeout(() => setLawToolMsg(''), 4000);
+    },
+  });
+  const openPublishDrafts = () => {
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    publishDraftsMutation.reset();
+    setPublishDraftsForm({ changeNote: '제정', effectiveDate: today });
+  };
+
   const saveArticleMetaMutation = useMutation({
     mutationFn: () =>
       policiesApi.updateArticle(id!, selectedChapterId, selectedArticle!.id, {
@@ -1459,14 +1506,18 @@ export default function PolicyDetailPage() {
       a.rel = 'noopener';
       a.click();
       URL.revokeObjectURL(url);
-      setLawToolMsg('PDF를 내려받았습니다.');
+      setLawToolMsg(
+        draftOnlyCount > 0
+          ? `PDF를 내려받았습니다. 시행 전 초안 ${draftOnlyCount}건은 넣지 않았습니다.`
+          : 'PDF를 내려받았습니다.',
+      );
     } catch (err: any) {
       setLawToolMsg(err?.response?.status === 500 ? 'PDF 생성에 실패했습니다.' : 'PDF 요청에 실패했습니다.');
     } finally {
       setIsExportingPdf(false);
       setTimeout(() => setLawToolMsg(''), 3000);
     }
-  }, [policy, id, fullViewGroups, asOfDate]);
+  }, [policy, id, fullViewGroups, asOfDate, draftOnlyCount]);
 
   /**
    * 한/글 내보내기 (T-85).
@@ -1490,7 +1541,11 @@ export default function PolicyDetailPage() {
       a.rel = 'noopener';
       a.click();
       URL.revokeObjectURL(url);
-      setLawToolMsg('한/글 문서(.hwpx)를 내려받았습니다. 한/글 2014 이상에서 열립니다.');
+      setLawToolMsg(
+        `한/글 문서(.hwpx)를 내려받았습니다. 한/글 2014 이상에서 열립니다.${
+          draftOnlyCount > 0 ? ` 시행 전 초안 ${draftOnlyCount}건은 넣지 않았습니다.` : ''
+        }`,
+      );
     } catch (err: any) {
       setLawToolMsg(
         err?.response?.status === 500 ? '한/글 문서 생성에 실패했습니다.' : '한/글 문서 요청에 실패했습니다.',
@@ -1499,7 +1554,7 @@ export default function PolicyDetailPage() {
       setIsExportingHwpx(false);
       setTimeout(() => setLawToolMsg(''), 4000);
     }
-  }, [policy, id, fullViewGroups, asOfDate]);
+  }, [policy, id, fullViewGroups, asOfDate, draftOnlyCount]);
 
   const copyPageUrl = useCallback(async () => {
     try {
@@ -2548,6 +2603,26 @@ export default function PolicyDetailPage() {
             </div>
           </div>
 
+          {canEdit && draftOnlyCount > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center gap-2">
+              <p className="flex-1 leading-relaxed">
+                <strong>시행 전 초안 {draftOnlyCount}건</strong> — 입력한 내용은 저장돼 있지만 아직 시행 전이라
+                열람 권한 사용자에게는 보이지 않고 PDF·한글 파일에도 들어가지 않습니다. 전문 보기에는 &quot;초안 · 시행
+                전&quot;으로 표시됩니다.
+                {user?.role !== 'admin' && ' 관리자가 시행하면 모두에게 보입니다.'}
+              </p>
+              {user?.role === 'admin' && (
+                <button
+                  type="button"
+                  onClick={openPublishDrafts}
+                  className="shrink-0 rounded bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700"
+                >
+                  한꺼번에 시행하기
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-navy-700/80">
             <div
               className="flex flex-1 min-h-[48px] rounded-xl bg-navy-950/60 p-1 border border-navy-600 shadow-inner gap-1"
@@ -2917,11 +2992,13 @@ export default function PolicyDetailPage() {
 
       {/* 본문: 전문은 전폭, 분절 보기는 우측 비교 패널만 그리드 */}
       <div className={clsx('grid grid-cols-1 gap-4', articleViewMode === 'segment' && 'lg:grid-cols-12')}>
-        {/* 조문 내용 패널 */}
+        {/* 조문 내용 패널. 전문 보기에서 좁은 화면이면 본문을 비교표·개정이유 패널보다 먼저 보인다
+            (PDF와 나란히 띄우고 입력하는 사람은 본문이 맨 아래에 있으면 결과를 찾지 못한다) */}
         <div
           className={clsx(
             'bg-white border border-gray-300 shadow-sm',
             articleViewMode === 'segment' && 'lg:col-span-9',
+            articleViewMode === 'full' && 'flex flex-col',
           )}
         >
           {articleViewMode === 'segment' && !selectedArticle ? (
@@ -3570,7 +3647,7 @@ export default function PolicyDetailPage() {
               </div>
 
               {articleViewMode === 'full' && (
-                <>
+                <div className="max-lg:order-first">
                   <FullViewSearchToolbar
                     inputId="policy-full-view-search"
                     query={fullViewSearchQuery}
@@ -3593,7 +3670,7 @@ export default function PolicyDetailPage() {
                       highlightQuery={fullViewSearchQuery}
                     />
                   </div>
-                </>
+                </div>
               )}
             </>
           )}
@@ -4251,6 +4328,62 @@ export default function PolicyDetailPage() {
                   닫기
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {publishDraftsForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md" role="dialog" aria-labelledby="publish-drafts-title">
+            <div id="publish-drafts-title" className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">
+              시행 전 초안 한꺼번에 시행
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-600 leading-relaxed">
+                한 번도 시행된 적 없는 조문 <strong>{draftOnlyCount}건</strong>의 초안을 시행합니다. 이미 시행 중인
+                조문의 개정 초안은 포함되지 않습니다 — 개정은 조문별 검토·승인으로 진행하세요.
+              </p>
+              <label className="block text-xs font-medium text-gray-600">
+                시행 사유
+                <input
+                  className="input mt-1.5"
+                  value={publishDraftsForm.changeNote}
+                  onChange={(e) => setPublishDraftsForm({ ...publishDraftsForm, changeNote: e.target.value })}
+                  placeholder="예) 제정, 기존 규정 등록"
+                />
+              </label>
+              <label className="block text-xs font-medium text-gray-600">
+                시행일
+                <input
+                  type="date"
+                  className="input mt-1.5"
+                  value={publishDraftsForm.effectiveDate}
+                  onChange={(e) => setPublishDraftsForm({ ...publishDraftsForm, effectiveDate: e.target.value })}
+                />
+                <span className="block mt-1 text-[11px] font-normal text-gray-500">
+                  기존 규정을 옮겨 적는 경우 원래 시행일을 넣으면 시점 조회가 정확해집니다.
+                </span>
+              </label>
+              {publishDraftsMutation.isError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+                  시행하지 못했습니다.{' '}
+                  {(publishDraftsMutation.error as any)?.response?.data?.message ?? '잠시 후 다시 시도하세요.'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={!publishDraftsForm.changeNote.trim() || publishDraftsMutation.isPending}
+                  onClick={() => publishDraftsMutation.mutate(publishDraftsForm)}
+                >
+                  {publishDraftsMutation.isPending ? '시행 중…' : `${draftOnlyCount}건 시행`}
+                </button>
+                <button type="button" className="btn-secondary" onClick={() => setPublishDraftsForm(null)}>
+                  취소
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -75,6 +75,7 @@ function appendArticleBodyHtml(
   article: any,
   rowClass: string,
   highlightQuery?: string,
+  hasSubRows = false,
 ) {
   const sub =
     article?.itemNumber != null
@@ -110,13 +111,17 @@ function appendArticleBodyHtml(
     out.push(`<span class="tmpl-article-name">${nameInner}</span>`);
     out.push('</div>');
   }
+  // 인쇄·PDF·한글은 공식 문서라 시행본만 담는다(시행 전 초안은 화면에만 표시).
+  // 항·목을 거느린 조의 머리 행은 본문이 없는 게 정상이므로 "시행중 버전이 없습니다"를 찍지 않는다.
   const raw = article?.versions?.[0]?.content;
+  const isJoHead = article?.clauseNumber == null && article?.itemNumber == null;
+  const emptyText = isJoHead && hasSubRows ? '' : '시행중 버전이 없습니다.';
   const bodyInner = wrapSearchHighlightsInEscapedHtml(
-    escapeHtmlText(raw != null && raw !== '' ? String(raw) : '시행중 버전이 없습니다.'),
+    escapeHtmlText(raw != null && raw !== '' ? String(raw) : emptyText),
     highlightQuery ?? '',
   );
   const bodyLead = inlineSub ? `<span class="tmpl-article-sub">${subInner}</span> ` : '';
-  out.push(`<div class="tmpl-article-body">${bodyLead}${bodyInner}</div>`);
+  if (bodyLead || bodyInner) out.push(`<div class="tmpl-article-body">${bodyLead}${bodyInner}</div>`);
   out.push('</article>');
 }
 
@@ -127,8 +132,9 @@ function appendJoGroupHtml(out: string[], group: any, highlightQuery?: string) {
   out.push(`<div class="tmpl-article-block tmpl-art-${an}" data-article="${an}">`);
   out.push(`<div class="tmpl-article-label">${escapeHtmlText(formatArticleJo(an))}</div>`);
 
-  for (const { article, depth } of joGroupRenderRows(group)) {
-    appendArticleBodyHtml(out, article, ROW_CLASS_BY_DEPTH[depth], highlightQuery);
+  const rows = joGroupRenderRows(group);
+  for (const { article, depth } of rows) {
+    appendArticleBodyHtml(out, article, ROW_CLASS_BY_DEPTH[depth], highlightQuery, rows.length > 1);
   }
   out.push('</div>');
 }

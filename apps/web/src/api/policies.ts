@@ -228,6 +228,12 @@ export const versionsApi = {
     client.post('/versions/' + id + '/archive').then((r) => r.data),
   diff: (v1: string, v2: string) =>
     client.get('/versions/diff', { params: { v1, v2 } }).then((r) => r.data),
+  /** 시행된 적 없는 조문의 초안을 한꺼번에 시행 (관리자). 이미 시행 중인 조문의 개정 초안은 제외 */
+  publishDrafts: (
+    policyId: string,
+    data: { changeNote: string; effectiveDate?: string },
+  ): Promise<{ published: number }> =>
+    client.post('/policies/' + policyId + '/publish-drafts', data).then((r) => r.data),
 };
 
 export const variablesApi = {

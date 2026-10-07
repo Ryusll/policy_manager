@@ -216,7 +216,9 @@ export class PoliciesController {
   @Get(':id')
   @ApiOperation({ summary: '규정 상세 조회 (전체 구조)' })
   findOne(@Request() req: any, @Param('id') id: string) {
-    return this.policiesService.findOne(req.user.tenantId, id);
+    return this.policiesService.findOne(req.user.tenantId, id, {
+      includePending: req.user.role === 'admin' || req.user.role === 'editor',
+    });
   }
 
   @Post()

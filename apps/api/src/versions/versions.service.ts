@@ -212,6 +212,106 @@ export class VersionsService {
   }
 
   /**
+   * 시행된 적 없는 조문의 초안을 한꺼번에 시행한다.
+   *
+   * 조·항을 손으로 추가하면 내용이 초안으로만 저장되고 전문 보기에는 시행본만 나온다.
+   * 기존 규정을 옮겨 적는 사람은 "넣었는데 안 보인다"고 느끼고, 보이게 하려면 항마다
+   * 검토 요청·승인을 되풀이해야 했다. PDF 가져오기는 등록하면서 바로 시행하므로 경로마다
+   * 결과도 달랐다.
+   *
+   * 이미 시행본이 있는 조문의 개정 초안은 건드리지 않는다 — 그건 개정이고, 하나씩 검토하는
+   * 원래 절차를 탄다. 승인 권한(관리자)과 사유·시행일·감사 기록은 단건 승인과 같다.
+   * 알림은 조문 수만큼 보내지 않고 한 번만 보낸다.
+   */
+  async publishInitialDrafts(
+    tenantId: string,
+    policyId: string,
+    userId: string,
+    changeNote: string,
+    effectiveDate?: string,
+  ) {
+    const reason = changeNote?.trim();
+    if (!reason) throw new BadRequestException('시행 사유를 입력하세요.');
+    const effective = effectiveDate ? coerceNullableDate(effectiveDate) : todayDateOnly();
+    if (!effective) throw new BadRequestException('시행일은 YYYY-MM-DD 형식이어야 합니다.');
+
+    const policy = await this.prisma.policy.findFirst({
+      where: { id: policyId, tenantId },
+      select: { id: true, title: true, code: true, metadata: true },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    const articles = await this.prisma.article.findMany({
+      where: {
+        chapter: { policyId },
+        versions: { none: { status: 'published' } },
+      },
+      select: {
+        id: true,
+        number: true,
+        title: true,
+        clauseNumber: true,
+        itemNumber: true,
+        versions: {
+          where: { status: { in: ['draft', 'review'] } },
+          orderBy: { versionNum: 'desc' },
+          take: 1,
+          select: { id: true },
+        },
+      },
+      orderBy: [{ number: 'asc' }, { clauseNumber: { sort: 'asc', nulls: 'first' } }, { itemNumber: { sort: 'asc', nulls: 'first' } }],
+    });
+    const targets = articles.filter((a) => a.versions.length > 0);
+    if (!targets.length) return { published: 0 };
+
+    const approvedAt = new Date();
+    await this.prisma.$transaction(
+      targets.map((a) =>
+        this.prisma.articleVersion.update({
+          where: { id: a.versions[0].id },
+          data: { status: 'published', approvedBy: userId, approvedAt, effectiveDate: effective, changeNote: reason },
+        }),
+      ),
+    );
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'version.bulk_publish',
+      entityType: 'Policy',
+      entityId: policyId,
+      details: { count: targets.length, changeNote: reason, articleIds: targets.slice(0, 200).map((a) => a.id) },
+    });
+
+    const first = targets[0];
+    const firstLabel = `제${first.number}조${first.title ? ` (${first.title})` : ''}`;
+    const notifyResult = await this.revisionNotify.dispatchPolicyRevisionApproved({
+      tenantId,
+      policyId,
+      policyTitle: policy.title,
+      policyCode: policy.code,
+      articleId: first.id,
+      articleLabel: targets.length > 1 ? `${firstLabel} 외 ${targets.length - 1}건` : firstLabel,
+      versionId: first.versions[0].id,
+      changeNote: reason,
+      approvedByUserId: userId,
+      metadata: policy.metadata,
+    });
+    if (notifyResult.sent > 0) {
+      await this.audit.log({
+        tenantId,
+        userId,
+        action: 'revision.notify_sent',
+        entityType: 'Policy',
+        entityId: policyId,
+        details: { bulk: true, count: targets.length, recipientCount: notifyResult.sent },
+      });
+    }
+
+    return { published: targets.length };
+  }
+
+  /**
    * 반려 — 검토 중인 버전을 초안으로 되돌린다 (T-10).
    *
    * 사유를 함께 받는다. 사유 없이 되돌리면 편집자는 **왜 반려됐는지 알 수 없는 초안**을
