@@ -49,7 +49,8 @@ export default function LawDetailPage() {
         {lawQuery.data && (
           <p className="text-xs text-gray-500 mt-0.5">
             {[lawQuery.data.lawType, lawQuery.data.lawNo].filter(Boolean).join(' · ')}
-            {lawQuery.data.effectiveDate && ` · 시행 ${lawQuery.data.effectiveDate}`}
+            {/* 날짜 컬럼이 ISO 시각으로 직렬화돼 온다 — 날짜 부분만 보인다 */}
+            {lawQuery.data.effectiveDate && ` · 시행 ${lawQuery.data.effectiveDate.slice(0, 10)}`}
             {' · '}조문 {lawQuery.data.articleCount}개
             {lawQuery.data.sourceUrl && (
               <a
@@ -61,6 +62,20 @@ export default function LawDetailPage() {
                 원문 <ExternalLink size={11} />
               </a>
             )}
+          </p>
+        )}
+        {lawQuery.data?.lastCheckedAt && (
+          <p className="text-[11px] text-gray-400 mt-1">
+            마지막 개정 확인 {new Date(lawQuery.data.lastCheckedAt).toLocaleString('ko-KR')}
+          </p>
+        )}
+        {lawQuery.data?.lastCheckError && (
+          <p
+            role="alert"
+            className="mt-2 text-xs text-red-800 bg-red-50 border border-red-200 rounded px-2.5 py-1.5"
+          >
+            최근 개정 확인에 실패했습니다 — 지금 이 법령의 개정 여부를 알 수 없습니다.
+            <span className="block text-red-700/80 mt-0.5">{lawQuery.data.lastCheckError}</span>
           </p>
         )}
       </div>

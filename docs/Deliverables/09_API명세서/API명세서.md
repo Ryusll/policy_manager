@@ -231,7 +231,7 @@
 
 ## 법령 개정 연계 (2026-09-21 신설)
 
-> `laws`·`law-links` 절은 **구현됐다**(T-100·T-101). 나머지 절(`law-changes`·`law-sync`·`amendments`)은
+> `laws`·`law-links`·`law-sync` 절은 **구현됐다**(T-100·T-101·T-104). 나머지 절(`law-changes`·`amendments`)은
 > 아직 **설계**다 — 이 문서의 다른 절이 실제 컨트롤러를 옮긴 것인 반면 그쪽만 계획이다.
 > 근거는 특허 명세서 `26PD0271KR`이고 상세는 [18_법령개정연계_설계 6절](../18_법령개정연계_설계/법령개정연계_설계안.md),
 > 요구사항은 [03_SRS 12절 REQ-LAW](../03_SRS_요구사항명세/SRS_요구사항명세.md), 작업은 [17_작업관리대장 S7](../17_작업관리대장/작업관리대장.md).
@@ -239,7 +239,7 @@
 ### laws (`/api/laws`) — 법령, **테넌트 공용** ✅ 구현됨 (T-100)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | 로그인 | 등록된 법령 목록. `lastCheckedAt`·`articleCount` 포함 — **언제 확인한 것인지 화면에서 보여야 한다** |
+| GET | (root) | 로그인 | 등록된 법령 목록. `lastCheckedAt`·`lastCheckError`·`articleCount` 포함 — **언제 확인한 것인지, 확인에 실패했는지 화면에서 보여야 한다**(`lastCheckError` 가 있으면 "개정 없음"이 아니라 "확인 못 함") |
 | POST | (root) | admin·editor | 법제처 MST로 법령 등록(추적 시작). 조·항·호를 `LawArticle` 로 저장. **200** |
 | GET | :id | 로그인 | 법령 1건 |
 | GET | :id/articles | 로그인 | 법령조항 목록 (원문 순서) |
@@ -282,11 +282,14 @@
 | GET | (root) | admin·editor | 변경 이벤트 목록(법령·기간 필터) |
 | POST | (root) | admin·editor | 수동 등록 (`receivedVia=manual`) |
 
-### law-sync (`/api/admin/law-sync`) — 주기 동기화, `global_admin` 전용
+### law-sync (`/api/platform-admin/law-sync`) — 주기 동기화, `global_admin` 전용 ✅ 구현됨 (T-104)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | run | global_admin | **cron 이 호출한다.** API 컨테이너 안 스케줄러를 쓰지 않는 이유는 2대로 늘리면 두 번 돌기 때문(T-92 백업과 같은 방식) |
-| GET | runs | global_admin | 동기화 이력. **실패를 "개정 없음"과 구별해 기록** — 법제처는 실패해도 HTTP 200 에 에러 본문을 준다 |
+| POST | run | global_admin | **지금 실행.** 확인이 오래된 법령부터 `limit` 건(기본 20, 1~100). 법령마다 법령ID 로 지금 판의 MST 를 찾아, 저장된 MST 와 다르면 새 판을 받아 조항을 갱신하고 달라진 조항을 `LawChangeEvent`(`receivedVia=poll`)로 남긴다. 다른 실행이 진행 중이면 **409**(30분 넘게 끝나지 않은 실행은 "중단됨"으로 닫고 진행). 응답은 실행 기록 1건 |
+| GET | runs | global_admin | 실행 이력(최근 순, `limit` 기본 20). `status`: succeeded / partial / failed / running, 법령별 `results[]`(`outcome`: unchanged·updated·failed, `fromMst`·`toMst`·`events`·`error`) |
+
+> **예약 실행은 이 API 가 아니다.** 서버 cron 이 `scripts/oracle/law-sync.sh`(→ 컨테이너 안 `node dist/laws/law-sync.cli.js [--limit N]`)를 부르고, 하나라도 실패하면 **종료 코드 1**. global_admin 토큰은 15분이면 만료돼 cron 이 쥘 수 없다. 경로가 `/admin` 이 아닌 것은 그쪽이 회사 관리자 전용이라서다.
+> **실패를 "개정 없음"과 구별한다** — 법제처는 인증·IP 오류도 HTTP 200 으로 준다. 실패한 법령은 `Law.lastCheckError` 에 사유가 남고 다음 확인이 성공하면 지워진다.
 
 ### amendments (`/api/amendments`) — 개정 후보, ⚠️ **테넌트별**
 | Method | Path | 인증 | 설명 |

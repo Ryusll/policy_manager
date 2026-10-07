@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { LawsController } from './laws.controller';
 import { LawsService } from './laws.service';
+import { LawSyncController } from './law-sync.controller';
+import { LawSyncService } from './law-sync.service';
 import { LawGoKrModule } from '../lawgokr/lawgokr.module';
 
 /**
@@ -11,8 +13,8 @@ import { LawGoKrModule } from '../lawgokr/lawgokr.module';
  */
 @Module({
   imports: [LawGoKrModule],
-  controllers: [LawsController],
-  providers: [LawsService],
+  controllers: [LawsController, LawSyncController],
+  providers: [LawsService, LawSyncService],
   exports: [LawsService],
 })
 export class LawsModule {}

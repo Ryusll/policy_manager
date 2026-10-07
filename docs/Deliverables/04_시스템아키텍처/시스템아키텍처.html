@@ -1293,8 +1293,8 @@
 
     <div class="note">
       현재 배포는 단일 호스트 <code>docker-compose</code>이고(10절), <b>API를 2대로 늘리면 스케줄러가 두 번 돈다.</b>
-      지금 그걸 막는 장치가 없다. 그래서 <code>POST /api/admin/law-sync/run</code>(global_admin 전용)을 만들고 <b>cron이 호출</b>한다 —
-      T-92 백업 스크립트와 같은 방식이다. API 다중화가 확정되면 분산 락을 검토한다. 지금 넣으면 쓰지 않는 코드가 된다.
+      지금 그걸 막는 장치가 없다. 그래서 <b>서버 cron 이 컨테이너 안 CLI</b>(<code>scripts/oracle/law-sync.sh</code> → <code>node dist/laws/law-sync.cli.js</code>)를 부른다 —
+      T-92 백업 스크립트와 같은 방식이다. (설계 때는 cron 이 <code>POST /api/admin/law-sync/run</code> 을 부르는 안이었으나, global_admin 토큰은 15분이면 만료돼 cron 이 쥘 수 없어 바꿨다(T-104). 수동 실행·이력은 <code>/api/platform-admin/law-sync</code>.) API 다중화가 확정되면 분산 락을 검토한다. 지금 넣으면 쓰지 않는 코드가 된다.
     </div>
 
     <div class="note warn">

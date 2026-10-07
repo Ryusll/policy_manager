@@ -194,6 +194,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `LawSource` / `Law` / `LawArticle` | ✅ **스키마에 있다** (T-100, 마이그레이션 `20260925090000_law_entities`) |
 | `LawLink` | ✅ **스키마에 있다** (T-101, 마이그레이션 `20260925142102_law_links`) |
 | `LawChangeEvent` | ✅ **스키마에 있다** (T-103, 마이그레이션 `20260930124231_law_change_events`) |
+| `LawSyncRun` · `Law.lastCheckError` | ✅ **스키마에 있다** (T-104, 마이그레이션 `20261007100000_law_sync_runs`) |
 | `AmendmentCandidate` | 설계만 (T-106) |
 | `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
 
@@ -241,7 +242,8 @@ id, code(unique, 예 `law.go.kr`), name, baseUrl, isActive.
 | promulgatedDate | date? | 공포일 |
 | effectiveDate | date? | **법령 시행일** (≠ 사내 규정 시행일) |
 | versionKey | string? | 현재 수신본의 지문. 바뀌면 개정. 조항 지문을 **문서 순서대로** 이어 해시한다 |
-| lastCheckedAt | datetime? | 마지막 폴링 시각 |
+| lastCheckedAt | datetime? | 마지막 확인 **시도** 시각. 실패해도 갱신한다 — 고장 난 법령 하나가 매번 맨 앞에 서지 않게 |
+| lastCheckError | text? | 마지막 확인이 실패했으면 사유, 성공이면 null — **"개정 없음"과 "확인 못 함"을 가른다** (T-104) |
 
 `@@unique([sourceId, externalId])`, 인덱스 `[lastCheckedAt]`(폴링 대상 선정).
 
@@ -298,6 +300,22 @@ lawId FK(cascade), lawArticleId FK?(**SetNull**), nodeKey, changeType(enum LawCh
 설계안 대비 달라진 점:
 - 조문이 삭제되는 개정도 기록하려고 `lawArticleId`·`afterContent`·`afterVersionKey` 를 null 허용으로, FK 를 `SetNull` 로 뒀다. 설계안대로 필수 FK + Cascade 면 "삭제됨" 이벤트가 조문과 함께 지워진다. 그래서 `lawId`·`nodeKey` 를 이벤트에 직접 둔다 — 조문이 지워진 뒤에도 어느 법·어느 조문인지 남는다.
 - `changeType` 추가 — 신설·삭제를 before/after 가 null 인지로 매번 되짚지 않게.
+
+주기 동기화(T-104)도 같은 경로로 만든다(`receivedVia=poll`). 새 판은 **같은 `Law` 행의 MST 를 바꿔** 반영한다 — 새 MST 로 행을 새로 만들면 `LawLink` 가 옛 판에 남는다.
+
+#### LawSyncRun (`law_sync_runs`) — 법령 동기화 실행 기록, 테넌트 공용 ✅ 구현됨 (T-104)
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| id | uuid PK | |
+| trigger | enum LawSyncTrigger | `schedule`(서버 cron → CLI) / `manual`(플랫폼 관리자 화면) |
+| status | enum LawSyncStatus | `running` / `succeeded`(0건 포함) / `partial`(일부 실패) / `failed`(전부 실패 또는 실행 오류) |
+| triggeredBy | string? | 수동 실행한 사용자 id |
+| startedAt / finishedAt | datetime / datetime? | |
+| checkedCount / changedCount / eventCount / failedCount | int | 확인한 법령 / 새 판이 있던 법령 / 만들어진 변경 이벤트 / 실패한 법령 |
+| results | json? | 법령별 결과 `[{ lawId, lawName, outcome(unchanged·updated·failed), fromMst, toMst?, events?, error?, note? }]` |
+| error | text? | 실행 전체가 실패한 사유 |
+
+인덱스 `[startedAt]`. 동시 실행은 advisory lock + "진행 중" 확인으로 막고, 30분 넘게 `running` 인 행은 다음 실행이 "중단됨"(`failed`)으로 닫는다.
 
 #### AmendmentCandidate (`amendment_candidates`) — 후보 레코드 ⚠️ 테넌트별
 | 필드 | 타입 | 설명 |

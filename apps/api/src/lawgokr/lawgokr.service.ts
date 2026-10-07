@@ -158,6 +158,25 @@ export class LawGoKrService {
   }
 
   /**
+   * 법령ID 로 지금 판의 법령명을 받는다 (T-104 — 제명이 바뀐 법령을 다시 찾을 때만 쓴다).
+   *
+   * 법령ID 조회는 현행 본문 전체를 돌려주지만 **응답에 MST 가 없어** 본문 저장 키로 쓸 수 없다.
+   * 이름만 얻어 검색으로 MST 를 다시 찾는다. 캐시하지 않는다 — 드물게 불리고, 낡은 값이면
+   * 바뀐 이름을 놓친다.
+   */
+  async getCurrentTitleById(lawId: string): Promise<string | null> {
+    const key = lawId.trim();
+    if (!/^\d+$/.test(key)) return null;
+    const raw = await this.call<LawGoKrLawServiceResponse & { Law?: unknown }>('lawService.do', {
+      target: 'law',
+      ID: key,
+    });
+    if (typeof (raw as any).Law === 'string') return null;
+    const title = raw.법령?.기본정보?.법령명_한글;
+    return typeof title === 'string' && title.trim() ? title.trim() : null;
+  }
+
+  /**
    * 법령 본문 조회 → 메타 + 조항 트리(T-54 매퍼).
    *
    * 캐시에는 매핑이 끝난 결과를 넣는다. 원본은 건당 수백 KB인데 우리가 쓰는 건

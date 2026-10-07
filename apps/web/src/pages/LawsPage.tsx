@@ -85,6 +85,15 @@ export default function LawsPage() {
                   <td className="px-4 py-2.5 text-xs text-gray-600 tabular-nums">{law.articleCount}</td>
                   <td className="px-4 py-2.5 text-xs text-gray-500 tabular-nums">
                     {law.lastCheckedAt ? new Date(law.lastCheckedAt).toLocaleString('ko-KR') : '—'}
+                    {/* 확인 실패는 "개정 없음"이 아니다 — 지금 이 법령의 개정 여부를 모른다는 뜻이다 */}
+                    {law.lastCheckError && (
+                      <span
+                        className="ml-1.5 inline-block text-[10px] px-1.5 py-0.5 rounded border border-red-200 bg-red-50 text-red-700 align-middle"
+                        title={law.lastCheckError}
+                      >
+                        확인 실패
+                      </span>
+                    )}
                   </td>
                   {canEdit && (
                     <td className="px-4 py-2.5 text-right">

@@ -633,8 +633,12 @@ model Law {
   effectiveDate   DateTime? @map("effective_date") @db.Date
   /// 현재 수신본의 지문. 이 값이 바뀌면 개정이다 (조항 지문을 순서대로 이어 해시)
   versionKey      String?   @map("version_key")
-  /// 마지막 폴링 시각. T-104 가 오래된 순으로 고른다
+  /// 마지막 확인 시도 시각. T-104 가 오래된 순으로 고른다 — 실패해도 갱신해야
+  /// 고장 난 법령 하나가 매번 맨 앞에 서서 나머지를 막지 않는다
   lastCheckedAt   DateTime? @map("last_checked_at")
+  /// 마지막 확인이 실패했으면 그 사유, 성공했으면 null.
+  /// "개정 없음"과 "확인 못 함"을 화면에서 구별하려고 둔다(법제처는 실패도 HTTP 200 이다)
+  lastCheckError  String?   @map("last_check_error") @db.Text
   sourceUrl       String?   @map("source_url")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
@@ -817,4 +821,47 @@ enum LawEventChannel {
   manual
   /// 외부 통지 — 미사용, 확장 여지
   webhook
+}
+
+/// 법령 주기 동기화 1회 실행 기록 (T-104).
+/// 동기화가 조용히 실패하면 "개정이 없었다"와 구별되지 않는다 — 실행마다 남기고, 실패를 숫자로 보인다.
+model LawSyncRun {
+  id           String         @id @default(uuid())
+  trigger      LawSyncTrigger
+  status       LawSyncStatus  @default(running)
+  /// 수동 실행한 사용자(global_admin). 예약 실행이면 null
+  triggeredBy  String?        @map("triggered_by")
+  startedAt    DateTime       @default(now()) @map("started_at")
+  finishedAt   DateTime?      @map("finished_at")
+  /// 확인한 법령 수
+  checkedCount Int            @default(0) @map("checked_count")
+  /// 새 판(다른 MST)이 있었던 법령 수
+  changedCount Int            @default(0) @map("changed_count")
+  /// 만들어진 LawChangeEvent 수
+  eventCount   Int            @default(0) @map("event_count")
+  failedCount  Int            @default(0) @map("failed_count")
+  /// 법령별 결과 `[{ lawId, lawName, outcome, fromMst, toMst, events, error }]`
+  results      Json?
+  /// 실행 전체가 실패한 사유(법령별 사유는 results 에)
+  error        String?        @db.Text
+
+  @@index([startedAt])
+  @@map("law_sync_runs")
+}
+
+enum LawSyncTrigger {
+  /// cron — 서버의 scripts/oracle/law-sync.sh
+  schedule
+  /// 플랫폼 관리자가 화면에서 실행
+  manual
+}
+
+enum LawSyncStatus {
+  running
+  /// 확인한 법령이 모두 성공 (0건 포함)
+  succeeded
+  /// 일부 실패
+  partial
+  /// 전부 실패
+  failed
 }

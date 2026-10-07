@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { platformAdminApi } from '../api/platformAdmin';
 import { usePlatformBranding } from '../hooks/usePlatformBranding';
+import LawSyncPanel from '../components/LawSyncPanel';
 
 export default function PlatformAdminPage() {
   const qc = useQueryClient();
@@ -162,6 +163,8 @@ export default function PlatformAdminPage() {
           <div className="text-xl font-bold text-amber-700">{summary.expiringSoonCount}</div>
         </div>
       </div>
+
+      <LawSyncPanel />
 
       <div className="bg-white border border-gray-300 shadow-sm p-3 space-y-3">
         <div>
