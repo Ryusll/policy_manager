@@ -78,6 +78,24 @@ function ordinalLabel(no: number, branch: number | null, unit: '조' | '호'): s
   return branch ? `제${no}${unit}의${branch}` : `제${no}${unit}`;
 }
 
+/**
+ * `nodeKey` → 사람이 읽는 표기. `buildLawArticleRows` 가 만드는 표기의 역함수다
+ * (`3의2/1/2` → `제3조의2제1항제2호`, `5//` → `제5조`).
+ *
+ * 조문이 법령에서 사라져 `LawArticle` 행이 없는 변경 이벤트(T-103 `deleted`)도 "어느 조문이었는지"
+ * 보여야 해서 둔다. 같은 `ordinalLabel` 을 써서 등록 때의 표기와 갈라지지 않는다.
+ * 형식이 어긋나면 nodeKey 를 그대로 돌려준다 — 빈칸보다 낫다.
+ */
+export function labelFromNodeKey(nodeKey: string): string {
+  const m = /^(\d+)(?:의(\d+))?\/(\d*)\/(?:(\d+)(?:의(\d+))?)?$/.exec(nodeKey);
+  if (!m) return nodeKey;
+  const [, jo, joBranch, clause, ho, hoBranch] = m;
+  let label = ordinalLabel(Number(jo), joBranch ? Number(joBranch) : null, '조');
+  if (clause) label += `제${Number(clause)}항`;
+  if (ho) label += ordinalLabel(Number(ho), hoBranch ? Number(hoBranch) : null, '호');
+  return label;
+}
+
 /** 자리를 못 받은 노드(목 등)의 텍스트를 부모 행 본문에 이어 붙인다 */
 function appendTo(row: LawArticleRow, node: RegulationArticleNode): void {
   const label = (node.articleTitle || '').trim();

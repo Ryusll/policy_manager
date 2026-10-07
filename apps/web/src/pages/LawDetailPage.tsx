@@ -7,13 +7,14 @@
  */
 
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { lawsApi, type LawArticle } from '../api/laws';
 import { lawLinksApi, RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { ConfirmBadge } from '../components/LawLinksPanel';
+import LawChangeList from '../components/LawChangeList';
 import { useAuthStore } from '../stores/authStore';
 
 export default function LawDetailPage() {
@@ -22,6 +23,9 @@ export default function LawDetailPage() {
   const { user } = useAuthStore();
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  // 법령 목록의 "최근 법령 변경"에서 들어오면 그 변경을 펼친 채로 연다
+  const changeId = searchParams.get('change');
 
   const lawQuery = useQuery({ queryKey: ['laws', id], queryFn: () => lawsApi.get(id!), enabled: !!id });
   const articlesQuery = useQuery({
@@ -79,6 +83,19 @@ export default function LawDetailPage() {
           </p>
         )}
       </div>
+
+      {canEdit && (
+        <div className="bg-white border border-gray-300 shadow-sm px-5 py-3 space-y-2">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800">개정 내역</h2>
+            <p className="text-[11px] text-gray-500">
+              이 법령에서 감지된 조문 변경입니다. 펼치면 변경 전후 문구와, 확정된 연결로 걸린 우리 회사 조문과
+              그 기준 본문을 보여 줍니다.
+            </p>
+          </div>
+          <LawChangeList lawId={id} affectedOnlyDefault={false} expandable initialOpenId={changeId} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-5 bg-white border border-gray-300 shadow-sm max-h-[70vh] overflow-y-auto">

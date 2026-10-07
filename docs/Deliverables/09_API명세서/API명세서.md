@@ -231,7 +231,7 @@
 
 ## 법령 개정 연계 (2026-09-21 신설)
 
-> `laws`·`law-links`·`law-sync` 절은 **구현됐다**(T-100·T-101·T-104). 나머지 절(`law-changes`·`amendments`)은
+> `laws`·`law-links`·`law-sync` 절과 `law-changes` 의 조회·영향 분석은 **구현됐다**(T-100·T-101·T-104·T-105). 나머지(`law-changes` 수동 등록, `amendments`)는
 > 아직 **설계**다 — 이 문서의 다른 절이 실제 컨트롤러를 옮긴 것인 반면 그쪽만 계획이다.
 > 근거는 특허 명세서 `26PD0271KR`이고 상세는 [18_법령개정연계_설계 6절](../18_법령개정연계_설계/법령개정연계_설계안.md),
 > 요구사항은 [03_SRS 12절 REQ-LAW](../03_SRS_요구사항명세/SRS_요구사항명세.md), 작업은 [17_작업관리대장 S7](../17_작업관리대장/작업관리대장.md).
@@ -274,13 +274,15 @@
 | PATCH | :id | admin·editor | 확정/반려/관계 유형 수정 |
 | DELETE | :id | admin·editor | |
 
-### law-changes (`/api/law-changes`) — 변경 이벤트
-> 저장은 T-103 부터 된다(`POST /api/laws` 재등록이 만든다). 아래 조회·수동 등록 API 는 아직 설계다.
+### law-changes (`/api/law-changes`) — 변경 이벤트 · 영향 분석 ✅ 조회 구현됨 (T-105)
+> 저장은 T-103(재등록)·T-104(주기 동기화)가 한다. 이벤트 자체는 모든 회사가 함께 쓰는 데이터지만,
+> **영향(어느 조문이 걸리나)은 `LawLink.tenantId` 로 자기 회사 것만** 센다 — 법령조항에서 출발하는 조회의 유일한 경계다.
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | admin·editor | 변경 이벤트 목록(법령·기간 필터) |
-| POST | (root) | admin·editor | 수동 등록 (`receivedVia=manual`) |
+| GET | (root) | admin·editor | 변경 이벤트 목록(최근 순, `lawId`·`affected`·`limit` 필터). 각 행에 `label`(조문이 사라진 이벤트도 nodeKey 로 되살린 표기)과 `impact: { confirmed, suggested }` — **우리 회사** 연결 수. `affected=true` 면 확정 영향이 있는 이벤트만 |
+| GET | :id/impact | admin·editor | **이 변경이 걸리는 우리 회사 조문.** 확정(`confirmed`) 연결만 — 추천은 `suggestedCount` 로만. 조문마다 정책·관계 유형·근거 문구와 **제1 조문**(`baseVersion` — 기준일에 시행 중인 발행 버전, 규정 시점 조회와 같은 규칙). 기준일(`asOf`, 생략 시 **법령 시행일과 오늘 중 늦은 날**)에 시행 중인 버전이 없으면 빼지 않고 `baseVersion: null`·`skipReason: not_in_force`. 법령에서 조문이 통째로 사라져 연결도 함께 지워진 이벤트는 `unresolvable` 에 사유 |
+| POST | (root) | admin·editor | 수동 등록 (`receivedVia=manual`) — **아직 설계** |
 
 ### law-sync (`/api/platform-admin/law-sync`) — 주기 동기화, `global_admin` 전용 ✅ 구현됨 (T-104)
 | Method | Path | 인증 | 설명 |
@@ -326,6 +328,10 @@
 **UpdateMyProfileDto** — `name`(문자열, trim, 1~100자)
 **ChangePasswordDto** — `currentPassword`(비어 있지 않은 문자열), `newPassword`(문자열 — 길이·바이트·"현재와 같음" 검사는 서비스의 `passwordProblem` 이 한국어 문구로 400)
 **ResetPasswordDto** — `newPassword`
+
+## law-changes
+**LawChangeListQueryDto** — `lawId?`, `affected?`(`true`/`1` 만 참 — 쿼리 문자열 `"false"` 를 참으로 바꾸는 암묵 변환을 피한다), `limit?`(1~100, 기본 50)
+**LawImpactQueryDto** — `asOf?`(YYYY-MM-DD, 실제로 있는 날짜)
 **UpdateUserDto** — `name?`(trim, 1~100자), `email?`(이메일, 자동 trim+소문자), `role?`(admin|editor|viewer). 하나도 보내지 않으면 400. `null` 도 400 — `@IsOptional` 은 `null` 을 "없음"으로 통과시켜 필수 컬럼에 `null` 이 흘러가므로 `@ValidateIf(!== undefined)` 를 썼다
 
 ## policies

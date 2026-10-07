@@ -24,6 +24,7 @@ import { RegulationParseModule } from './regulation-parse/regulation-parse.modul
 import { LawGoKrModule } from './lawgokr/lawgokr.module';
 import { LawsModule } from './laws/laws.module';
 import { LawLinksModule } from './law-links/law-links.module';
+import { LawChangesModule } from './law-changes/law-changes.module';
 import { PlatformBrandingModule } from './platform-branding/platform-branding.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
@@ -51,6 +52,7 @@ import { FavoritesModule } from './favorites/favorites.module';
     LawGoKrModule,
     LawsModule,
     LawLinksModule,
+    LawChangesModule,
     PlatformBrandingModule,
     NotificationsModule,
     FavoritesModule,

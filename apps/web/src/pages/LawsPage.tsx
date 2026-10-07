@@ -13,6 +13,7 @@ import { lawsApi } from '../api/laws';
 import { lawGoKrApi } from '../api/lawgokr';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
+import LawChangeList from '../components/LawChangeList';
 
 export default function LawsPage() {
   const { user } = useAuthStore();
@@ -45,6 +46,20 @@ export default function LawsPage() {
           </button>
         )}
       </div>
+
+      {/* T-105: "법이 바뀌었고 우리 제28조가 걸려 있다"를 법령 화면 첫머리에서 알린다 */}
+      {canEdit && laws.length > 0 && (
+        <div className="bg-white border border-gray-300 shadow-sm px-5 py-3 space-y-2">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800">최근 법령 변경</h2>
+            <p className="text-[11px] text-gray-500">
+              추적 중인 법령에서 감지된 조문 변경입니다. 누르면 해당 법령에서 우리 회사의 어느 조문이 걸려
+              있는지 볼 수 있습니다.
+            </p>
+          </div>
+          <LawChangeList affectedOnlyDefault expandable={false} limit={20} />
+        </div>
+      )}
 
       {lawsQuery.isLoading && <p className="text-sm text-gray-500 px-1">불러오는 중…</p>}
 

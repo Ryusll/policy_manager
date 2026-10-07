@@ -1,0 +1,77 @@
+import client from './client';
+import type { LawRelationType } from './lawLinks';
+
+/**
+ * 법령 변경 이벤트와 우리 회사 영향 (T-105).
+ * 이벤트는 모든 회사가 함께 쓰는 데이터지만, `impact` 는 **우리 회사 연결만** 센다.
+ */
+export type LawChangeType = 'created' | 'modified' | 'deleted';
+
+export const CHANGE_TYPE_LABEL: Record<LawChangeType, string> = {
+  created: '신설',
+  modified: '변경',
+  deleted: '삭제',
+};
+
+export const RECEIVED_VIA_LABEL: Record<string, string> = {
+  poll: '자동 확인',
+  manual: '직접 등록',
+  webhook: '외부 통지',
+};
+
+export type LawChangeEvent = {
+  id: string;
+  lawId: string;
+  lawName: string;
+  lawArticleId: string | null;
+  nodeKey: string;
+  label: string;
+  changeType: LawChangeType;
+  beforeContent: string | null;
+  afterContent: string | null;
+  promulgatedDate: string | null;
+  lawEffectiveDate: string | null;
+  receivedVia: string;
+  detectedAt: string;
+};
+
+export type LawChangeListItem = LawChangeEvent & {
+  impact: { confirmed: number; suggested: number };
+};
+
+export type ImpactedArticle = {
+  linkId: string;
+  relationType: LawRelationType;
+  scope: string | null;
+  evidenceText: string | null;
+  confirmedAt: string | null;
+  policy: { id: string; code: string; title: string; isActive: boolean };
+  article: { id: string; number: number; clauseNumber: number | null; itemNumber: number | null; title: string };
+  /** 제1 조문 — 기준일에 시행 중인 발행 버전. 없으면 개정 후보를 만들 수 없다 */
+  baseVersion: {
+    id: string;
+    versionNum: number;
+    status: string;
+    effectiveDate: string | null;
+    content: string;
+  } | null;
+  skipReason: 'not_in_force' | null;
+};
+
+export type LawImpact = {
+  event: LawChangeEvent;
+  /** 영향 분석 기준일 (YYYY-MM-DD) */
+  asOf: string;
+  impacted: ImpactedArticle[];
+  /** 확정 안 된(추천) 연결 수 — 영향에 넣지 않는다 */
+  suggestedCount: number;
+  /** 영향을 찾을 수 없는 사유(법령에서 사라진 조문 등) */
+  unresolvable: string | null;
+};
+
+export const lawChangesApi = {
+  list: (params: { lawId?: string; affected?: boolean; limit?: number }): Promise<LawChangeListItem[]> =>
+    client.get('/law-changes', { params }).then((r) => r.data),
+  impact: (id: string, asOf?: string): Promise<LawImpact> =>
+    client.get(`/law-changes/${id}/impact`, { params: asOf ? { asOf } : undefined }).then((r) => r.data),
+};

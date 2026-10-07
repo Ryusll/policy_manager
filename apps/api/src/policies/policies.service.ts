@@ -6,6 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
 import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
@@ -186,12 +187,9 @@ export class PoliciesService {
             articles: {
               include: {
                 versions: {
-                  // 시행 이력이 있는 버전만 후보(초안·검토중 제외)
-                  where: {
-                    status: { in: ['published', 'archived'] },
-                    effectiveDate: { not: null, lte: asOfDate },
-                  },
-                  orderBy: [{ effectiveDate: 'desc' }, { versionNum: 'desc' }],
+                  // 시행 이력이 있는 버전만 후보(초안·검토중 제외) — 규칙은 common/as-of.ts
+                  where: asOfVersionWhere(asOfDate),
+                  orderBy: AS_OF_VERSION_ORDER,
                   take: 1,
                 },
               },
@@ -433,11 +431,8 @@ export class PoliciesService {
       where: { chapter: { policyId } },
       include: {
         versions: {
-          where: {
-            status: { in: ['published', 'archived'] },
-            effectiveDate: { not: null, lte: asOfDate },
-          },
-          orderBy: [{ effectiveDate: 'desc' }, { versionNum: 'desc' }],
+          where: asOfVersionWhere(asOfDate),
+          orderBy: AS_OF_VERSION_ORDER,
           take: 1,
         },
       },
