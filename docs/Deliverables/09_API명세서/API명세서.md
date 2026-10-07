@@ -52,7 +52,7 @@
 | GET | (root) | admin, editor | 규정 목록(검색·필터) |
 | GET | import-logs | admin, editor | 가져오기 이력 |
 | POST | import-logs | admin, editor | 가져오기 이력 기록 |
-| GET | :id | admin, editor | 규정 상세(조·항·목 정렬 포함) |
+| GET | :id | admin, editor | 규정 상세. 조문은 **조 → 가지(`branchNumber`, 제3조의2) → 조 본문 → 항 → 목** 순. 조문마다 `versions`(최신 시행본 1건)와 `_count.comments`(**처리 안 된** 의견 수). **admin·editor 에게만** 조문마다 `pendingVersion`(시행본 유무와 무관한 최신 초안·검토중 버전, 없으면 null)을 더한다 — 시행본이 없는 조문은 화면이 이것을 "초안 · 시행 전"으로 보인다. 열람자에게는 보내지 않는다 (T-117) |
 | POST | (root) | admin, editor | 규정 생성 |
 | PUT | :id | admin, editor | 규정 수정(개정일·시행일·알림 설정 포함) |
 | DELETE | :id | admin | 규정 삭제 |
@@ -80,15 +80,15 @@
 | POST | :id/export/hwpx | JWT | **전문 한/글 내보내기.** Body는 같은 HTML, 응답은 `application/hwp+zip`. **`.hwp` 가 아니라 `.hwpx`** — `.hwp` 는 독점 바이너리라 서버에서 만들 수 없다([ADR-0016](../10_ADR_의사결정기록/ADR.md)). 한/글 2014 이상에서 열린다. 감사 로그 `policy.export.hwpx` |
 | POST | :id/files | admin, editor | 첨부파일 업로드(≤50MB, PDF·Word·Excel·PNG·JPEG). 감사 `policy.file.upload` |
 | GET | :id/files | JWT | 첨부파일 목록. `originalName`은 **올린 그대로의 이름**(한글 포함) |
-| GET | :id/files/:filename | JWT | 첨부파일 다운로드. 한글 이름은 RFC 5987(`filename*=UTF-8''…`)로 실어 보낸다 |
+| GET | :id/files/:filename | JWT | 첨부파일 다운로드. 한글 이름은 RFC 5987(`filename*=UTF-8''…`)로 실어 보낸다. **토큰은 `Authorization` 헤더로만 받는다** — 화면에서 `<a href>`로 바로 열면 401이다. 웹은 헤더를 실어 받아 브라우저 안에서 연다(T-120) |
 | DELETE | :id/files/:filename | admin, editor | 첨부파일 삭제. 감사 `policy.file.delete`(details에 `fileName`) |
 
 > **디스크 저장명과 표시 이름은 다르다.** 저장명은 `{시각}-{난수}-{base64url(원래이름)}{확장자}` 형태의 ASCII 안전 문자열이고([T-41](../15_보안검토서/보안_검토서.md)의 경로 탈출 방어가 저장명을 `[A-Za-z0-9._-]`로 제한한다), 표시용 `originalName`은 여기서 되돌려 만든다. `:filename` 자리에는 **저장명(목록의 `id`)** 을 넣는다. 이 형식 이전에 올라간 파일은 저장명이 그대로 표시된다(T-90).
 
 > **첨부파일 4종 공통(T-41)**: 규정 소유를 먼저 확인하므로 남의 규정이면 404다. `:id`·`:filename` 은 형식 검사를 통과해야 하며(UUID / 저장 파일명), 조립 경로가 업로드 루트를 벗어나면 400. 예전에는 인코딩한 슬래시로 경로를 거슬러 올라가 컨테이너의 임의 파일을 읽고 지울 수 있었다.
 
-| GET | :id/jo-order | JWT | 조 재정렬 시작점 — 현재 조 차례(`[{chapterId, jo}]`) |
-| PUT | :id/jo-order | admin·editor | 조 순서 일괄 재정렬·번호 재부여. Body: `order: [{chapterId, jo}]` — **규정의 모든 조를 문서 순서대로 한 번씩**. `jo` 는 옮기기 전 번호. 빠지거나 겹치면 400. 조에 딸린 항·목 행도 함께 움직이고, 장이 바뀌면 절 지정은 풀린다(T-60) |
+| GET | :id/jo-order | JWT | 조 재정렬 시작점 — 현재 조 차례(`[{chapterId, jo, branch?}]`). 가지 조문(제3조의2)은 `branch` 를 단 별도 항목 (T-118) |
+| PUT | :id/jo-order | admin·editor | 조 순서 일괄 재정렬·번호 재부여. Body: `order: [{chapterId, jo, branch?}]` — **규정의 모든 조를 문서 순서대로 한 번씩**. `jo`·`branch` 는 옮기기 전 번호. 재정렬하면 1부터 다시 매기므로 가지 번호는 풀린다(T-118). 빠지거나 겹치면 400. 조에 딸린 항·목 행도 함께 움직이고, 장이 바뀌면 절 지정은 풀린다(T-60) |
 
 ## versions (`/api/articles/:articleId/versions`, `/api/versions/:id`)
 | Method | Path | 인증 | 설명 |
@@ -102,6 +102,7 @@
 | POST | versions/:id/reject | admin | 검토 반려(review→draft). Body: `reason`(**필수**) — 사유는 버전의 `reviewNote` 에 남아 편집자에게 보인다. 다시 검토 요청하면 지워진다 (T-10) |
 | POST | versions/:id/archive | admin | 게시본 폐지(published→archived). 응답에 `remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10) |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
+| POST | policies/:policyId/publish-drafts | admin | **시행된 적 없는 조문의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate?`(YYYY-MM-DD, 없으면 오늘). 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건") |
 
 ## comments (`/api/articles/:articleId/comments`, `/api/comments/:id`)
 | Method | Path | 인증 | 설명 |
@@ -170,10 +171,10 @@
 ## regulation-parse (`/api/regulation-parse`) — 화면: `/policies/import` (T-12, 8/12)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | upload | admin, editor | PDF 업로드 → 텍스트 추출(Python pdfplumber/pymupdf). 최대 30MB. (빌드 블로커는 T-01에서 해소됨) |
+| POST | upload | admin, editor | PDF 업로드 → 텍스트 추출(Python pdfplumber/pymupdf) → 조항 트리. 최대 30MB. 파싱에 성공하면 **원문 PDF를 세션 이름(`<세션id>.pdf`)으로 보관**해 `extractMeta.sourceFile` 에 적는다(등록 시 첨부로 옮김, 미등록은 일주일 뒤 정리). 한글 파일명은 latin1 해석을 바로잡아 `fileName` 에 저장 (T-120) |
 | GET | :id | admin, editor, viewer | 파싱 세션 조회 |
 | PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14) |
-| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 커밋. 응답 `{policyId, sessionId, articleCount}`. **현재 트리를 전부 조(條)로 평탄화** — 항·목 매핑은 T-88 |
+| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120) |
 
 ## admin (`/api/admin`)
 

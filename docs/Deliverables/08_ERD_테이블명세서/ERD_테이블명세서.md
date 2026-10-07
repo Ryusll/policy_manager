@@ -92,6 +92,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | chapterId | uuid FK → Chapter (cascade) | |
 | sectionId | uuid FK? → Section (SetNull) | **nullable**. 절에 속하지 않는 조는 null |
 | number | int | 조 번호 |
+| branchNumber | int? | 조의 **가지 번호**. "제3조의2"면 `number=3, branchNumber=2`. 가지 조문이 아니면 null. 조 하나 = (`number`, `branchNumber`) — 정렬은 조 → 가지 → 항 → 목 (T-118, 마이그레이션 `20261007200000_article_branch_number`) |
 | clauseNumber | int? | 항 번호 (null이면 조 루트/조 본문) |
 | itemNumber | int? | 목 번호 (null이면 조 또는 항) |
 | title | string | 조/항/목 제목 |
