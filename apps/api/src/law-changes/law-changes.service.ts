@@ -164,6 +164,7 @@ export class LawChangesService {
           select: {
             id: true,
             number: true,
+            branchNumber: true,
             clauseNumber: true,
             itemNumber: true,
             title: true,
@@ -196,6 +197,7 @@ export class LawChangesService {
           article: {
             id: link.article.id,
             number: link.article.number,
+            branchNumber: link.article.branchNumber,
             clauseNumber: link.article.clauseNumber,
             itemNumber: link.article.itemNumber,
             title: link.article.title,
@@ -216,6 +218,7 @@ export class LawChangesService {
         (a, b) =>
           a.policy.title.localeCompare(b.policy.title, 'ko') ||
           a.article.number - b.article.number ||
+          (a.article.branchNumber ?? 0) - (b.article.branchNumber ?? 0) ||
           (a.article.clauseNumber ?? 0) - (b.article.clauseNumber ?? 0) ||
           (a.article.itemNumber ?? 0) - (b.article.itemNumber ?? 0),
       );

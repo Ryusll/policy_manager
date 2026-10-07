@@ -15,6 +15,8 @@
 export type ThreeWayArticle = {
   id: string;
   number: number;
+  /** "제3조의2"의 2. 없으면 null/undefined */
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   title: string;
@@ -38,6 +40,7 @@ export type ThreeWayRelated = {
 export type ThreeWayRow = {
   /** 기준 규정의 조 번호. 연결 안 된 행은 null */
   number: number | null;
+  branchNumber?: number | null;
   base: ThreeWayArticle | null;
   related: ThreeWayRelated[];
 };
@@ -63,10 +66,11 @@ export function extractUpperRefs(text: string): number[] {
   return out;
 }
 
-/** 조 → 항 → 목 순 */
+/** 조 → 가지(제3조의2) → 항 → 목 순 */
 function byPosition(a: ThreeWayArticle, b: ThreeWayArticle): number {
   return (
     a.number - b.number ||
+    (a.branchNumber ?? 0) - (b.branchNumber ?? 0) ||
     (a.clauseNumber ?? -1) - (b.clauseNumber ?? -1) ||
     (a.itemNumber ?? -1) - (b.itemNumber ?? -1)
   );
@@ -80,8 +84,9 @@ export function buildThreeWayRows(
   const baseJo = base.filter((a) => a.clauseNumber == null && a.itemNumber == null).sort(byPosition);
   const rowByNumber = new Map<number, ThreeWayRow>();
   const rows: ThreeWayRow[] = baseJo.map((article) => {
-    const row: ThreeWayRow = { number: article.number, base: article, related: [] };
-    rowByNumber.set(article.number, row);
+    const row: ThreeWayRow = { number: article.number, branchNumber: article.branchNumber ?? null, base: article, related: [] };
+    // 하위 규정은 "제3조"처럼 조 번호로 인용한다 — 가지 조문(제3조의2)이 제3조 자리를 차지하면 안 된다
+    if (!article.branchNumber) rowByNumber.set(article.number, row);
     return row;
   });
 

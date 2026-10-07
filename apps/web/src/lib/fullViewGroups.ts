@@ -10,6 +10,8 @@ import { groupArticlesByJo, flattenJoGroup } from './legalArticleLabel';
 
 export type FullViewJoGroup = {
   articleNumber: number;
+  /** 가지 번호(제3조의2의 2). 가지 조문이 아니면 null */
+  articleBranch: number | null;
   main: any;
   hangs: { clauseNumber: number; hang: any; items: any[] }[];
   orphanItems: any[];
@@ -29,9 +31,18 @@ export type FullViewChapterBlock =
   | { kind: 'groups'; groups: FullViewJoGroup[] }
   | { kind: 'section'; id: string; number: number; title: string; groups: FullViewJoGroup[] };
 
+/**
+ * 조 그룹 키. 가지 조문이 아니면 조 번호(숫자) 그대로, 가지 조문이면 "3-2".
+ * 선택 인쇄(T-74)가 이 키로 조를 고른다 — 번호만 쓰면 제3조를 고를 때 제3조의2도 딸려 온다.
+ */
+export function fullViewGroupKey(group: { articleNumber: number; articleBranch?: number | null }): number | string {
+  return group.articleBranch ? `${group.articleNumber}-${group.articleBranch}` : group.articleNumber;
+}
+
 function toJoGroups(articles: any[]): FullViewJoGroup[] {
   return groupArticlesByJo(articles || []).map((g) => ({
     articleNumber: g.jo,
+    articleBranch: g.branch,
     main: g.main,
     hangs: g.hangs,
     orphanItems: g.orphanItems,
@@ -60,16 +71,16 @@ export function buildFullViewGroups(chapters: any[] | undefined | null): any[] {
 
     // 조 그룹 단위로 소속 절을 정한다(같은 조의 항·목은 조와 같은 절에 있다고 본다).
     const allGroups = toJoGroups(articles);
-    const sectionIdOfGroup = new Map<number, string | null>();
+    const sectionIdOfGroup = new Map<number | string, string | null>();
     for (const group of allGroups) {
       const rows = joGroupRenderRows(group);
       const owner = rows.find((r) => r.article?.sectionId != null)?.article?.sectionId ?? null;
-      sectionIdOfGroup.set(group.articleNumber, owner ? String(owner) : null);
+      sectionIdOfGroup.set(fullViewGroupKey(group), owner ? String(owner) : null);
     }
 
     const blocks: FullViewChapterBlock[] = [];
     for (const group of allGroups) {
-      const sectionId = sectionIdOfGroup.get(group.articleNumber) ?? null;
+      const sectionId = sectionIdOfGroup.get(fullViewGroupKey(group)) ?? null;
       const last = blocks[blocks.length - 1];
 
       if (sectionId == null) {
@@ -141,9 +152,9 @@ export function joGroupRenderRows(group: any): FullViewRenderRow[] {
  * 조문이 하나도 안 남은 절·장 블록은 함께 지운다. 빈 장 제목만 인쇄되면
  * 무엇을 뽑은 건지 알아볼 수 없다.
  */
-export function filterFullViewGroupsByJo(chapters: any[], selected: Set<number>): any[] {
+export function filterFullViewGroupsByJo(chapters: any[], selected: Set<number | string>): any[] {
   if (!selected.size) return chapters;
-  const keep = (group: any) => selected.has(group.articleNumber);
+  const keep = (group: any) => selected.has(fullViewGroupKey(group));
 
   return (chapters || [])
     .map((chapter: any) => {
@@ -159,11 +170,13 @@ export function filterFullViewGroupsByJo(chapters: any[], selected: Set<number>)
     .filter((chapter: any) => chapter.blocks.length > 0);
 }
 
-/** 전문 보기 그룹에 들어 있는 조 번호 전부 (전체 선택용) */
-export function collectJoNumbers(chapters: any[]): number[] {
-  const out = new Set<number>();
+/** 전문 보기 그룹에 들어 있는 조 키 전부 (전체 선택용). 가지 조문은 "3-2" */
+export function collectJoNumbers(chapters: any[]): (number | string)[] {
+  const out = new Map<number | string, [number, number]>();
   for (const chapter of chapters || []) {
-    for (const group of chapter.allGroups || []) out.add(group.articleNumber);
+    for (const group of chapter.allGroups || []) {
+      out.set(fullViewGroupKey(group), [group.articleNumber, group.articleBranch || 0]);
+    }
   }
-  return [...out].sort((a, b) => a - b);
+  return [...out.entries()].sort((a, b) => a[1][0] - b[1][0] || a[1][1] - b[1][1]).map(([key]) => key);
 }

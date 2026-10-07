@@ -307,6 +307,9 @@ model Article {
   /// 절(선택 계층). null이면 절에 속하지 않는 조
   sectionId            String?  @map("section_id")
   number               Int
+  /// 조의 가지 번호. "제3조의2"면 number=3, branchNumber=2. 가지 조문이 아니면 null.
+  /// 개정으로 조 사이에 끼워 넣은 조문이라, 번호를 당기면 원문·법령 인용과 어긋난다.
+  branchNumber         Int?     @map("branch_number")
   clauseNumber         Int?     @map("clause_number")
   itemNumber           Int?     @map("item_number")
   title                String

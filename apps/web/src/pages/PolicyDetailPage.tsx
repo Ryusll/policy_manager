@@ -53,6 +53,7 @@ import {
   isArticleJoRoot,
   isChapterHeaderHidden,
   formatKoDate,
+  joKeyOf,
   sortArticlesForToc,
 } from '../lib/legalArticleLabel';
 import CrossPolicyComparePanel from '../components/CrossPolicyComparePanel';
@@ -70,6 +71,7 @@ import {
   buildFullViewGroups,
   collectJoNumbers,
   filterFullViewGroupsByJo,
+  fullViewGroupKey,
 } from '../lib/fullViewGroups';
 import {
   buildArticleCreateRequests,
@@ -235,7 +237,7 @@ function TocArticleButton({
       ? `${articleShortLabel(article)} ${article.title}`
       : `${articleShortLabel(article)}${bodyPreview ? ` ${bodyPreview}` : ''}`;
   const label = isArticleJoRoot(article)
-    ? `${formatArticleJo(article.number)} ${article.title || ''}`.trim()
+    ? `${formatArticleJo(article.number, article.branchNumber)} ${article.title || ''}`.trim()
     : subLabel;
   const hasOpenComments = Number(article._count?.comments ?? 0) > 0;
   const draftOnly = !article.versions?.[0] && article.pendingVersion;
@@ -288,8 +290,9 @@ function TocArticleGroups({
   onToggleJo,
 }: {
   selectMode?: boolean;
-  printSelection?: Set<number>;
-  onToggleJo?: (jo: number) => void;
+  /** 선택 인쇄 키 — 조 번호, 가지 조문은 "3-2" (fullViewGroupKey) */
+  printSelection?: Set<number | string>;
+  onToggleJo?: (key: number | string) => void;
   articles: any[];
   query: string;
   plJo: string;
@@ -298,21 +301,23 @@ function TocArticleGroups({
   selectedArticle: any;
   onSelect: (article: any) => void;
   canEdit?: boolean;
-  onAddHang?: (jo: number) => void;
+  onAddHang?: (jo: number, branch: number | null) => void;
 }) {
   const groups = filterArticleJoGroups(articles, query);
   return (
     <>
       {groups.map((group) => {
-        const joTitle = inferJoTitle(articles, group.jo);
+        const joTitle = inferJoTitle(articles, group.jo, group.branch);
+        const selectKey = fullViewGroupKey({ articleNumber: group.jo, articleBranch: group.branch });
+        const joLabel = formatArticleJo(group.jo, group.branch);
         return (
-        <div key={`jo-${group.jo}`} className="border-b border-gray-100/80 last:border-b-0">
+        <div key={`jo-${joKeyOf(group.jo, group.branch)}`} className="border-b border-gray-100/80 last:border-b-0">
           {selectMode && onToggleJo && (
             <label className="flex items-center gap-1.5 px-2 pt-1.5 text-[11px] text-gray-600 cursor-pointer">
               <input
                 type="checkbox"
-                checked={printSelection?.has(group.jo) ?? false}
-                onChange={() => onToggleJo(group.jo)}
+                checked={printSelection?.has(selectKey) ?? false}
+                onChange={() => onToggleJo(selectKey)}
               />
               인쇄에 포함
             </label>
@@ -327,12 +332,12 @@ function TocArticleGroups({
             />
           ) : (
             <div className={clsx(plJo, 'pr-4 py-2 text-sm font-semibold text-gray-800')}>
-              {formatArticleJo(group.jo)}
+              {joLabel}
               {joTitle ? ` ${joTitle}` : ''}
             </div>
           )}
           {group.hangs.map((hang) => (
-            <div key={`jo-${group.jo}-h-${hang.clauseNumber}`}>
+            <div key={`jo-${joKeyOf(group.jo, group.branch)}-h-${hang.clauseNumber}`}>
               {hang.hang ? (
                 <TocArticleButton
                   article={hang.hang}
@@ -371,13 +376,13 @@ function TocArticleGroups({
           {canEdit && onAddHang && (
             <button
               type="button"
-              onClick={() => onAddHang(group.jo)}
+              onClick={() => onAddHang(group.jo, group.branch)}
               className={clsx(
                 plHang,
                 'w-full flex items-center gap-1 pr-4 py-1.5 text-[11px] text-gray-400 hover:text-navy-700 hover:bg-gray-50',
               )}
             >
-              <Plus size={11} /> {formatArticleJo(group.jo)} 항 추가
+              <Plus size={11} /> {joLabel} 항 추가
             </button>
           )}
         </div>
@@ -505,6 +510,8 @@ export default function PolicyDetailPage() {
     /** 소속 절(선택 계층). 절 없이 장 직속이면 undefined */
     sectionId?: string;
     number: number;
+    /** "제3조의2"의 2 */
+    branchNumber?: number;
     clauseNumber?: number;
     itemNumber?: number;
     title: string;
@@ -580,7 +587,7 @@ export default function PolicyDetailPage() {
   const [showThreeWay, setShowThreeWay] = useState(false);
   const [showA11y, setShowA11y] = useState(false);
   /** 선택 조문 인쇄 (T-74). 비어 있으면 전체를 뜻한다. */
-  const [printSelection, setPrintSelection] = useState<Set<number>>(new Set());
+  const [printSelection, setPrintSelection] = useState<Set<number | string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [relationNotesDraft, setRelationNotesDraft] = useState({
     relatedPrecedentNote: '',
@@ -589,6 +596,7 @@ export default function PolicyDetailPage() {
   });
   const [articleMetaDraft, setArticleMetaDraft] = useState({
     number: 1,
+    branchNumber: '' as string | number,
     clauseNumber: '' as string | number,
     itemNumber: '' as string | number,
     title: '',
@@ -661,6 +669,7 @@ export default function PolicyDetailPage() {
     if (!selectedArticle) return;
     setArticleMetaDraft({
       number: Number(selectedArticle.number) || 1,
+      branchNumber: selectedArticle.branchNumber ?? '',
       clauseNumber: selectedArticle.clauseNumber ?? '',
       itemNumber: selectedArticle.itemNumber ?? '',
       title: selectedArticle.title ?? '',
@@ -668,6 +677,7 @@ export default function PolicyDetailPage() {
   }, [
     selectedArticle?.id,
     selectedArticle?.number,
+    selectedArticle?.branchNumber,
     selectedArticle?.clauseNumber,
     selectedArticle?.itemNumber,
     selectedArticle?.title,
@@ -932,7 +942,7 @@ export default function PolicyDetailPage() {
   const openAddArticleForm = useCallback(
     async (
       chapterId?: string,
-      preset?: { number?: number; clauseNumber?: number; itemNumber?: number },
+      preset?: { number?: number; branchNumber?: number; clauseNumber?: number; itemNumber?: number },
       sectionId?: string,
     ) => {
       if (!id || !canEdit) return;
@@ -953,6 +963,7 @@ export default function PolicyDetailPage() {
         chapterId: ch.id,
         sectionId,
         number: jo,
+        branchNumber: preset?.branchNumber,
         clauseNumber: preset?.clauseNumber,
         itemNumber: preset?.itemNumber,
         title: '',
@@ -1021,6 +1032,10 @@ export default function PolicyDetailPage() {
     mutationFn: () =>
       policiesApi.updateArticle(id!, selectedChapterId, selectedArticle!.id, {
         number: Number(articleMetaDraft.number) || 1,
+        branchNumber:
+          articleMetaDraft.branchNumber === '' || articleMetaDraft.branchNumber == null
+            ? null
+            : Number(articleMetaDraft.branchNumber),
         title: String(articleMetaDraft.title ?? '').trim(),
         clauseNumber:
           articleMetaDraft.clauseNumber === '' || articleMetaDraft.clauseNumber == null
@@ -1252,11 +1267,11 @@ export default function PolicyDetailPage() {
     () => buildPolicySpeech(printableGroups, policy?.title),
     [printableGroups, policy?.title],
   );
-  const toggleJo = useCallback((jo: number) => {
+  const toggleJo = useCallback((key: number | string) => {
     setPrintSelection((prev) => {
       const next = new Set(prev);
-      if (next.has(jo)) next.delete(jo);
-      else next.add(jo);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
@@ -2059,10 +2074,11 @@ export default function PolicyDetailPage() {
                       selectedArticle={selectedArticle}
                       onSelect={selectTocArticle}
                       canEdit={canEdit}
-                      onAddHang={(jo) =>
+                      onAddHang={(jo, branch) =>
                         openAddArticleForm(chapter.id, {
                           number: jo,
-                          clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo),
+                          ...(branch ? { branchNumber: branch } : {}),
+                          clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo, branch),
                         })
                       }
                     />
@@ -2110,10 +2126,11 @@ export default function PolicyDetailPage() {
                       selectedArticle={selectedArticle}
                       onSelect={selectTocArticle}
                       canEdit={canEdit}
-                      onAddHang={(jo) =>
+                      onAddHang={(jo, branch) =>
                         openAddArticleForm(chapter.id, {
                           number: jo,
-                          clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo),
+                          ...(branch ? { branchNumber: branch } : {}),
+                          clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo, branch),
                         })
                       }
                     />
@@ -2146,10 +2163,11 @@ export default function PolicyDetailPage() {
                           selectedArticle={selectedArticle}
                           onSelect={selectTocArticle}
                           canEdit={canEdit}
-                          onAddHang={(jo) =>
+                          onAddHang={(jo, branch) =>
                             openAddArticleForm(chapter.id, {
                               number: jo,
-                              clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo),
+                              ...(branch ? { branchNumber: branch } : {}),
+                              clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo, branch),
                             })
                           }
                         />
@@ -3070,6 +3088,23 @@ export default function PolicyDetailPage() {
                         value={articleMetaDraft.number}
                         onChange={(e) =>
                           setArticleMetaDraft({ ...articleMetaDraft, number: +e.target.value || 1 })
+                        }
+                      />
+                    </div>
+                    <div className="w-16">
+                      <label className="block text-[11px] text-gray-500 mb-1" title="제3조의2처럼 조 사이에 끼운 조문">
+                        의 (선택)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        className="input text-sm py-1.5"
+                        value={articleMetaDraft.branchNumber}
+                        onChange={(e) =>
+                          setArticleMetaDraft({
+                            ...articleMetaDraft,
+                            branchNumber: e.target.value ? Number(e.target.value) : '',
+                          })
                         }
                       />
                     </div>
@@ -4402,6 +4437,22 @@ export default function PolicyDetailPage() {
                     value={newArticle.number}
                     onChange={(e) => setNewArticle({ ...newArticle, number: +e.target.value })} />
                 </div>
+                <div className="w-20">
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">의 (선택)</label>
+                  <p className="text-[10px] text-gray-400 mb-1">제3조의2 → 2</p>
+                  <input
+                    type="number"
+                    className="input"
+                    min={1}
+                    value={newArticle.branchNumber ?? ''}
+                    onChange={(e) =>
+                      setNewArticle({
+                        ...newArticle,
+                        branchNumber: e.target.value ? Number(e.target.value) : undefined,
+                      })
+                    }
+                  />
+                </div>
                 <div className="w-24">
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">항 (선택)</label>
                   <p className="text-[10px] text-gray-400 mb-1">표기: ① ② …</p>
@@ -4451,10 +4502,10 @@ export default function PolicyDetailPage() {
                       let hint = titleFieldHint(newArticle);
                       if (
                         newArticle.clauseNumber != null &&
-                        !chapterHasJoRoot(arts, newArticle.number) &&
+                        !chapterHasJoRoot(arts, newArticle.number, newArticle.branchNumber) &&
                         newArticle.title.trim()
                       ) {
-                        hint += ` 입력한 제목은 ${formatArticleJo(newArticle.number)} 제목으로 저장됩니다.`;
+                        hint += ` 입력한 제목은 ${formatArticleJo(newArticle.number, newArticle.branchNumber)} 제목으로 저장됩니다.`;
                       }
                       return hint;
                    })()}

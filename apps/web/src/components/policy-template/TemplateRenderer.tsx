@@ -14,7 +14,7 @@ import {
   formatItemMok,
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
-import { joGroupRenderRows } from '../../lib/fullViewGroups';
+import { fullViewGroupKey, joGroupRenderRows } from '../../lib/fullViewGroups';
 
 type TemplateLike = {
   id?: string;
@@ -81,7 +81,7 @@ export function DefaultPolicyRenderer({
                   <div className="p-2 space-y-2">
                     {block.groups.map((group: any) => (
                       <JoGroupBlock
-                        key={`${block.id}-${group.articleNumber}`}
+                        key={`${block.id}-${fullViewGroupKey(group)}`}
                         group={group}
                         highlightQuery={highlightQuery}
                         showArticleTitle={showArticleTitle}
@@ -92,7 +92,7 @@ export function DefaultPolicyRenderer({
               ) : (
                 block.groups.map((group: any) => (
                   <JoGroupBlock
-                    key={`${chapter.id}-${blockIdx}-${group.articleNumber}`}
+                    key={`${chapter.id}-${blockIdx}-${fullViewGroupKey(group)}`}
                     group={group}
                     highlightQuery={highlightQuery}
                     showArticleTitle={showArticleTitle}
@@ -123,15 +123,15 @@ function JoGroupBlock({
   return (
     <article
       className="text-sm border border-gray-100 rounded p-2 bg-white"
-      aria-label={`제${group.articleNumber}조`}
+      aria-label={formatArticleJo(group.articleNumber, group.articleBranch)}
     >
       <h3 className="font-semibold text-gray-800 mb-1">
-        {highlightText(formatArticleJo(group.articleNumber), highlightQuery)}
+        {highlightText(formatArticleJo(group.articleNumber, group.articleBranch), highlightQuery)}
       </h3>
       <div className="space-y-2">
         {joGroupRenderRows(group).map(({ article, depth }, idx, rows) => (
           <FullViewArticleRow
-            key={article.id ?? `${group.articleNumber}-${idx}`}
+            key={article.id ?? `${fullViewGroupKey(group)}-${idx}`}
             article={article}
             plClass={DEPTH_PADDING[depth]}
             highlightQuery={highlightQuery}
@@ -173,9 +173,9 @@ function FullViewArticleRow({
   // 들여쓰기로만 표현된 계층을 말로 전달하려면 이 설명이 필요하다. (T-81)
   const spokenPosition =
     article.itemNumber != null
-      ? `제${article.number}조 제${article.clauseNumber ?? 0}항 제${article.itemNumber}목`
+      ? `${formatArticleJo(article.number, article.branchNumber)} 제${article.clauseNumber ?? 0}항 제${article.itemNumber}목`
       : article.clauseNumber != null
-        ? `제${article.number}조 제${article.clauseNumber}항`
+        ? `${formatArticleJo(article.number, article.branchNumber)} 제${article.clauseNumber}항`
         : null;
   return (
     <div className={clsx(plClass, 'border-l-2 border-gray-100 pl-3')}>

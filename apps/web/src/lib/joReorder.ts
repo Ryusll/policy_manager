@@ -9,6 +9,8 @@
 export type JoRow = {
   /** 옮기기 전의 조 번호. 서버가 기존 행을 찾는 열쇠다 */
   jo: number;
+  /** 옮기기 전 가지 번호(제3조의2의 2). 조 하나 = (jo, branch) */
+  branch?: number;
   chapterId: string;
   chapterNumber: number;
   chapterTitle: string;
@@ -22,36 +24,47 @@ type ChapterLike = {
   number: number;
   title?: string | null;
   suppressHeader?: boolean | null;
-  articles?: { number: number; title?: string | null; clauseNumber?: number | null; itemNumber?: number | null }[];
+  articles?: {
+    number: number;
+    branchNumber?: number | null;
+    title?: string | null;
+    clauseNumber?: number | null;
+    itemNumber?: number | null;
+  }[];
 };
 
+const sameJo = (a: { number: number; branchNumber?: number | null }, jo: number, branch: number) =>
+  Number(a.number) === jo && (Number(a.branchNumber) || 0) === branch;
+
 /** 조 제목은 조 본문 행(항·목 번호가 없는 행)에서 가져온다 */
-function joTitleOf(articles: NonNullable<ChapterLike['articles']>, jo: number): string {
-  const root = articles.find(
-    (a) => Number(a.number) === jo && a.clauseNumber == null && a.itemNumber == null,
-  );
+function joTitleOf(articles: NonNullable<ChapterLike['articles']>, jo: number, branch = 0): string {
+  const root = articles.find((a) => sameJo(a, jo, branch) && a.clauseNumber == null && a.itemNumber == null);
   if (root?.title) return String(root.title).trim();
-  const anyRow = articles.find((a) => Number(a.number) === jo && a.title);
+  const anyRow = articles.find((a) => sameJo(a, jo, branch) && a.title);
   return anyRow?.title ? String(anyRow.title).trim() : '';
 }
 
 /** 현재 문서 순서대로 조 목록을 만든다 */
 export function buildJoRows(chapters: ChapterLike[] | undefined | null): JoRow[] {
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   const rows: JoRow[] = [];
   for (const chapter of [...(chapters ?? [])].sort((a, b) => a.number - b.number)) {
     const articles = chapter.articles ?? [];
-    const joNumbers = [...new Set(articles.map((a) => Number(a.number)))].sort((a, b) => a - b);
-    for (const jo of joNumbers) {
-      if (seen.has(jo)) continue;
-      seen.add(jo);
+    const units = articles
+      .map((a) => ({ jo: Number(a.number), branch: Number(a.branchNumber) || 0 }))
+      .sort((a, b) => a.jo - b.jo || a.branch - b.branch);
+    for (const { jo, branch } of units) {
+      const key = `${jo}-${branch}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       rows.push({
         jo,
+        ...(branch ? { branch } : {}),
         chapterId: chapter.id,
         chapterNumber: chapter.number,
         chapterTitle: String(chapter.title ?? '').trim(),
         chapterHidden: chapter.suppressHeader === true,
-        title: joTitleOf(articles, jo),
+        title: joTitleOf(articles, jo, branch),
       });
     }
   }
@@ -72,7 +85,7 @@ export function moveJo(rows: JoRow[], from: number, to: number): JoRow[] {
 
   // 새 이웃의 장을 따른다. 위쪽 이웃이 있으면 그쪽, 없으면 아래쪽.
   const neighbor = next[target - 1] ?? next[target + 1];
-  if (neighbor && neighbor.jo !== moved.jo) {
+  if (neighbor && (neighbor.jo !== moved.jo || (neighbor.branch ?? 0) !== (moved.branch ?? 0))) {
     next[target] = {
       ...moved,
       chapterId: neighbor.chapterId,
@@ -93,11 +106,15 @@ export function assignChapter(rows: JoRow[], index: number, chapter: Pick<JoRow,
 }
 
 /** 저장 후 번호가 어떻게 바뀌는지 — 바뀌는 것만 보여 주려고 쓴다 */
-export function renumberPreview(rows: JoRow[]): { jo: number; newNumber: number; moved: boolean }[] {
+export function renumberPreview(
+  rows: JoRow[],
+): { jo: number; branch?: number; newNumber: number; moved: boolean }[] {
   return rows.map((row, idx) => ({
     jo: row.jo,
+    ...(row.branch ? { branch: row.branch } : {}),
     newNumber: idx + 1,
-    moved: row.jo !== idx + 1,
+    // 가지 조문은 재정렬하면 차례 번호를 받아 "의2"가 풀린다 — 그것도 바뀌는 것이다
+    moved: row.jo !== idx + 1 || !!row.branch,
   }));
 }
 
@@ -105,11 +122,14 @@ export function renumberPreview(rows: JoRow[]): { jo: number; newNumber: number;
 export function hasReorderChanges(original: JoRow[], next: JoRow[]): boolean {
   if (original.length !== next.length) return true;
   return next.some(
-    (row, idx) => row.jo !== original[idx].jo || row.chapterId !== original[idx].chapterId,
+    (row, idx) =>
+      row.jo !== original[idx].jo ||
+      (row.branch ?? 0) !== (original[idx].branch ?? 0) ||
+      row.chapterId !== original[idx].chapterId,
   );
 }
 
 /** 서버에 보낼 형태 */
-export function toReorderPayload(rows: JoRow[]): { chapterId: string; jo: number }[] {
-  return rows.map((r) => ({ chapterId: r.chapterId, jo: r.jo }));
+export function toReorderPayload(rows: JoRow[]): { chapterId: string; jo: number; branch?: number }[] {
+  return rows.map((r) => ({ chapterId: r.chapterId, jo: r.jo, ...(r.branch ? { branch: r.branch } : {}) }));
 }

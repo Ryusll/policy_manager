@@ -14,6 +14,8 @@ export type ReorderArticleRow = {
   chapterId: string;
   sectionId: string | null;
   number: number;
+  /** "제3조의2"의 2. 조 하나 = (조 번호, 가지 번호) */
+  branchNumber?: number | null;
 };
 
 /** 화면이 보낸 새 순서 — 문서에 나타나는 차례대로 */
@@ -21,11 +23,15 @@ export type ReorderTarget = {
   chapterId: string;
   /** 옮기기 **전**의 조 번호. 이걸로 기존 행을 찾는다 */
   jo: number;
+  /** 옮기기 전 가지 번호(제3조의2면 2). 가지 조문이 아니면 생략 */
+  branch?: number | null;
 };
 
 export type ReorderChange = {
   id: string;
   number: number;
+  /** 재정렬하면 1부터 차례로 다시 매기므로 가지 번호는 풀린다 */
+  branchNumber: null;
   chapterId: string;
   /** 장이 바뀌면 절은 풀어야 한다 — 절은 장에 속하므로 */
   sectionId: string | null;
@@ -57,8 +63,9 @@ export function buildReorderPlan(
     }
   }
 
-  const existing = new Set(rows.map((r) => r.number));
-  const requested = order.map((t) => t.jo);
+  const keyOf = (jo: number, branch?: number | null) => `${jo}-${branch || 0}`;
+  const existing = new Set(rows.map((r) => keyOf(r.number, r.branchNumber)));
+  const requested = order.map((t) => keyOf(t.jo, t.branch));
   const requestedSet = new Set(requested);
 
   if (requested.length !== requestedSet.size) {
@@ -69,22 +76,23 @@ export function buildReorderPlan(
     throw new ReorderPlanError('규정의 모든 조를 빠짐없이 한 번씩 보내야 합니다.');
   }
 
-  const byOldJo = new Map<number, ReorderArticleRow[]>();
+  const byOldJo = new Map<string, ReorderArticleRow[]>();
   for (const row of rows) {
-    const list = byOldJo.get(row.number);
+    const key = keyOf(row.number, row.branchNumber);
+    const list = byOldJo.get(key);
     if (list) list.push(row);
-    else byOldJo.set(row.number, [row]);
+    else byOldJo.set(key, [row]);
   }
 
   const changes: ReorderChange[] = [];
   order.forEach((target, idx) => {
     const newNumber = idx + 1;
-    for (const row of byOldJo.get(target.jo) ?? []) {
+    for (const row of byOldJo.get(keyOf(target.jo, target.branch)) ?? []) {
       const chapterChanged = row.chapterId !== target.chapterId;
       // 장이 바뀌면 절을 푼다. 절은 장 소속이라 그대로 두면 남의 장 절을 가리킨다.
       const sectionId = chapterChanged ? null : row.sectionId;
-      if (row.number === newNumber && !chapterChanged) continue;
-      changes.push({ id: row.id, number: newNumber, chapterId: target.chapterId, sectionId });
+      if (row.number === newNumber && !row.branchNumber && !chapterChanged) continue;
+      changes.push({ id: row.id, number: newNumber, branchNumber: null, chapterId: target.chapterId, sectionId });
     }
   });
 
@@ -93,17 +101,20 @@ export function buildReorderPlan(
 
 /** 현재 문서 순서 — 화면이 보내지 않은 조가 있는지 대조할 때와 초기 순서를 만들 때 쓴다 */
 export function currentJoOrder(
-  chapters: { id: string; number: number; articles: { number: number }[] }[],
+  chapters: { id: string; number: number; articles: { number: number; branchNumber?: number | null }[] }[],
 ): ReorderTarget[] {
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   const out: ReorderTarget[] = [];
   const sortedChapters = [...chapters].sort((a, b) => a.number - b.number);
   for (const chapter of sortedChapters) {
-    const joNumbers = [...new Set(chapter.articles.map((a) => a.number))].sort((a, b) => a - b);
-    for (const jo of joNumbers) {
-      if (seen.has(jo)) continue;
-      seen.add(jo);
-      out.push({ chapterId: chapter.id, jo });
+    const units = chapter.articles
+      .map((a) => ({ jo: a.number, branch: a.branchNumber || 0 }))
+      .sort((a, b) => a.jo - b.jo || a.branch - b.branch);
+    for (const { jo, branch } of units) {
+      const key = `${jo}-${branch}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(branch ? { chapterId: chapter.id, jo, branch } : { chapterId: chapter.id, jo });
     }
   }
   return out;

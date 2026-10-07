@@ -17,6 +17,7 @@ import {
 import { formatKoDate } from '../lib/legalArticleLabel';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
+import { formatArticleJo } from '../lib/legalArticleLabel';
 
 const KIND_LABEL: Record<PolicyRevisionKind, string> = {
   enactment: '제정',
@@ -62,7 +63,7 @@ function collectArticleChangeNotes(policy: any) {
       if (!note) continue;
       rows.push({
         key: version.id,
-        label: `제${article.number}조${article.title ? ` (${article.title})` : ''}`,
+        label: `${formatArticleJo(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`,
         note,
         effectiveDate: version.effectiveDate ?? null,
       });

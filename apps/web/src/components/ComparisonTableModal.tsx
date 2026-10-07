@@ -36,6 +36,7 @@ const KIND_BADGE: Record<CompareKind, string> = {
 function rowLabel(row: CompareRow) {
   return articleShortLabel({
     number: row.number,
+    branchNumber: row.branchNumber,
     clauseNumber: row.clauseNumber,
     itemNumber: row.itemNumber,
   });

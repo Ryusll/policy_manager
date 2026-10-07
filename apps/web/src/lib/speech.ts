@@ -9,12 +9,13 @@
  * 그래서 문장 단위로 잘라 큐로 넣는다.
  */
 
-import { isChapterHeaderHidden } from './legalArticleLabel';
+import { formatArticleJo, isChapterHeaderHidden } from './legalArticleLabel';
 
 export const SPEECH_CHUNK_LIMIT = 180;
 
 export type SpeakableArticle = {
   number: number;
+  branchNumber?: number | null;
   clauseNumber?: number | null;
   itemNumber?: number | null;
   title?: string | null;
@@ -25,7 +26,7 @@ export type SpeakableArticle = {
 export function articleToSpeech(article: SpeakableArticle): string {
   const parts: string[] = [];
   if (article.clauseNumber == null && article.itemNumber == null) {
-    parts.push(`제${article.number}조`);
+    parts.push(formatArticleJo(article.number, article.branchNumber));
     if (article.title) parts.push(article.title);
   } else if (article.itemNumber != null) {
     parts.push(`제${article.itemNumber}목`);

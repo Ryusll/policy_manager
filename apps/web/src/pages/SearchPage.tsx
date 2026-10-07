@@ -9,6 +9,8 @@ import { useI18n } from '../i18n/useI18n';
 import { PageHeader } from '../components/ui/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
+import { articleHash } from '../lib/articleAnchor';
+import { formatArticleJo } from '../lib/legalArticleLabel';
 
 export default function SearchPage() {
   const { t } = useI18n();
@@ -165,13 +167,13 @@ export default function SearchPage() {
                   {suggestions.articles.map((a) => (
                     <Link
                       key={a.id}
-                      to={`/policies/${a.policyId}#제${a.number}조`}
+                      to={`/policies/${a.policyId}${articleHash({ number: a.number, branchNumber: a.branchNumber })}`}
                       onClick={() => setOpenPanel(false)}
                       className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                     >
                       <BookOpen size={13} className="text-gold-600 flex-none" />
                       <span className="truncate">
-                        제{a.number}조 {a.title}
+                        {formatArticleJo(a.number, a.branchNumber)} {a.title}
                       </span>
                       <span className="ml-auto text-[10px] text-gray-400 truncate max-w-[40%] flex-none">
                         {a.policyTitle}

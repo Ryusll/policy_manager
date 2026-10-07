@@ -183,3 +183,45 @@ describe('buildReorderPlan (T-60)', () => {
     });
   });
 });
+
+describe('가지 조문(제3조의2) 재정렬', () => {
+  const branchRows: ReorderArticleRow[] = [
+    { id: 'b3', chapterId: CH1, sectionId: null, number: 3 },
+    { id: 'b3-2', chapterId: CH1, sectionId: null, number: 3, branchNumber: 2 },
+    { id: 'b3-2-c1', chapterId: CH1, sectionId: null, number: 3, branchNumber: 2 },
+    { id: 'b4', chapterId: CH1, sectionId: null, number: 4 },
+  ];
+
+  it('현재 차례에 제3조와 제3조의2가 따로 나온다', () => {
+    expect(currentJoOrder([{ id: CH1, number: 1, articles: branchRows }])).toEqual([
+      { chapterId: CH1, jo: 3 },
+      { chapterId: CH1, jo: 3, branch: 2 },
+      { chapterId: CH1, jo: 4 },
+    ]);
+  });
+
+  it('제3조의2는 항까지 함께 움직이고, 재정렬 뒤에는 차례 번호를 받아 가지 번호가 풀린다', () => {
+    const changes = buildReorderPlan(
+      branchRows,
+      [
+        { chapterId: CH1, jo: 3, branch: 2 },
+        { chapterId: CH1, jo: 3 },
+        { chapterId: CH1, jo: 4 },
+      ],
+      CHAPTERS,
+    );
+    const byId = Object.fromEntries(changes.map((c) => [c.id, [c.number, c.branchNumber]]));
+    expect(byId).toEqual({
+      'b3-2': [1, null],
+      'b3-2-c1': [1, null],
+      b3: [2, null],
+      b4: [3, null],
+    });
+  });
+
+  it('가지 조문을 빠뜨리면 거절한다', () => {
+    expect(() =>
+      buildReorderPlan(branchRows, [{ chapterId: CH1, jo: 3 }, { chapterId: CH1, jo: 4 }], CHAPTERS),
+    ).toThrow(ReorderPlanError);
+  });
+});

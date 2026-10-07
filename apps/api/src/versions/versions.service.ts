@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { RevisionNotifyService } from '../notifications/revision-notify.service';
 import { coerceNullableDate, todayDateOnly } from '../common/date-only';
 import * as Diff from 'diff';
+import { ARTICLE_ORDER, formatJo } from '../common/article-label';
 
 @Injectable()
 export class VersionsService {
@@ -179,7 +180,7 @@ export class VersionsService {
     const policy = version.article?.chapter?.policy;
     const article = version.article;
     if (policy && article) {
-      const articleLabel = `제${article.number}조${article.title ? ` (${article.title})` : ''}`;
+      const articleLabel = `${formatJo(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`;
       const notifyResult = await this.revisionNotify.dispatchPolicyRevisionApproved({
         tenantId,
         policyId: policy.id,
@@ -249,6 +250,7 @@ export class VersionsService {
       select: {
         id: true,
         number: true,
+        branchNumber: true,
         title: true,
         clauseNumber: true,
         itemNumber: true,
@@ -259,7 +261,7 @@ export class VersionsService {
           select: { id: true },
         },
       },
-      orderBy: [{ number: 'asc' }, { clauseNumber: { sort: 'asc', nulls: 'first' } }, { itemNumber: { sort: 'asc', nulls: 'first' } }],
+      orderBy: ARTICLE_ORDER,
     });
     const targets = articles.filter((a) => a.versions.length > 0);
     if (!targets.length) return { published: 0 };
@@ -284,7 +286,7 @@ export class VersionsService {
     });
 
     const first = targets[0];
-    const firstLabel = `제${first.number}조${first.title ? ` (${first.title})` : ''}`;
+    const firstLabel = `${formatJo(first.number, first.branchNumber)}${first.title ? ` (${first.title})` : ''}`;
     const notifyResult = await this.revisionNotify.dispatchPolicyRevisionApproved({
       tenantId,
       policyId,

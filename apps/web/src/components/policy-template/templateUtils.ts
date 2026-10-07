@@ -129,8 +129,11 @@ const ROW_CLASS_BY_DEPTH = ['tmpl-row-jo', 'tmpl-row-hang', 'tmpl-row-item'] as 
 
 function appendJoGroupHtml(out: string[], group: any, highlightQuery?: string) {
   const an = Number(group?.articleNumber) || 0;
-  out.push(`<div class="tmpl-article-block tmpl-art-${an}" data-article="${an}">`);
-  out.push(`<div class="tmpl-article-label">${escapeHtmlText(formatArticleJo(an))}</div>`);
+  const branch = Number(group?.articleBranch) || 0;
+  const artClass = branch ? `tmpl-art-${an}-${branch}` : `tmpl-art-${an}`;
+  const branchAttr = branch ? ` data-branch="${branch}"` : '';
+  out.push(`<div class="tmpl-article-block ${artClass}" data-article="${an}"${branchAttr}>`);
+  out.push(`<div class="tmpl-article-label">${escapeHtmlText(formatArticleJo(an, branch))}</div>`);
 
   const rows = joGroupRenderRows(group);
   for (const { article, depth } of rows) {

@@ -31,6 +31,8 @@ import { RegulationArticleNode, parseJoNorm } from './regulation-tree.builder';
 
 export type CommitRow = {
   number: number;
+  /** "제3조의2"의 2. 가지 조문이 아니면 null */
+  branchNumber: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   title: string;
@@ -92,7 +94,10 @@ export function classifyNorm(norm: string): Kind {
  */
 function titleFor(node: RegulationArticleNode, kind: Kind): string {
   if (kind !== 'jo') return '';
-  return (node.articleTitle || '').trim().slice(0, 500);
+  const title = (node.articleTitle || '').trim();
+  // 제목이 없으면 매퍼가 "제3조의2"를 제목 칸에 넣는다 — 번호는 구조로 들어가니 제목으로 두면 두 번 보인다
+  if (/^제\s*\d+\s*조(?:\s*의\s*\d+)?$/.test(title)) return '';
+  return title.slice(0, 500);
 }
 
 /** 항·목 제목 칸에 올 수 있는 번호 표기. 이것만 있으면 버리고, 문장이 있으면 본문으로 살린다 */
@@ -145,6 +150,8 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
   const preamble: string[] = [];
   const appendices: CommitAppendix[] = [];
   let joNumber = 0;
+  /** 같은 조 번호 안에서 마지막으로 받은 가지 번호 */
+  let lastBranch = 0;
   let chapterIndex = -1;
   let sectionIndex: number | null = null;
 
@@ -162,6 +169,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
     nodes: RegulationArticleNode[],
     ctx: {
       jo: number;
+      branch: number | null;
       hang: number | null;
       inMok: boolean;
       hangCount: { n: number };
@@ -198,7 +206,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
         });
         chapterIndex = chapters.length - 1;
         sectionIndex = null;
-        visit(children, { jo: 0, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
+        visit(children, { jo: 0, branch: null, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
         continue;
       }
 
@@ -209,7 +217,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
           title: (node.articleTitle || '').trim() || `제${chapters[ci].sections.length + 1}절`,
         });
         sectionIndex = chapters[ci].sections.length - 1;
-        visit(children, { jo: 0, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
+        visit(children, { jo: 0, branch: null, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
         continue;
       }
 
@@ -218,9 +226,19 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
         // 원문 조 번호를 그대로 쓴다. 삭제된 조로 번호가 비어도 "제5조"는 제5조여야 한다.
         // 번호가 앞으로 가지 않으면(조의2, 부칙처럼 다시 1부터, 미리보기에서 손댄 번호) 다음 번호를 준다.
         const src = parseJoNorm(node.articleNumber.trim());
-        joNumber = src && src.branch === 0 && src.n > joNumber ? src.n : joNumber + 1;
+        let branch: number | null = null;
+        if (src && src.n > joNumber) {
+          joNumber = src.n;
+          branch = src.branch || null;
+        } else if (src && src.branch > 0 && src.n === joNumber && src.branch > lastBranch) {
+          branch = src.branch; // 제3조 다음 제3조의2 — 번호를 새로 받지 않고 가지로 붙는다
+        } else {
+          joNumber += 1;
+        }
+        lastBranch = branch ?? 0;
         const row: CommitRow = {
           number: joNumber,
+          branchNumber: branch,
           clauseNumber: null,
           itemNumber: null,
           title: titleFor(node, 'jo'),
@@ -231,6 +249,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
         rows.push(row);
         visit(children, {
           jo: joNumber,
+          branch,
           hang: null,
           inMok: false,
           hangCount: { n: 0 },
@@ -252,8 +271,10 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
         joNumber += 1;
         const label = (node.articleTitle || '').trim();
         const body = itemText(node);
+        lastBranch = 0;
         const row: CommitRow = {
           number: joNumber,
+          branchNumber: null,
           clauseNumber: null,
           itemNumber: null,
           title: '',
@@ -262,7 +283,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
           sectionIndex,
         };
         rows.push(row);
-        visit(children, { jo: joNumber, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: row });
+        visit(children, { jo: joNumber, branch: null, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: row });
         continue;
       }
 
@@ -271,6 +292,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
         ctx.hangCount.n = nextIndex(ctx.hangCount.n, node.articleNumber);
         const row: CommitRow = {
           number: ctx.jo,
+          branchNumber: ctx.branch,
           clauseNumber: ctx.hangCount.n,
           itemNumber: null,
           title: '',
@@ -293,6 +315,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
       ctx.mokCount.n = nextIndex(ctx.mokCount.n, node.articleNumber);
       const row: CommitRow = {
         number: ctx.jo,
+        branchNumber: ctx.branch,
         // 상위 항이 없는 목은 항 번호를 비운다(전문 보기가 항 위치에 그린다)
         clauseNumber: ctx.hang,
         itemNumber: ctx.mokCount.n,
@@ -306,7 +329,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
     }
   };
 
-  visit(roots, { jo: 0, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
+  visit(roots, { jo: 0, branch: null, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: null });
 
   return dropEmpty({ chapters, rows, preamble: preamble.join('\n'), appendices });
 }

@@ -49,6 +49,7 @@ import {
   CreateRevisionReasonDto,
   UpdateRevisionReasonDto,
 } from './policies.dto';
+import { ARTICLE_ORDER } from '../common/article-label';
 
 @Injectable()
 export class PoliciesService {
@@ -150,11 +151,7 @@ export class PoliciesService {
                 // 목차의 "의견 있음" 점 — 처리 안 된 의견이 있을 때만 찍는다
                 _count: { select: { comments: { where: { isResolved: false } } } },
               },
-              orderBy: [
-                { number: 'asc' },
-                { clauseNumber: { sort: 'asc', nulls: 'first' } },
-                { itemNumber: { sort: 'asc', nulls: 'first' } },
-              ],
+              orderBy: ARTICLE_ORDER,
             },
           },
           orderBy: { number: 'asc' },
@@ -218,11 +215,7 @@ export class PoliciesService {
                   take: 1,
                 },
               },
-              orderBy: [
-                { number: 'asc' },
-                { clauseNumber: { sort: 'asc', nulls: 'first' } },
-                { itemNumber: { sort: 'asc', nulls: 'first' } },
-              ],
+              orderBy: ARTICLE_ORDER,
             },
           },
           orderBy: { number: 'asc' },
@@ -394,15 +387,12 @@ export class PoliciesService {
           take: 1,
         },
       },
-      orderBy: [
-        { number: 'asc' },
-        { clauseNumber: { sort: 'asc', nulls: 'first' } },
-        { itemNumber: { sort: 'asc', nulls: 'first' } },
-      ],
+      orderBy: ARTICLE_ORDER,
     });
     return articles.map((a) => ({
       id: a.id,
       number: a.number,
+      branchNumber: a.branchNumber,
       clauseNumber: a.clauseNumber,
       itemNumber: a.itemNumber,
       title: a.title || '',
@@ -429,11 +419,7 @@ export class PoliciesService {
           take: 1,
         },
       },
-      orderBy: [
-        { number: 'asc' },
-        { clauseNumber: { sort: 'asc', nulls: 'first' } },
-        { itemNumber: { sort: 'asc', nulls: 'first' } },
-      ],
+      orderBy: ARTICLE_ORDER,
     });
 
     return articles
@@ -441,6 +427,7 @@ export class PoliciesService {
       .map((article) => ({
         id: article.id,
         number: article.number,
+        branchNumber: article.branchNumber,
         clauseNumber: article.clauseNumber,
         itemNumber: article.itemNumber,
         title: article.title ?? '',
@@ -461,11 +448,7 @@ export class PoliciesService {
           take: 1,
         },
       },
-      orderBy: [
-        { number: 'asc' },
-        { clauseNumber: { sort: 'asc', nulls: 'first' } },
-        { itemNumber: { sort: 'asc', nulls: 'first' } },
-      ],
+      orderBy: ARTICLE_ORDER,
     });
 
     return articles
@@ -475,6 +458,7 @@ export class PoliciesService {
         return {
           id: article.id,
           number: article.number,
+          branchNumber: article.branchNumber,
           clauseNumber: article.clauseNumber,
           itemNumber: article.itemNumber,
           title: article.title ?? '',
@@ -808,6 +792,7 @@ export class PoliciesService {
         chapterId,
         sectionId,
         number: dto.number,
+        branchNumber: dto.branchNumber ?? null,
         title: (dto.title ?? '').trim(),
         clauseNumber: dto.clauseNumber,
         itemNumber: dto.itemNumber,
@@ -887,7 +872,7 @@ export class PoliciesService {
     });
     const rows = await this.prisma.article.findMany({
       where: { chapter: { policyId } },
-      select: { id: true, chapterId: true, sectionId: true, number: true },
+      select: { id: true, chapterId: true, sectionId: true, number: true, branchNumber: true },
     });
 
     let changes;
@@ -904,7 +889,7 @@ export class PoliciesService {
       changes.map((c) =>
         this.prisma.article.update({
           where: { id: c.id },
-          data: { number: c.number, chapterId: c.chapterId, sectionId: c.sectionId },
+          data: { number: c.number, branchNumber: c.branchNumber, chapterId: c.chapterId, sectionId: c.sectionId },
         }),
       ),
     );
@@ -915,7 +900,7 @@ export class PoliciesService {
       action: 'policy.articles.reorder',
       entityType: 'Policy',
       entityId: policyId,
-      details: { changed: changes.length, order: order.map((t) => t.jo) },
+      details: { changed: changes.length, order: order.map((t) => (t.branch ? `${t.jo}의${t.branch}` : t.jo)) },
     });
 
     return { changed: changes.length };
@@ -926,7 +911,7 @@ export class PoliciesService {
     await this.findOne(tenantId, policyId);
     const chapters = await this.prisma.chapter.findMany({
       where: { policyId },
-      select: { id: true, number: true, title: true, articles: { select: { number: true } } },
+      select: { id: true, number: true, title: true, articles: { select: { number: true, branchNumber: true } } },
       orderBy: { number: 'asc' },
     });
     return { order: currentJoOrder(chapters) };

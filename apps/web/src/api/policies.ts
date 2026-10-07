@@ -4,6 +4,7 @@ import client from './client';
 export type ThreeWayArticle = {
   id: string;
   number: number;
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   title: string;
@@ -76,7 +77,7 @@ export const policiesApi = {
       .put('/policies/' + policyId + '/chapters/' + chapterId + '/articles/' + articleId, data)
       .then((r) => r.data),
   /** 조 순서 일괄 재정렬 (T-60). `order` 는 문서에 나타날 차례대로, 규정의 모든 조를 한 번씩 */
-  reorderArticles: (policyId: string, order: { chapterId: string; jo: number }[]) =>
+  reorderArticles: (policyId: string, order: { chapterId: string; jo: number; branch?: number }[]) =>
     client.put(`/policies/${policyId}/jo-order`, { order }).then((r) => r.data as { changed: number }),
 
   deleteArticle: (policyId: string, chapterId: string, articleId: string) =>
@@ -160,6 +161,7 @@ export type CrossPolicyKind = 'same' | 'different' | 'left-only' | 'right-only';
 export type CrossPolicyRow = {
   key: string;
   number: number;
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   kind: CrossPolicyKind;
@@ -186,6 +188,7 @@ export type CompareSide = { title: string; content: string; effectiveDate: strin
 export type CompareRow = {
   articleId: string;
   number: number;
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   kind: CompareKind;
@@ -262,7 +265,14 @@ export const filesApi = {
 
 export type SearchSuggestResult = {
   policies: { id: string; code: string; title: string }[];
-  articles: { id: string; number: number; title: string; policyId: string; policyTitle: string }[];
+  articles: {
+    id: string;
+    number: number;
+    branchNumber?: number | null;
+    title: string;
+    policyId: string;
+    policyTitle: string;
+  }[];
 };
 
 export const searchApi = {

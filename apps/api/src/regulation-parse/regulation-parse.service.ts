@@ -304,6 +304,7 @@ export class RegulationParseService {
         row.sectionIndex == null ? undefined : sectionIds[row.chapterIndex]?.[row.sectionIndex] ?? undefined;
       const createdArticle = await this.policiesService.createArticle(tenantId, policy.id, chapterId, {
         number: row.number,
+        ...(row.branchNumber ? { branchNumber: row.branchNumber } : {}),
         title: row.title,
         content: row.content,
         clauseNumber: row.clauseNumber ?? undefined,

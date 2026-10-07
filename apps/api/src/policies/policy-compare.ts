@@ -13,6 +13,8 @@ import * as Diff from 'diff';
 export type CompareArticleInput = {
   id: string;
   number: number;
+  /** "제3조의2"의 2 */
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   title: string;
@@ -28,6 +30,7 @@ export type CompareRow = {
   articleId: string;
   /** 표기용 위치 — 신조문 기준, 삭제된 조문은 구조문 기준 */
   number: number;
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   kind: CompareKind;
@@ -46,10 +49,16 @@ export type CompareSummary = {
   same: number;
 };
 
-function sortKey(row: { number: number; clauseNumber: number | null; itemNumber: number | null }) {
-  // null은 조 루트/항 루트라 같은 번호 안에서 가장 앞에 온다
+function sortKey(row: {
+  number: number;
+  branchNumber?: number | null;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+}) {
+  // null은 조 루트/항 루트라 같은 번호 안에서 가장 앞에 온다. 제3조 다음 제3조의2.
   return [
     Number(row.number) || 0,
+    Number(row.branchNumber) || 0,
     row.clauseNumber == null ? -1 : Number(row.clauseNumber),
     row.itemNumber == null ? -1 : Number(row.itemNumber),
   ];
@@ -100,6 +109,7 @@ export function buildComparisonRows(
     rows.push({
       articleId: id,
       number: anchor.number,
+      branchNumber: anchor.branchNumber ?? null,
       clauseNumber: anchor.clauseNumber,
       itemNumber: anchor.itemNumber,
       kind,
@@ -149,6 +159,7 @@ export type CrossPolicyRow = {
   /** 위치 키(조·항·목). 화면에서 행 식별자로 쓴다 */
   key: string;
   number: number;
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
   kind: CrossPolicyKind;
@@ -174,10 +185,13 @@ export type CrossPolicySummary = {
 
 function positionKey(row: {
   number: number;
+  branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
 }): string {
-  return `${Number(row.number) || 0}|${row.clauseNumber ?? ''}|${row.itemNumber ?? ''}`;
+  // 제3조와 제3조의2는 다른 자리다 — 가지 번호가 없으면 예전 키와 같다
+  const jo = row.branchNumber ? `${Number(row.number) || 0}의${row.branchNumber}` : `${Number(row.number) || 0}`;
+  return `${jo}|${row.clauseNumber ?? ''}|${row.itemNumber ?? ''}`;
 }
 
 export function buildCrossPolicyRows(
@@ -213,6 +227,7 @@ export function buildCrossPolicyRows(
     rows.push({
       key,
       number: anchor.number,
+      branchNumber: anchor.branchNumber ?? null,
       clauseNumber: anchor.clauseNumber,
       itemNumber: anchor.itemNumber,
       kind,

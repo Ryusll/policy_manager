@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { formatJo } from '../common/article-label';
 
 type RelatedType = 'precedent' | 'law' | 'rule';
 type RelatedSort = 'relevance' | 'latest';
@@ -52,7 +53,7 @@ export class SearchService {
       return {
         source: 'internal',
         items: rows.map((row) => ({
-          title: `${row.article.chapter.policy.title} · 제${row.article.number}조`,
+          title: `${row.article.chapter.policy.title} · ${formatJo(row.article.number, row.article.branchNumber)}`,
           snippet: row.content.slice(0, 180),
           url: `/policies/${row.article.chapter.policyId}`,
         })),
@@ -146,10 +147,11 @@ export class SearchService {
         select: {
           id: true,
           number: true,
+          branchNumber: true,
           title: true,
           chapter: { select: { policy: { select: { id: true, title: true } } } },
         },
-        orderBy: [{ number: 'asc' }],
+        orderBy: [{ number: 'asc' }, { branchNumber: { sort: 'asc', nulls: 'first' } }],
         take: limit,
       }),
     ]);
@@ -159,6 +161,7 @@ export class SearchService {
       articles: articles.map((a) => ({
         id: a.id,
         number: a.number,
+        branchNumber: a.branchNumber,
         title: a.title,
         policyId: a.chapter.policy.id,
         policyTitle: a.chapter.policy.title,

@@ -4,6 +4,7 @@ import { AlertTriangle, Columns2, X } from 'lucide-react';
 import { policiesApi, type CrossPolicyRow } from '../api/policies';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
+import { formatArticleJo } from '../lib/legalArticleLabel';
 
 /**
  * 규정 간 비교 (T-91) — 서로 다른 두 규정을 나란히 본다.
@@ -35,7 +36,7 @@ const KIND_CLASS: Record<CrossPolicyRow['kind'], string> = {
 function articleLabel(row: CrossPolicyRow): string {
   if (row.itemNumber != null) return `${row.itemNumber}.`;
   if (row.clauseNumber != null) return `제${row.clauseNumber}항`;
-  return `제${row.number}조`;
+  return formatArticleJo(row.number, row.branchNumber);
 }
 
 function SideCell({ side, diff, which }: {

@@ -12,14 +12,20 @@ import { Columns3, Info } from 'lucide-react';
 import { policiesApi, type ThreeWayRow } from '../api/policies';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
+import { formatArticleJo } from '../lib/legalArticleLabel';
 
 const LEVEL_LABEL = ['규정', '세칙', '지침'];
 
-function ArticleCell({ article }: { article: { number: number; title: string; content: string } }) {
+function ArticleCell({
+  article,
+}: {
+  article: { number: number; branchNumber?: number | null; title: string; content: string };
+}) {
   return (
     <div className="space-y-0.5">
       <p className="text-xs font-semibold text-gray-900">
-        제{article.number}조{article.title ? ` (${article.title})` : ''}
+        {formatArticleJo(article.number, article.branchNumber)}
+        {article.title ? ` (${article.title})` : ''}
       </p>
       <p className="text-xs text-gray-600 whitespace-pre-wrap line-clamp-6">{article.content}</p>
     </div>

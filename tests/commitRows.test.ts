@@ -100,11 +100,21 @@ describe('buildCommitRows — 법제처 조>항>호 구조', () => {
 });
 
 describe('buildCommitRows — PDF 경로', () => {
-  it('제1조의2는 자식으로 와도 조로 센다', () => {
-    // PDF 파서는 L1-2 를 depth 1 로 제1조의 자식으로 넣는다. depth만 보면 항으로 오인한다.
-    expect(coords([n('L1', '목적', '본문', [n('L1-2', '적용범위', '본문2')])])).toEqual([
-      [1, null, null],
-      [2, null, null],
+  it('제1조의2는 자식으로 와도 조로 세고, 가지 번호를 살린다', () => {
+    // 예전 PDF 파서는 L1-2 를 depth 1 로 제1조의 자식으로 넣었다. depth만 보면 항으로 오인한다.
+    // 예전에는 번호를 새로 받아 "제2조"가 됐다 — 원문·법령 인용과 어긋난다.
+    const { rows } = buildCommitPlan([n('L1', '목적', '본문', [n('L1-2', '적용범위', '본문2')])]);
+    expect(rows.map((r) => [r.number, r.branchNumber, r.title])).toEqual([
+      [1, null, '목적'],
+      [1, 2, '적용범위'],
+    ]);
+  });
+
+  it('법제처에서 제목 없는 조는 제목 칸의 "제3조의2"를 비운다 (번호가 두 번 보이지 않게)', () => {
+    const { rows } = buildCommitPlan([n('L3', '제3조', '본문'), n('L3-2', '제3조의2', '본문2')]);
+    expect(rows.map((r) => [r.number, r.branchNumber, r.title])).toEqual([
+      [3, null, ''],
+      [3, 2, ''],
     ]);
   });
 

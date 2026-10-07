@@ -9,6 +9,7 @@ import {
   toReorderPayload,
   type JoRow,
 } from '../lib/joReorder';
+import { formatArticleJo } from '../lib/legalArticleLabel';
 
 /**
  * 조 순서 일괄 재정렬 (T-60).
@@ -31,7 +32,7 @@ export default function ArticleReorderPanel({
   saving?: boolean;
   error?: string;
   onCancel: () => void;
-  onSave: (order: { chapterId: string; jo: number }[]) => void;
+  onSave: (order: { chapterId: string; jo: number; branch?: number }[]) => void;
 }) {
   const original = useMemo(() => buildJoRows(chapters), [chapters]);
   const [rows, setRows] = useState<JoRow[]>(original);
@@ -85,7 +86,7 @@ export default function ArticleReorderPanel({
             {rows.map((row, idx) => {
               const p = preview[idx];
               return (
-                <li key={`${row.chapterId}-${row.jo}`}>
+                <li key={`${row.chapterId}-${row.jo}-${row.branch ?? 0}`}>
                   {showChapterHeadAt(idx) && (
                     <div className="px-4 py-1.5 bg-gray-100/80 border-y border-gray-200 text-xs font-medium text-gray-700">
                       {row.chapterHidden ? '(장 제목 없음)' : `제${row.chapterNumber}장 ${row.chapterTitle}`}
@@ -121,7 +122,7 @@ export default function ArticleReorderPanel({
                     </span>
                     {p.moved && (
                       <span className="shrink-0 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 whitespace-nowrap">
-                        제{p.jo}조 → 제{p.newNumber}조
+                        {formatArticleJo(p.jo, p.branch)} → 제{p.newNumber}조
                       </span>
                     )}
                     <span className="shrink-0 inline-flex">

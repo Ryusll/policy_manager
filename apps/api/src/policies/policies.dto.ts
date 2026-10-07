@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsInt, Min, MaxLength, IsIn, IsDateString, ValidateNested, IsArray, ArrayMinSize, MinLength } from 'class-validator';
+import { ValidateIf, IsString, IsOptional, IsBoolean, IsInt, Min, MaxLength, IsIn, IsDateString, ValidateNested, IsArray, ArrayMinSize, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { PolicyRevisionNotifyDto } from '../notifications/notifications.dto';
@@ -174,6 +174,12 @@ export class CreateArticleDto {
   @IsString()
   title?: string;
 
+  @ApiProperty({ required: false, description: '조의 가지 번호. "제3조의2"면 2. 가지 조문이 아니면 생략' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  branchNumber?: number;
+
   @ApiProperty({ required: false, description: '항 번호 (예: 1항)' })
   @IsOptional()
   @IsInt()
@@ -240,6 +246,13 @@ export class UpdateArticleDto {
   @IsOptional()
   @IsString()
   title?: string;
+
+  @ApiProperty({ required: false, description: '조의 가지 번호("제3조의2"의 2). 비우려면 null' })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(1)
+  branchNumber?: number | null;
 
   @ApiProperty({ required: false, description: '항 번호 비우려면 null' })
   @IsOptional()
@@ -488,6 +501,12 @@ export class ReorderTargetDto {
   @IsInt()
   @Min(1)
   jo: number;
+
+  @ApiProperty({ required: false, description: '옮기기 전 가지 번호("제3조의2"면 2). 가지 조문이 아니면 생략' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  branch?: number;
 }
 
 export class ReorderArticlesDto {

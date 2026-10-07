@@ -24,6 +24,7 @@ import {
 import { extractPolicyText } from '../lib/policyTextExtract';
 import { useAuthStore } from '../stores/authStore';
 import { ArticleBodyInline } from '../components/ArticleBodyInline';
+import { formatArticleJo } from '../lib/legalArticleLabel';
 
 function getPolicyMeta(policy: any) {
   const meta = policy?.metadata && typeof policy.metadata === 'object' ? policy.metadata : {};
@@ -162,6 +163,7 @@ export default function PoliciesPage() {
           const isJoRoot = article.clauseNumber == null && article.itemNumber == null;
           await policiesApi.createArticle(policy.id, createdChapter.id, {
             number: article.number,
+            ...(article.branch ? { branchNumber: article.branch } : {}),
             // 항·목 행은 제목 없이 본문만 등록한다(조 제목과 중복 방지)
             title: isJoRoot ? article.title || '조문' : '',
             content: article.content || '',
@@ -444,7 +446,7 @@ export default function PoliciesPage() {
         errors.push({ key: `ch-empty-${ci}`, message: `${chapter.number}장의 조문이 비어 있습니다.`, chapterIdx: ci });
       }
 
-      const articleNoSeen = new Map<number, number>();
+      const articleNoSeen = new Map<string, number>();
       chapter.articles.forEach((article, ai) => {
         if (!article.title.trim()) {
           warnings.push({
@@ -457,18 +459,20 @@ export default function PoliciesPage() {
         if (!article.content.trim()) {
           warnings.push({
             key: `a-body-${ci}-${ai}`,
-            message: `${chapter.number}장 제${article.number}조 본문이 비어 있습니다.`,
+            message: `${chapter.number}장 ${formatArticleJo(article.number, article.branch)} 본문이 비어 있습니다.`,
             chapterIdx: ci,
             articleIdx: ai,
           });
         }
-        articleNoSeen.set(article.number, (articleNoSeen.get(article.number) || 0) + 1);
+        // 제3조와 제3조의2는 다른 조다 — 번호만 세면 중복으로 잡힌다
+        const joLabel = formatArticleJo(article.number, article.branch);
+        articleNoSeen.set(joLabel, (articleNoSeen.get(joLabel) || 0) + 1);
       });
       for (const [no, count] of articleNoSeen.entries()) {
         if (count > 1) {
           errors.push({
             key: `a-dup-${ci}-${no}`,
-            message: `${chapter.number}장에 제${no}조가 ${count}개 중복되어 있습니다.`,
+            message: `${chapter.number}장에 ${no}가 ${count}개 중복되어 있습니다.`,
             chapterIdx: ci,
           });
         }

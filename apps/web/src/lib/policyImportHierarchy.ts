@@ -11,6 +11,8 @@
 
 export type HierarchyArticleRow = {
   number: number;
+  /** "제3조의2"의 2 (파서가 읽은 가지 번호) */
+  branch?: number;
   title?: string;
   content?: string;
   clauseNumber?: number;
@@ -75,6 +77,8 @@ function matchItemLine(line: string): { itemNumber: number; rest: string } | nul
 export function inferArticleHierarchy(article: SourceArticle): HierarchyArticleRow[] {
   const raw = String(article.content ?? '');
   const lines = raw.split(/\r?\n/);
+  // 가지 조문(제3조의2)이면 그 조의 항·목 행도 같은 가지 번호를 가진다
+  const branch = Number(article.branch) > 0 ? { branch: Number(article.branch) } : {};
 
   const joLead: string[] = []; // 첫 항 이전의 본문 = 조 본문
   const rows: HierarchyArticleRow[] = [];
@@ -97,6 +101,7 @@ export function inferArticleHierarchy(article: SourceArticle): HierarchyArticleR
       currentClause = clause.clauseNumber;
       rows.push({
         number: article.number,
+        ...branch,
         clauseNumber: clause.clauseNumber,
         content: clause.rest,
       });
@@ -110,6 +115,7 @@ export function inferArticleHierarchy(article: SourceArticle): HierarchyArticleR
         sawHierarchy = true;
         rows.push({
           number: article.number,
+          ...branch,
           clauseNumber: currentClause,
           itemNumber: item.itemNumber,
           content: item.rest,
@@ -131,6 +137,7 @@ export function inferArticleHierarchy(article: SourceArticle): HierarchyArticleR
     return [
       {
         number: article.number,
+        ...branch,
         title: article.title,
         content: raw,
       },
@@ -140,6 +147,7 @@ export function inferArticleHierarchy(article: SourceArticle): HierarchyArticleR
   const joContent = joLead.join('\n').trim();
   const head: HierarchyArticleRow = {
     number: article.number,
+    ...branch,
     title: article.title,
     content: joContent,
   };
@@ -164,17 +172,20 @@ export function inferArticleHierarchy(article: SourceArticle): HierarchyArticleR
  * - 빈 조 제거(trimEmptyArticles) **뒤에** 불러야 번호에 구멍이 안 생긴다(1, 2, 4…).
  * - 항·목 추론(expandChaptersWithHierarchy) **앞에** 불러야 추론이 확정된 조 번호를 쓴다.
  */
-export function renumberChapters<C extends { number: number; articles: { number: number }[] }>(
-  chapters: C[],
-): C[] {
+export function renumberChapters<
+  C extends { number: number; articles: { number: number; branch?: number }[] },
+>(chapters: C[]): C[] {
   let nextArticleNumber = 1;
+  let lastAssigned = 0;
   return chapters.map((chapter, chapterIdx) => ({
     ...chapter,
     number: chapterIdx + 1,
-    articles: chapter.articles.map((article) => ({
-      ...article,
-      number: nextArticleNumber++,
-    })),
+    articles: chapter.articles.map((article) => {
+      // 가지 조문(제3조의2)은 새 번호를 받지 않고 바로 앞 조의 번호를 따른다
+      if (Number(article.branch) > 0 && lastAssigned > 0) return { ...article, number: lastAssigned };
+      lastAssigned = nextArticleNumber++;
+      return { ...article, number: lastAssigned };
+    }),
   }));
 }
 

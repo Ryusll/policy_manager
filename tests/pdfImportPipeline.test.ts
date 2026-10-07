@@ -88,6 +88,21 @@ describe('PDF 가져오기 — 조 번호가 원문과 같다', () => {
     expect(rowsOf(p)).toEqual([[1, null, null, '목적', '이 규정은 운영 사항을 정한다.']]);
   });
 
+  it('"제3조의2"는 제3조의 가지로 들어가고, 뒤 조 번호를 밀지 않는다', () => {
+    const p = plan([
+      '제3조 (권한) 이사회는 의결한다.',
+      '제3조의2 (경영철학의 실행)',
+      '① 실천 방법을 개발한다.',
+      '제4조 (구성) 이사회는 이사로 구성한다.',
+    ]);
+    expect(p.rows.map((r) => [r.number, r.branchNumber, r.clauseNumber, r.title])).toEqual([
+      [3, null, null, '권한'],
+      [3, 2, null, '경영철학의 실행'],
+      [3, 2, 1, ''],
+      [4, null, null, '구성'],
+    ]);
+  });
+
   it('삭제돼 비어 있는 조 번호를 당기지 않는다', () => {
     const p = plan(['제1조(목적) 본문1', '제5조(구성) 본문5']);
     expect(p.rows.map((r) => r.number)).toEqual([1, 5]);
