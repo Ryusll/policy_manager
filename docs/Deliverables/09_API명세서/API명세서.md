@@ -107,6 +107,7 @@
 | POST | versions/:id/archive | admin | 게시본 폐지(published→archived). 응답에 `remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10) |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
 | POST | policies/:policyId/publish-drafts | admin | **시행된 적 없는 조문의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate?`(YYYY-MM-DD, 없으면 오늘). 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건") |
+| POST | policies/:policyId/fill-effective-date | admin | **시행일 없이 시행된 버전에 확인한 시행일 넣기**(T-123 · PAT-02, 예전 가져오기 데이터 보정). Body: `effectiveDate`(YYYY-MM-DD, **필수** — 최초 제정일이 아니라 지금 본문이 시행된 날), `reason`(**필수**). 시행일이 비어 있는 시행본(published·archived)에만 넣고, 규정 단위 시행일이 비어 있으면 함께 채운다. **같은 조문의 앞뒤 시행본과 순서가 어긋나거나 비어 있는 시행본이 둘 이상인 조문이 하나라도 있으면 409 + `conflicts[]`(label·detail)로 아무것도 바꾸지 않는다.** 넣을 것이 없으면 400. 응답 `{updated}`. 감사 `version.effective_date_fill` |
 
 ## comments (`/api/articles/:articleId/comments`, `/api/comments/:id`)
 | Method | Path | 인증 | 설명 |
@@ -178,7 +179,7 @@
 | POST | upload | admin, editor | PDF 업로드 → 텍스트 추출(Python pdfplumber/pymupdf) → 조항 트리. 최대 30MB. 파싱에 성공하면 **원문 PDF를 세션 이름(`<세션id>.pdf`)으로 보관**해 `extractMeta.sourceFile` 에 적는다(등록 시 첨부로 옮김, 미등록은 일주일 뒤 정리). 한글 파일명은 latin1 해석을 바로잡아 `fileName` 에 저장 (T-120) |
 | GET | :id | admin, editor, viewer | 파싱 세션 조회 |
 | PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14) |
-| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120) |
+| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120). Body 의 **`effectiveDate`(YYYY-MM-DD)는 필수**(T-123) — 가져오는 본문이 실제로 시행된 날이며 첫 버전과 규정 단위 시행일에 들어간다. 없거나 없는 날짜면 아무것도 만들지 않고 400 |
 
 ## admin (`/api/admin`)
 
@@ -187,7 +188,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | POST | import/policies/validate | admin | **사전 검사**(200). 넣지 않고 문제를 전부 모아 돌려준다. 응답 `{issues[], canImport, summary}` (T-13) |
-| POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues` |
+| POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues`. 규정마다 `effectiveDate`(YYYY-MM-DD) — `publish: true` 조문이 하나라도 있으면 **필수**이고 그 시행본과 규정 단위 시행일에 들어간다(T-123, "오늘"로 채우지 않는다) |
 
 > **사전 검사가 보는 것**: 코드 중복(기존/파일 안), 빈 코드·제목, 길이 초과, 장·조 번호 형식 → 오류. 장 없음, 빈 본문, 조 번호 겹침·건너뜀 → 경고. **플랜 규정 상한**도 여기서 본다 — 예전에는 일괄 가져오기가 상한을 통과해 Starter(5건)가 한 번에 100건을 넣을 수 있었다.
 

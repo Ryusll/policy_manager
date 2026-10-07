@@ -56,7 +56,8 @@ export const regulationParseApi = {
     client.post('/regulation-parse/from-lawgokr', { mst }).then((r) => r.data),
   commit: (
     id: string,
-    data: { code: string; title: string; description?: string },
+    /** effectiveDate: 가져오는 본문이 시행된 날(YYYY-MM-DD, 필수) */
+    data: { code: string; title: string; description?: string; effectiveDate: string },
   ): Promise<CommitResult> =>
     client.post('/regulation-parse/' + id + '/commit', data).then((r) => r.data),
 };

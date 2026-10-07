@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CreateVersionDto, UpdateVersionDto } from './versions.dto';
 import { VariablesService } from '../variables/variables.service';
 import { AuditService } from '../audit/audit.service';
 import { RevisionNotifyService } from '../notifications/revision-notify.service';
-import { coerceNullableDate, todayDateOnly } from '../common/date-only';
+import { coerceNullableDate, parseDateOnly, todayDateOnly } from '../common/date-only';
+import { planEffectiveDateFill } from './effective-date-fill';
 import * as Diff from 'diff';
 import { ARTICLE_ORDER, formatJo } from '../common/article-label';
 
@@ -320,6 +321,91 @@ export class VersionsService {
    * 받게 되고, 같은 내용을 다시 올리기 쉽다. 감사 로그는 관리자만 볼 수 있어서
    * 거기 적어 두는 것만으로는 편집자에게 닿지 않는다 — 버전 자체에 남긴다.
    */
+  /**
+   * 시행일 없이 발행된 버전에 관리자가 확인한 시행일을 넣는다 (PAT-02).
+   *
+   * 예전 가져오기 경로가 남긴 데이터 보정용이다. 날짜는 지어내지 않는다 — 승인일·생성일은
+   * 실제 시행일이 아니라서, 그걸로 채우면 과거 시점 조회가 틀린 본문을 보여 준다.
+   * 같은 조문의 다른 시행본과 순서가 어긋나면 하나도 바꾸지 않고 거부한다(effective-date-fill.ts).
+   */
+  async fillMissingEffectiveDates(
+    tenantId: string,
+    policyId: string,
+    userId: string,
+    effectiveDate: string,
+    reason: string,
+  ) {
+    const note = reason?.trim();
+    if (!note) throw new BadRequestException('보정 근거를 입력하세요.');
+    const date = parseDateOnly(effectiveDate);
+    if (!date) throw new BadRequestException('시행일은 YYYY-MM-DD 형식이어야 합니다.');
+
+    const policy = await this.prisma.policy.findFirst({
+      where: { id: policyId, tenantId },
+      select: { id: true, effectiveDate: true },
+    });
+    if (!policy) throw new NotFoundException('Policy not found');
+
+    const versions = await this.prisma.articleVersion.findMany({
+      where: { article: { chapter: { policyId } }, status: { in: ['published', 'archived'] } },
+      select: {
+        id: true,
+        articleId: true,
+        versionNum: true,
+        effectiveDate: true,
+        article: { select: { number: true, branchNumber: true, clauseNumber: true, itemNumber: true } },
+      },
+    });
+    const plan = planEffectiveDateFill(versions, date);
+    if (plan.conflicts.length) {
+      const labelOf = new Map(
+        versions.map((v) => {
+          const a = v.article;
+          const tail = `${a.clauseNumber ? ` 제${a.clauseNumber}항` : ''}${a.itemNumber ? ` 제${a.itemNumber}목` : ''}`;
+          return [v.articleId, `${formatJo(a.number, a.branchNumber)}${tail}`];
+        }),
+      );
+      const why = (c: (typeof plan.conflicts)[number]) =>
+        c.reason === 'multiple-missing'
+          ? '시행일 없는 시행본이 둘 이상'
+          : c.reason === 'after-later-version'
+            ? `다음 버전 시행일(${c.boundary})보다 늦음`
+            : `앞 버전 시행일(${c.boundary})보다 이름`;
+      throw new ConflictException({
+        message: `시행일을 일괄로 넣을 수 없는 조문이 ${plan.conflicts.length}건 있습니다. 아무것도 바꾸지 않았습니다.`,
+        conflicts: plan.conflicts.map((c) => ({ ...c, label: labelOf.get(c.articleId) ?? c.articleId, detail: why(c) })),
+      });
+    }
+    if (!plan.updateIds.length) {
+      throw new BadRequestException('시행일이 비어 있는 시행본이 없습니다.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.articleVersion.updateMany({
+        where: { id: { in: plan.updateIds }, effectiveDate: null },
+        data: { effectiveDate: date },
+      }),
+      ...(policy.effectiveDate
+        ? []
+        : [this.prisma.policy.update({ where: { id: policyId }, data: { effectiveDate: date } })]),
+    ]);
+
+    await this.audit.log({
+      tenantId,
+      userId,
+      action: 'version.effective_date_fill',
+      entityType: 'Policy',
+      entityId: policyId,
+      details: {
+        count: plan.updateIds.length,
+        effectiveDate,
+        reason: note,
+        versionIds: plan.updateIds.slice(0, 200),
+      },
+    });
+    return { updated: plan.updateIds.length };
+  }
+
   async reject(tenantId: string, versionId: string, userId: string, reason?: string) {
     const version = await this.findOne(tenantId, versionId);
     if (version.status !== 'review') {

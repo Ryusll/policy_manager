@@ -3,7 +3,14 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { VersionsService } from './versions.service';
-import { CreateVersionDto, UpdateVersionDto, ApproveVersionDto, RejectVersionDto, PublishDraftsDto } from './versions.dto';
+import {
+  CreateVersionDto,
+  UpdateVersionDto,
+  ApproveVersionDto,
+  RejectVersionDto,
+  PublishDraftsDto,
+  FillEffectiveDateDto,
+} from './versions.dto';
 import { Roles } from '../common/guards/decorators';
 
 @ApiTags('versions')
@@ -75,6 +82,20 @@ export class VersionsController {
       req.user.id,
       dto.changeNote,
       dto.effectiveDate,
+    );
+  }
+
+  @Post('policies/:policyId/fill-effective-date')
+  @Roles('admin')
+  @HttpCode(200)
+  @ApiOperation({ summary: '시행일 없이 발행된 버전에 확인한 시행일 넣기 (가져오기 데이터 보정)' })
+  fillEffectiveDate(@Request() req: any, @Param('policyId') policyId: string, @Body() dto: FillEffectiveDateDto) {
+    return this.versionsService.fillMissingEffectiveDates(
+      req.user.tenantId,
+      policyId,
+      req.user.id,
+      dto.effectiveDate,
+      dto.reason,
     );
   }
 

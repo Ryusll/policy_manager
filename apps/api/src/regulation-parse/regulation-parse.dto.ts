@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsDateString, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateRegulationParseTreeDto {
   @ApiProperty({ description: '수정된 조항 트리 (루트 노드 배열)' })
@@ -30,6 +30,16 @@ export class CommitRegulationParseDto {
   @IsString()
   @MaxLength(4000)
   description?: string;
+
+  /**
+   * 가져오는 본문이 시행된 날(사내 규정 시행일). 첫 버전이 이 날짜로 시행된다.
+   * 필수인 이유: 시행일 없는 발행본은 시점 조회 규칙(common/as-of.ts)에서 빠져
+   * 법령 개정 분석의 기준 본문이 되지 못한다. "오늘"로 채우면 이미 시행 중인
+   * 규정의 과거 시점 조회가 틀어진다(PAT-02).
+   */
+  @ApiProperty({ description: '가져오는 본문이 시행된 날 (YYYY-MM-DD)' })
+  @IsDateString()
+  effectiveDate: string;
 }
 
 export class CreateFromLawGoKrDto {

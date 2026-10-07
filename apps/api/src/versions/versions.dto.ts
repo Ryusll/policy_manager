@@ -55,6 +55,19 @@ export class PublishDraftsDto {
   effectiveDate?: string;
 }
 
+/** 시행일 없이 발행된 버전의 시행일 보정 (PAT-02) */
+export class FillEffectiveDateDto {
+  @ApiProperty({ description: '본문이 실제로 시행된 날 (YYYY-MM-DD). 최초 제정일이 아니라 지금 본문의 시행일' })
+  @IsDateString()
+  effectiveDate: string;
+
+  @ApiProperty({ description: '보정 근거(필수). 예: 이사회 의결록 2019-03-01 시행' })
+  @IsString()
+  @MinLength(1, { message: '보정 근거를 입력하세요.' })
+  @MaxLength(500)
+  reason: string;
+}
+
 export class RejectVersionDto {
   @ApiProperty({ description: '반려 사유(필수). 사유 없이 되돌리면 편집자는 왜 반려됐는지 알 수 없다.' })
   @IsString()

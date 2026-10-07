@@ -24,6 +24,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'version.submit_review': '검토 요청',
   'version.approve': '시행 승인',
   'version.bulk_publish': '초안 한꺼번에 시행',
+  'version.effective_date_fill': '시행일 보정',
   'version.reject': '검토 반려',
   'version.archive': '게시본 폐지',
   'template.create': '템플릿 생성',

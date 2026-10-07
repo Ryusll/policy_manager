@@ -6,6 +6,7 @@ import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import { validateImport, normalizeImportChapters, type ValidateResult } from './import-validate';
 import { newChapterHeader } from '../policies/chapter-header';
+import { parseDateOnly } from '../common/date-only';
 
 @Injectable()
 export class AdminService {
@@ -65,12 +66,15 @@ export class AdminService {
           throw new ConflictException(`규정 코드가 이미 있습니다: ${p.code}`);
         }
 
+        // 사전 검사가 형식과 "발행하면 필수"를 이미 확인했다
+        const effective = parseDateOnly(p.effectiveDate);
         const policy = await tx.policy.create({
           data: {
             tenantId,
             code: p.code,
             title: p.title,
             description: p.description ?? undefined,
+            effectiveDate: effective ?? undefined,
           },
         });
         createdPolicyIds.push(policy.id);
@@ -95,6 +99,7 @@ export class AdminService {
                 content,
                 status,
                 changeNote: status === 'published' ? '일괄 import' : undefined,
+                effectiveDate: status === 'published' ? effective : undefined,
                 createdBy: userId,
               },
             });

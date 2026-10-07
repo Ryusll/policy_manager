@@ -91,6 +91,7 @@ import { toast } from '../stores/toastStore';
 import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
 import { FavoriteButton } from '../components/FavoriteButton';
 import { LawLinksPanel } from '../components/LawLinksPanel';
+import { EffectiveDateFillNotice } from '../components/EffectiveDateFillNotice';
 import { SpeechControls } from '../components/SpeechControls';
 import { buildPolicySpeech } from '../lib/speech';
 import {
@@ -2688,6 +2689,10 @@ export default function PolicyDetailPage() {
                 </button>
               )}
             </div>
+          )}
+
+          {canEdit && policy && (
+            <EffectiveDateFillNotice policyId={id!} chapters={policy.chapters ?? []} isAdmin={user?.role === 'admin'} />
           )}
 
           <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-navy-700/80">

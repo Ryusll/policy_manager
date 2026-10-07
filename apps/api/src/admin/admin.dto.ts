@@ -61,6 +61,15 @@ export class ImportPolicyDto {
   @IsString()
   description?: string;
 
+  /** 형식 검사는 사전 검사(import-validate.ts)가 한다 — 여기서 400 을 내면 문제 목록이 한 줄로 줄어든다 */
+  @ApiProperty({
+    required: false,
+    description: '가져오는 본문이 시행된 날(YYYY-MM-DD). publish: true 조문이 있으면 필수',
+  })
+  @IsOptional()
+  @IsString()
+  effectiveDate?: string;
+
   @ApiProperty({ type: [ImportChapterDto], required: false })
   @IsOptional()
   @IsArray()

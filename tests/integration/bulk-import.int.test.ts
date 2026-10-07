@@ -20,6 +20,8 @@ function setPlan(plan: 'starter' | 'pro', slug: string) {
 const policy = (code: string, over: Record<string, unknown> = {}) => ({
   code,
   title: `규정 ${code}`,
+  // publish: true 조문이 있으면 시행일이 필요하다 (PAT-02)
+  effectiveDate: '2024-01-01',
   chapters: [
     { number: 1, title: '총칙', articles: [{ number: 1, title: '목적', content: '본문', publish: true }] },
   ],

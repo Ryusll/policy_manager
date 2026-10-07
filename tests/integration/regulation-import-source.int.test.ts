@@ -47,7 +47,7 @@ describe('PDF 가져오기 — 끝까지', () => {
     const commit = await api(`/regulation-parse/${session.id}/commit`, {
       method: 'POST',
       token: t.token,
-      json: { code: `PDF-${Date.now().toString(36)}`, title: '시험규정' },
+      json: { code: `PDF-${Date.now().toString(36)}`, title: '시험규정', effectiveDate: '2024-01-01' },
     });
     expect(commit.status).toBe(201);
     policyId = commit.body.policyId;

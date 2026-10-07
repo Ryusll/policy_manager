@@ -18,6 +18,7 @@ const SAMPLE = `{
       "code": "HR-001",
       "title": "인사규정",
       "description": "임직원 인사에 관한 사항",
+      "effectiveDate": "2024-03-01",
       "chapters": [
         {
           "number": 1,
@@ -139,7 +140,8 @@ export default function BulkImportPanel({ onImported }: { onImported?: () => voi
         </p>
         <p className="text-gray-500">
           조 번호는 장을 가로질러 이어 매깁니다(제1장 제1·2조 → 제2장 제3조). <code>publish: true</code> 면
-          첫 버전이 바로 게시본이 됩니다.
+          첫 버전이 바로 게시본이 됩니다 — 그 경우 규정마다 <code>effectiveDate</code>(가져오는 본문이 실제로
+          시행된 날, YYYY-MM-DD)가 필요합니다.
         </p>
       </div>
 

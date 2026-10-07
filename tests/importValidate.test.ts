@@ -283,4 +283,52 @@ describe('validateImport (T-13)', () => {
       expect(r.issues.some((i) => i.level === 'warning' && i.message.includes('장이 없습니다'))).toBe(true);
     });
   });
+
+  // PAT-02 — 시행일 없이 발행하면 시점 조회 규칙에서 빠져 기준 본문이 되지 못한다
+  describe('시행일 (PAT-02)', () => {
+    const withPublish = (effectiveDate?: string) =>
+      base({
+        policies: [
+          {
+            code: 'HR-001',
+            title: '인사규정',
+            ...(effectiveDate !== undefined ? { effectiveDate } : {}),
+            chapters: [
+              { number: 1, title: '총칙', articles: [{ number: 1, title: '목적', content: '본문', publish: true }] },
+            ],
+          },
+        ],
+      });
+
+    it('바로 시행할 조문이 있는데 시행일이 없으면 오류', () => {
+      const r = validateImport(withPublish());
+      expect(r.canImport).toBe(false);
+      expect(errors(r)[0].message).toContain('effectiveDate');
+    });
+
+    it('바로 시행할 조문이 있고 시행일이 있으면 통과', () => {
+      expect(validateImport(withPublish('2024-03-01')).canImport).toBe(true);
+    });
+
+    it('날짜 형식이 아니거나 없는 날짜면 오류 (발행 여부와 무관)', () => {
+      expect(validateImport(withPublish('2024/03/01')).canImport).toBe(false);
+      expect(validateImport(withPublish('2024-02-31')).canImport).toBe(false);
+      const draftOnly = base();
+      (draftOnly.policies[0] as { effectiveDate?: string }).effectiveDate = 'tomorrow';
+      expect(validateImport(draftOnly).canImport).toBe(false);
+    });
+
+    it('초안만 넣으면 시행일 없이도 통과 — 오늘로 채우지 않는다', () => {
+      const r = validateImport(base());
+      expect(r.canImport).toBe(true);
+      expect(errors(r)).toEqual([]);
+    });
+
+    it('장 없는 규정(최상위 articles)의 publish 도 본다', () => {
+      const r = validateImport(
+        base({ policies: [{ code: 'A', title: '내규', articles: [{ number: 1, content: '본문', publish: true }] }] }),
+      );
+      expect(r.canImport).toBe(false);
+    });
+  });
 });

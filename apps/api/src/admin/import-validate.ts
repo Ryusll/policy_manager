@@ -9,6 +9,8 @@
  * 절반만 들어간 규정집은 아무것도 안 들어간 것보다 나쁘다.
  */
 
+import { parseDateOnly } from '../common/date-only';
+
 export type ImportIssueLevel = 'error' | 'warning';
 
 export type ImportIssue = {
@@ -37,6 +39,12 @@ export type ImportChapterShape = {
 export type ImportPolicyShape = {
   code?: string;
   title?: string;
+  /**
+   * 가져오는 본문이 시행된 날(YYYY-MM-DD). `publish: true` 조문이 하나라도 있으면 필수 —
+   * 시행일 없이 발행하면 시점 조회 규칙(common/as-of.ts)에서 빠져 기준 본문이 되지 못한다.
+   * "오늘"로 채우지 않는다: 이미 시행 중인 규정의 과거 시점 조회가 틀어진다.
+   */
+  effectiveDate?: string;
   chapters?: ImportChapterShape[];
   /**
    * 장 없이 조문만 있는 규정. 짧은 내규는 `제1조` 부터 시작하는 편이 흔한데,
@@ -123,6 +131,24 @@ export function validateImport(input: ValidateInput): ValidateResult {
     }
 
     const chs = normalizeImportChapters(p);
+    const publishes = chs.some((ch) => (ch.articles ?? []).some((ar) => ar.publish === true));
+    const rawEffective = String(p.effectiveDate ?? '').trim();
+    if (rawEffective && !parseDateOnly(rawEffective)) {
+      issues.push({
+        level: 'error',
+        policyIndex: idx,
+        code: code || null,
+        message: `시행일(effectiveDate) "${rawEffective}" 이 YYYY-MM-DD 형식의 날짜가 아닙니다.`,
+      });
+    } else if (publishes && !rawEffective) {
+      issues.push({
+        level: 'error',
+        policyIndex: idx,
+        code: code || null,
+        message: '바로 시행할 조문(publish: true)이 있으면 시행일(effectiveDate, YYYY-MM-DD)이 필요합니다 — 가져오는 본문이 시행된 날짜를 넣으세요.',
+      });
+    }
+
     if (chs.length === 0) {
       // 막지는 않는다 — 껍데기만 만들고 나중에 채우는 쓰임이 있다
       issues.push({

@@ -237,6 +237,9 @@ export const versionsApi = {
     data: { changeNote: string; effectiveDate?: string },
   ): Promise<{ published: number }> =>
     client.post('/policies/' + policyId + '/publish-drafts', data).then((r) => r.data),
+  /** 시행일 없이 발행된 버전에 확인한 시행일 넣기 (관리자, 예전 가져오기 데이터 보정) */
+  fillEffectiveDate: (policyId: string, data: { effectiveDate: string; reason: string }): Promise<{ updated: number }> =>
+    client.post('/policies/' + policyId + '/fill-effective-date', data).then((r) => r.data),
 };
 
 export const variablesApi = {

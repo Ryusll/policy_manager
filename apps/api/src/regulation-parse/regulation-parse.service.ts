@@ -16,6 +16,7 @@ import { policyUploadDir } from '../policies/upload-path';
 import { buildStoredName, decodeMultipartFilename } from '../policies/upload-name';
 import { regulationParseSourcePath } from './regulation-parse-paths';
 import { maxPoliciesForPlan } from '../common/plan-limits';
+import { parseDateOnly } from '../common/date-only';
 import {
   buildRegulationTreeFromLines,
   RegulationArticleNode,
@@ -302,8 +303,13 @@ export class RegulationParseService {
     tenantId: string,
     userId: string,
     id: string,
-    dto: { code: string; title: string; description?: string },
+    dto: { code: string; title: string; description?: string; effectiveDate: string },
   ) {
+    // 무엇이든 만들기 전에 본다 — 규정만 생기고 조문이 안 들어가는 반쪽 상태를 피한다
+    const effective = parseDateOnly(dto.effectiveDate);
+    if (!effective) {
+      throw new BadRequestException('시행일(YYYY-MM-DD)을 입력하세요 — 가져오는 본문이 시행된 날짜입니다.');
+    }
     const session = await this.findOne(tenantId, id);
     if (session.committedPolicyId) {
       throw new BadRequestException('이미 커밋된 세션입니다.');
@@ -341,6 +347,8 @@ export class RegulationParseService {
       },
       userId,
     );
+    // 새 규정이라 규정 단위 시행일은 비어 있다 — 가져오기 시행일로 채운다
+    await this.prisma.policy.update({ where: { id: policy.id }, data: { effectiveDate: effective } });
 
     // 원문의 장·절을 실제 Chapter/Section 으로 만든다. 장 표기가 없는 문서면
     // buildCommitPlan 이 숨김 장 한 개(`본문`)만 넣어 주므로 예전과 같은 결과가 된다.
@@ -388,6 +396,7 @@ export class RegulationParseService {
           status: 'published',
           approvedBy: userId,
           approvedAt: new Date(),
+          effectiveDate: effective,
           changeNote,
         },
       });

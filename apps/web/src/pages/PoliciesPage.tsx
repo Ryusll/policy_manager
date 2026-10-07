@@ -54,6 +54,8 @@ export default function PoliciesPage() {
     category: '',
   });
   const [importRawText, setImportRawText] = useState('');
+  // 관리자가 가져오면 바로 시행된다 — 그 본문이 실제로 시행된 날(필수, "오늘"로 채우지 않는다)
+  const [importEffectiveDate, setImportEffectiveDate] = useState('');
   const [parseProfile, setParseProfile] = useState<ParseProfile>('mixed');
   const [parsedDraft, setParsedDraft] = useState<ParsedPolicyDraft>({ chapters: [] });
   const [importExtracting, setImportExtracting] = useState(false);
@@ -108,8 +110,11 @@ export default function PoliciesPage() {
       rawText,
       splitMode,
       splitDelimiter,
+      effectiveDate,
     }: {
       mode: 'manual' | 'import';
+      /** 관리자 가져오기의 시행일(YYYY-MM-DD) */
+      effectiveDate?: string;
       payload: {
         code: string;
         title: string;
@@ -175,8 +180,10 @@ export default function PoliciesPage() {
       // 기존 규정을 옮겨 오는 것이라 이미 시행 중인 내용이다 — PDF 가져오기처럼 바로 시행한다.
       // 그러지 않으면 조문이 전부 초안으로 남아 전문 보기에 "시행중 버전이 없습니다"만 뜬다.
       // 시행 승인은 관리자 권한이라, 편집자가 가져오면 초안으로 두고 관리자가 상세 화면에서 한꺼번에 시행한다.
+      // 시행일은 "오늘"이 아니라 그 본문이 실제로 시행된 날이다 — 오늘로 두면 과거 시점 조회가 틀어진다(PAT-02).
       if (user?.role === 'admin') {
-        await versionsApi.publishDrafts(policy.id, { changeNote: '기존 규정 가져오기 자동 게시' });
+        await versionsApi.publishDrafts(policy.id, { changeNote: '기존 규정 가져오기 자동 게시', effectiveDate });
+        await policiesApi.update(policy.id, { effectiveDate });
       }
       await policiesApi.createImportLog({
         policyId: policy.id,
@@ -196,6 +203,7 @@ export default function PoliciesPage() {
       setCreateMode('manual');
       setForm({ code: '', title: '', description: '', department: '', category: '' });
       setImportRawText('');
+      setImportEffectiveDate('');
       setParsedDraft({ chapters: [] });
       setImportError('');
       setCleanupOptions({ renumber: true, trimEmptyArticles: true, inferHierarchy: true });
@@ -634,6 +642,24 @@ export default function PoliciesPage() {
                   onChange={(e) => setForm({ ...form, category: e.target.value })}
                 />
               </div>
+              {createMode === 'import' && user?.role === 'admin' && (
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5" htmlFor="text-import-effective">
+                    시행일 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="text-import-effective"
+                    type="date"
+                    className="input md:w-56"
+                    value={importEffectiveDate}
+                    onChange={(e) => setImportEffectiveDate(e.target.value)}
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                    관리자가 가져오면 바로 시행됩니다. 가져오는 본문이 <b>실제로 시행된 날</b>을 넣으세요 — 최초 제정일이
+                    아니라 지금 이 본문이 시행된 날입니다.
+                  </p>
+                </div>
+              )}
               {createMode === 'import' && (
                 <div className="md:col-span-2 space-y-2">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">원문 업로드/붙여넣기</label>
@@ -997,6 +1023,7 @@ export default function PoliciesPage() {
                     rawText: importRawText,
                     splitMode: importSplitMode,
                     splitDelimiter: importDelimiter,
+                    effectiveDate: importEffectiveDate,
                   })
                 }
                 disabled={
@@ -1004,7 +1031,8 @@ export default function PoliciesPage() {
                   !form.title ||
                   createMutation.isPending ||
                   (createMode === 'import' &&
-                    (((importRawText || '').trim().length === 0 && parsedArticleCount === 0) ||
+                    ((user?.role === 'admin' && !/^\d{4}-\d{2}-\d{2}$/.test(importEffectiveDate)) ||
+                      ((importRawText || '').trim().length === 0 && parsedArticleCount === 0) ||
                       importValidation.errors.length > 0 ||
                       (importSplitMode === 'delimiter' && !importDelimiter.trim())))
                 }

@@ -48,7 +48,7 @@ export default function PolicyImportPage() {
   const [dirty, setDirty] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ code: '', title: '', description: '' });
+  const [form, setForm] = useState({ code: '', title: '', description: '', effectiveDate: '' });
   const [createdPolicyId, setCreatedPolicyId] = useState<string | null>(null);
 
   // 서버 추출이 오래 걸릴 수 있어 status가 processing인 동안만 폴링한다
@@ -109,6 +109,7 @@ export default function PolicyImportPage() {
         code: form.code.trim(),
         title: form.title.trim(),
         description: form.description.trim() || undefined,
+        effectiveDate: form.effectiveDate,
       });
     },
     onSuccess: (result) => {
@@ -135,7 +136,11 @@ export default function PolicyImportPage() {
   const status = session?.status ?? 'pending';
   const isBusy = status === 'pending' || status === 'processing';
   const canCommit =
-    !!form.code.trim() && !!form.title.trim() && articleCount > 0 && status === 'ready';
+    !!form.code.trim() &&
+    !!form.title.trim() &&
+    /^\d{4}-\d{2}-\d{2}$/.test(form.effectiveDate) &&
+    articleCount > 0 &&
+    status === 'ready';
 
   const pickFile = (file: File) => {
     setUploadError('');
@@ -158,7 +163,7 @@ export default function PolicyImportPage() {
     setUploadError('');
     setEditingId(null);
     setCreatedPolicyId(null);
-    setForm({ code: '', title: '', description: '' });
+    setForm({ code: '', title: '', description: '', effectiveDate: '' });
   };
 
   return (
@@ -408,6 +413,29 @@ export default function PolicyImportPage() {
                 />
               </div>
               <div className="md:col-span-2">
+                <label className="block text-xs font-medium text-gray-700 mb-1.5" htmlFor="import-effective">
+                  시행일 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="import-effective"
+                  type="date"
+                  className="input md:w-56"
+                  value={form.effectiveDate}
+                  onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })}
+                />
+                <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                  가져오는 본문이 <b>실제로 시행된 날</b>을 넣으세요. 최초 제정일이 아니라 지금 이 본문이 시행된 날입니다 —
+                  이 날짜부터 시점 조회와 법령 개정 분석에 이 본문이 쓰입니다.
+                  {lawMeta?.effectiveDate && (
+                    <>
+                      {' '}
+                      참고: 이 법령의 시행일은 {lawMeta.effectiveDate}입니다. 회사 규정의 시행일은 다를 수 있어 자동으로
+                      채우지 않습니다.
+                    </>
+                  )}
+                </p>
+              </div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-medium text-gray-700 mb-1.5" htmlFor="import-desc">
                   설명
                 </label>
@@ -430,7 +458,7 @@ export default function PolicyImportPage() {
                 {commitMutation.isPending ? '등록 중…' : `조항 ${articleCount}건으로 규정 만들기`}
               </button>
               {!canCommit && status === 'ready' && (
-                <span className="text-[11px] text-gray-500">코드와 제목을 입력하세요.</span>
+                <span className="text-[11px] text-gray-500">코드·제목·시행일을 입력하세요.</span>
               )}
             </div>
           </section>

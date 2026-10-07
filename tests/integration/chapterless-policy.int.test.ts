@@ -98,6 +98,7 @@ describe('장 없는 규정 (T-84)', () => {
             {
               code,
               title: '장 없는 규정',
+              effectiveDate: '2024-01-01',
               articles: [
                 { number: 1, title: '목적', content: '이 규정은 …을 목적으로 한다.', publish: true },
                 { number: 2, title: '적용범위', content: '본사와 지점에 적용한다.' },
