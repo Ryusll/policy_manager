@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { api, createTenant, createPolicyWithArticle, login, waitForApi } from './helpers';
 
 /**
  * 감사 로그 조회 (T-11).
@@ -144,10 +144,7 @@ describe('감사 로그 조회 (T-11)', () => {
         token: t.token,
         json: { email, password: t.password, name: '편집자', role: 'editor' },
       });
-      const r = await api('/auth/login', {
-        method: 'POST',
-        json: { email, password: t.password, tenantSlug: t.slug },
-      });
+      const r = await login(email, t.password, t.slug);
       const { status } = await api('/audit-logs', { token: r.body.accessToken });
       expect(status).toBe(403);
     });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { api, createTenant, createPolicyWithArticle, login, waitForApi } from './helpers';
 
 /**
  * 시행 전 초안 표시·한꺼번에 시행.
@@ -22,7 +22,7 @@ describe('시행 전 초안 — 표시와 한꺼번에 시행', () => {
   const userToken = async (role: 'editor' | 'viewer') => {
     const email = `${role}-${t.slug}@example.test`;
     await api('/users', { method: 'POST', token: t.token, json: { email, password: t.password, name: role, role } });
-    const r = await api('/auth/login', { method: 'POST', json: { email, password: t.password, tenantSlug: t.slug } });
+    const r = await login(email, t.password, t.slug);
     return r.body.accessToken as string;
   };
 

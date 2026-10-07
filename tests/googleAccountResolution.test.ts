@@ -29,6 +29,7 @@ const base = (over: Partial<GoogleResolutionInput> = {}): GoogleResolutionInput 
   tenantName: '',
   linkedUser: null,
   tenant: { id: 'tenant-acme' },
+  allowRegister: true,
   userInTenant: null,
   ...over,
 });
@@ -157,5 +158,20 @@ describe('구글 계정 판단 (T-42)', () => {
     it('조직 이름의 앞뒤 공백은 정리해서 넘긴다', () => {
       expect(reg({ tenantName: '  새 회사  ' })).toMatchObject({ tenantName: '새 회사' });
     });
+  });
+});
+
+describe('공개 회원가입이 닫혀 있으면 (T-122)', () => {
+  it('구글로 새 조직을 만들 수 없다 — 고객사는 아스트룸이 개설한다', () => {
+    expect(
+      resolveGoogleAccount(base({ mode: 'register', tenantSlug: 'newco', tenantName: '새 회사', tenant: null, allowRegister: false })),
+    ).toMatchObject({ kind: 'reject', code: 'signup_closed' });
+  });
+
+  it('이미 초대받은 계정의 구글 로그인은 그대로 된다 — 닫히는 것은 "새 조직 만들기"뿐이다', () => {
+    const res = resolveGoogleAccount(
+      base({ mode: 'login', userInTenant: { id: 'u1', oauthSub: null }, allowRegister: false }),
+    );
+    expect(res).toEqual({ kind: 'link', userId: 'u1' });
   });
 });

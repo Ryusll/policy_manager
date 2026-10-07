@@ -31,7 +31,8 @@ export class UsersService {
     return this.prisma.user.findMany({
       where: { tenantId },
       orderBy: { name: 'asc' },
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+      // mustChangePassword — 관리자가 "아직 첫 로그인(비밀번호 변경) 전"인 직원을 볼 수 있게
+      select: { id: true, email: true, name: true, role: true, createdAt: true, mustChangePassword: true },
     });
   }
 
@@ -58,6 +59,8 @@ export class UsersService {
         passwordHash,
         name: dto.name,
         role: dto.role,
+        // 관리자가 정한 초기 비밀번호다 — 본인이 처음 로그인할 때 바꾸게 한다(T-122)
+        mustChangePassword: true,
       },
     });
 
@@ -113,7 +116,12 @@ export class UsersService {
     await this.prisma.user.update({
       where: { id: userId },
       // refreshToken 을 비워 다른 기기의 세션이 갱신되지 못하게 한다(접근 토큰 만료 후 로그인 화면)
-      data: { passwordHash: await bcrypt.hash(dto.newPassword, 10), refreshToken: null },
+      // 본인이 고른 비밀번호가 됐으니 강제 변경 표시를 끈다(T-122)
+      data: {
+        passwordHash: await bcrypt.hash(dto.newPassword, 10),
+        refreshToken: null,
+        mustChangePassword: false,
+      },
     });
     await this.audit.log({
       tenantId,
@@ -141,7 +149,12 @@ export class UsersService {
 
     await this.prisma.user.update({
       where: { id: targetId },
-      data: { passwordHash: await bcrypt.hash(dto.newPassword, 10), refreshToken: null },
+      // 관리자가 정한 임시 비밀번호다 — 다음 로그인 때 본인이 바꾸게 한다(T-122)
+      data: {
+        passwordHash: await bcrypt.hash(dto.newPassword, 10),
+        refreshToken: null,
+        mustChangePassword: true,
+      },
     });
     await this.audit.log({
       tenantId,

@@ -1,6 +1,24 @@
 import client from './client';
 
+export type CreateTenantPayload = {
+  name: string;
+  slug: string;
+  plan: 'starter' | 'pro' | 'enterprise';
+  masterEmail: string;
+  masterName: string;
+};
+
+export type CreateTenantResult = {
+  tenant: { id: string; name: string; slug: string; plan: string };
+  master: { id: string; email: string; name: string };
+  /** 한 번만 온다 — 서버는 저장하지 않는다 */
+  temporaryPassword: string;
+};
+
 export const platformAdminApi = {
+  /** 고객사 개설 + 마스터 계정 발급 (T-122) */
+  createTenant: (data: CreateTenantPayload): Promise<CreateTenantResult> =>
+    client.post('/platform-admin/tenants', data).then((r) => r.data),
   listTenants: (q = '') =>
     client.get('/platform-admin/tenants', { params: q ? { q } : undefined }).then((r) => r.data),
   listTenantUsers: (tenantId: string) =>

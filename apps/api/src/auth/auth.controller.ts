@@ -8,13 +8,15 @@ import {
   Req,
   Res,
   Query,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import type { Request as ExpressRequest, Response } from 'express';
 import * as passport from 'passport';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshTokenDto, RegisterDto } from './auth.dto';
-import { Public } from '../common/guards/decorators';
+import { AllowDuringPasswordChange, Public } from '../common/guards/decorators';
+import { publicSignupEnabled, SIGNUP_CLOSED_MESSAGE } from './signup-policy';
 import type { GoogleOAuthProfile } from './google.strategy';
 import {
   createGoogleOAuthState,
@@ -39,10 +41,26 @@ export class AuthController {
     return this.authService.login(dto);
   }
 
+  /** 로그인 화면이 회원가입 링크를 보일지 정한다 (T-122) */
+  @Public()
+  @Get('options')
+  @ApiOperation({ summary: '로그인 화면 설정 — 공개 회원가입 허용 여부' })
+  options() {
+    return { publicSignup: publicSignupEnabled() };
+  }
+
   @Public()
   @Post('register')
-  @ApiOperation({ summary: 'Register new tenant' })
+  @ApiOperation({ summary: 'Register new tenant — 공개 회원가입이 닫혀 있으면 403 (T-122)' })
   register(@Body() dto: RegisterDto) {
+    if (!publicSignupEnabled()) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'SIGNUP_CLOSED',
+        message: SIGNUP_CLOSED_MESSAGE,
+      });
+    }
     return this.authService.register(dto);
   }
 
@@ -65,6 +83,10 @@ export class AuthController {
         .json({ message: 'Google OAuth is not configured' });
     }
     const resolvedMode = mode === 'register' ? 'register' : 'login';
+    // 구글로 새 회사를 만드는 것도 회원가입이다. 구글까지 갔다 오지 않게 여기서 먼저 돌려보낸다(T-122)
+    if (resolvedMode === 'register' && !publicSignupEnabled()) {
+      return res.redirect(`${getPublicUrl()}/login?error=oauth&reason=signup_closed`);
+    }
     const slug = (tenantSlug || 'demo').trim();
     const name = (tenantName || '').trim();
     if (resolvedMode === 'register' && (!slug || !name)) {
@@ -158,6 +180,7 @@ export class AuthController {
     return this.authService.refresh(dto.refreshToken);
   }
 
+  @AllowDuringPasswordChange()
   @Post('logout')
   @HttpCode(200)
   @ApiOperation({ summary: 'Logout' })
@@ -165,6 +188,7 @@ export class AuthController {
     return this.authService.logout(req.user.id);
   }
 
+  @AllowDuringPasswordChange()
   @Post('me')
   @HttpCode(200)
   @ApiOperation({ summary: 'Get current user' })

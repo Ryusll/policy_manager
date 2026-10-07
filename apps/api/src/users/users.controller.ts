@@ -9,7 +9,7 @@ import {
   UpdateUserDto,
 } from './users.dto';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/guards/decorators';
+import { AllowDuringPasswordChange, Roles } from '../common/guards/decorators';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -46,7 +46,9 @@ export class UsersController {
     return this.usersService.update(req.user.tenantId, req.user.id, id, dto);
   }
 
-  // `:id/password` 보다 먼저 선언해야 `me` 가 사용자 id 로 잡히지 않는다
+  // `:id/password` 보다 먼저 선언해야 `me` 가 사용자 id 로 잡히지 않는다.
+  // 비밀번호 변경이 필요한 사용자가 쓸 수 있는 몇 안 되는 경로다(T-122)
+  @AllowDuringPasswordChange()
   @Post('me/password')
   @HttpCode(200)
   @ApiOperation({ summary: '내 비밀번호 변경 — 현재 비밀번호 필요, 모든 역할' })

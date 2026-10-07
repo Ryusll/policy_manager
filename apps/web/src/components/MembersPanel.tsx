@@ -152,6 +152,14 @@ export default function MembersPanel() {
               >
                 {roleLabel[u.role] ?? u.role}
               </span>
+              {u.mustChangePassword && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-800 shrink-0"
+                  title={t('members.pendingFirstLoginHint')}
+                >
+                  {t('members.pendingFirstLogin')}
+                </span>
+              )}
               <button
                 type="button"
                 className="shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"

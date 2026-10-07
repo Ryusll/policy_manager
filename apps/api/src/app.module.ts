@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { PasswordChangeGuard } from './common/guards/password-change.guard';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
@@ -32,7 +33,9 @@ import { FavoritesModule } from './favorites/favorites.module';
 @Module({
   controllers: [HealthController],
   imports: [
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    // IP 당·경로별 분당 한도. 운영은 기본 100 그대로다. 통합 테스트는 한 IP 에서 수백 번 로그인하므로
+    // 개발·CI(docker-compose.yml)만 올린다 — 첫 로그인 비밀번호 변경(T-122)으로 로그인이 늘었다
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: Number(process.env.THROTTLE_LIMIT) || 100 }]),
     PrismaModule,
     AuthModule,
     PoliciesModule,
@@ -59,6 +62,8 @@ import { FavoritesModule } from './favorites/favorites.module';
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // 인증 직후 — 남이 정해 준 비밀번호를 바꾸기 전에는 거의 모든 API 를 막는다(T-122)
+    { provide: APP_GUARD, useClass: PasswordChangeGuard },
     { provide: APP_GUARD, useClass: PlanGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },

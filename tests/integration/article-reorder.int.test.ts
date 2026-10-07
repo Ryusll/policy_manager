@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { api, createTenant, waitForApi } from './helpers';
+import { api, createTenant, login, waitForApi } from './helpers';
 
 /**
  * 조 순서 일괄 재정렬 (T-60).
@@ -206,10 +206,7 @@ describe('조 순서 재정렬 (T-60)', () => {
         token: t.token,
         json: { email, password: t.password, name: '뷰어', role: 'viewer' },
       });
-      const r = await api('/auth/login', {
-        method: 'POST',
-        json: { email, password: t.password, tenantSlug: t.slug },
-      });
+      const r = await login(email, t.password, t.slug);
       const current = await api(`/policies/${policyId}/jo-order`, { token: r.body.accessToken });
       const { status } = await api(`/policies/${policyId}/jo-order`, {
         method: 'PUT',

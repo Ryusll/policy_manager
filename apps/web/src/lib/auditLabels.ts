@@ -41,6 +41,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.import_policies': '규정 일괄 가져오기',
   'revision.notify_sent': '개정 알림 발송',
   'tenant.plan_changed': '요금제 변경',
+  'platform_admin.tenant.create': '[플랫폼] 고객사 개설',
   'platform_admin.tenant_plan.update': '[플랫폼] 테넌트 요금제 변경',
   'platform_admin.user_role.update': '[플랫폼] 사용자 역할 변경',
   'platform_admin.platform_role.update': '[플랫폼] 플랫폼 역할 변경',

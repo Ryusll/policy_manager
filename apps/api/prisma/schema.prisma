@@ -102,6 +102,10 @@ model User {
   oauthProvider String?      @map("oauth_provider")
   oauthSub      String?      @map("oauth_sub")
   refreshToken  String?      @map("refresh_token")
+  /// 다른 사람(관리자·아스트룸)이 정해 준 비밀번호로 만든·재설정한 계정이면 true.
+  /// 본인이 비밀번호를 바꾸기 전까지 대부분의 API 가 막힌다 — 정해 준 사람이 비밀번호를 계속 알고
+  /// 있는 상태로 쓰지 않게 하려는 것이다(T-122). 본인이 고르는 회원가입·비밀번호 변경은 false
+  mustChangePassword Boolean @default(false) @map("must_change_password")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 

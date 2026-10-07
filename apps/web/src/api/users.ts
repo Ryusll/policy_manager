@@ -12,6 +12,8 @@ export type TenantUser = {
   email: string;
   name: string;
   role: string;
+  /** 관리자가 정해 준 비밀번호를 아직 안 바꿨다 — 첫 로그인 전(T-122) */
+  mustChangePassword?: boolean;
 };
 
 /** 관리자가 보내는 수정 항목 — 보낸 것만 바뀐다 */

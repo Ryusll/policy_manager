@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { authApi } from '../api/auth';
@@ -28,6 +29,11 @@ export default function RegisterPage() {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const { data: signupOptions } = useQuery({
+    queryKey: ['auth-options'],
+    queryFn: authApi.options,
+    staleTime: 5 * 60_000,
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,6 +60,21 @@ export default function RegisterPage() {
       setLoading(false);
     }
   };
+
+  // 고객사는 아스트룸이 개설한다 — 주소를 직접 쳐서 들어와도 가입 양식을 보이지 않는다(T-122)
+  if (signupOptions && !signupOptions.publicSignup) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
+        <div className="w-full max-w-md bg-white border border-gray-300 shadow-sm p-6 space-y-3 text-center">
+          <h1 className="text-base font-semibold text-gray-800">{t('register.closedTitle')}</h1>
+          <p className="text-sm text-gray-600 leading-relaxed">{t('register.closedBody')}</p>
+          <Link to="/login" className="inline-block text-sm text-navy-700 font-medium hover:underline">
+            {t('register.loginLink')}
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">

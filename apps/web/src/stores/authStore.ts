@@ -7,6 +7,8 @@ interface User {
   name: string;
   role: string;
   platformRole?: string;
+  /** 남이 정해 준 비밀번호로 들어왔다 — 바꾸기 전에는 비밀번호 변경 화면만 보인다(T-122) */
+  mustChangePassword?: boolean;
   tenantId: string;
   tenantSlug: string;
   tenantName: string;

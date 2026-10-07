@@ -64,6 +64,10 @@ services:
       # 데모 계정(admin@demo.com / password123) 생성 여부.
       # 터널·상시 서버 등 외부에서 열리는 배포에서는 반드시 false 로 둔다.
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      # 개발·통합 테스트용 — 테스트가 회원가입으로 회사를 만든다. 운영(Oracle compose)은 넘기지 않아 닫혀 있다(T-122)
+      ALLOW_PUBLIC_SIGNUP: ${ALLOW_PUBLIC_SIGNUP:-true}
+      # 통합 테스트가 한 IP 에서 분당 100번 넘게 로그인한다. 운영은 넘기지 않아 기본 100(T-122)
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-1000}
       STORAGE_TYPE: minio
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000

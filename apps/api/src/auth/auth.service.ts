@@ -11,6 +11,7 @@ import { LoginDto, RegisterDto } from './auth.dto';
 import type { GoogleOAuthProfile } from './google.strategy';
 import type { GoogleOAuthState } from './oauth-state';
 import { resolveGoogleAccount, GoogleOAuthRejection } from './google-account-resolution';
+import { publicSignupEnabled } from './signup-policy';
 
 @Injectable()
 export class AuthService {
@@ -110,6 +111,7 @@ export class AuthService {
       userInTenant: userInTenant
         ? { id: userInTenant.id, oauthSub: userInTenant.oauthSub }
         : null,
+      allowRegister: publicSignupEnabled(),
     });
 
     switch (decision.kind) {
@@ -172,6 +174,7 @@ export class AuthService {
     name: string;
     role: string;
     platformRole?: string;
+    mustChangePassword?: boolean;
     tenantId: string;
     tenant: {
       slug: string;
@@ -195,6 +198,8 @@ export class AuthService {
         name: user.name,
         role: user.role,
         platformRole: user.platformRole || 'none',
+        // 남이 정해 준 비밀번호로 들어왔다 — 화면이 비밀번호 변경부터 시킨다(T-122)
+        mustChangePassword: user.mustChangePassword === true,
         tenantId: user.tenantId,
         tenantSlug: user.tenant.slug,
         tenantName: user.tenant.name,

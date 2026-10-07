@@ -18,7 +18,6 @@ import { clsx } from 'clsx';
 import { useAuthStore } from '../stores/authStore';
 import {
   canCustomizeBranding,
-  canInviteUsers,
   canManagePolicyTemplates,
   canUseAdvancedTemplateEditor,
 } from '../lib/planFeatures';
@@ -72,10 +71,11 @@ export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
   const customizationEnabled = canCustomizeBranding(user?.plan);
-  const inviteEnabledByPlan = canInviteUsers(user?.plan);
   const canManageTemplatesByPlan = canManagePolicyTemplates(user?.plan);
   const advancedTemplateEnabled = canUseAdvancedTemplateEditor(user?.plan);
-  const canManageTeam = isAdmin && inviteEnabledByPlan;
+  // 직원 계정 발급은 플랜과 무관하다 — 마스터가 계정을 만들어 나눠 주는 제품이다. 플랜 차이는
+  // 인원 상한(서버 maxUsersForPlan)으로만 둔다(T-122, D-07 정리)
+  const canManageTeam = isAdmin;
   const [activeTab, setActiveTab] = useState<'ui' | 'favorites' | 'team' | 'members' | 'templates'>('ui');
   const [invite, setInvite] = useState({ email: '', password: '', name: '', role: 'editor' as 'admin' | 'editor' | 'viewer' });
   const [inviteMsg, setInviteMsg] = useState('');
@@ -955,6 +955,7 @@ export default function SettingsPage() {
                 value={invite.password}
                 onChange={(e) => setInvite({ ...invite, password: e.target.value })}
               />
+              <p className="text-[11px] text-gray-400 mt-1">{t('settings.invitePasswordHint')}</p>
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs text-gray-600 mb-1">{t('settings.inviteRole')}</label>
@@ -1004,11 +1005,6 @@ export default function SettingsPage() {
 
       {activeTab === 'team' && isAdmin && (
         <div className="card p-5 space-y-4">
-          {!canManageTeam && (
-            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-3">
-              Starter 플랜에서는 팀원 초대는 제한되지만, 개정 알림 수신 팀은 아래에서 설정할 수 있습니다.
-            </p>
-          )}
           <div className="space-y-3">
             <div>
               <h3 className="text-sm font-semibold text-gray-800">개정 알림 수신 팀</h3>

@@ -47,6 +47,12 @@ client.interceptors.response.use(
         window.location.href = '/login';
       }
     }
+    // 다른 곳(관리자 재설정 등)에서 변경 필요 상태가 됐다 — 화면을 비밀번호 변경으로 돌린다(T-122)
+    const code = (error.response?.data as { code?: string } | undefined)?.code;
+    if (error.response?.status === 403 && code === 'PASSWORD_CHANGE_REQUIRED') {
+      const { user, setUser } = useAuthStore.getState();
+      if (user && !user.mustChangePassword) setUser({ ...user, mustChangePassword: true });
+    }
     return Promise.reject(error);
   },
 );

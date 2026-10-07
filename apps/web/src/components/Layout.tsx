@@ -89,16 +89,22 @@ export default function Layout() {
         if (cancelled || !fresh) return;
         const current = useAuthStore.getState().user;
         if (!current || current.id !== fresh.id) return;
+        const mustChangePassword = fresh.mustChangePassword === true;
         if (
           current.name === fresh.name &&
           current.email === fresh.email &&
-          current.role === fresh.role
+          current.role === fresh.role &&
+          (current.mustChangePassword === true) === mustChangePassword
         ) {
           return;
         }
-        useAuthStore
-          .getState()
-          .setUser({ ...current, name: fresh.name, email: fresh.email, role: fresh.role });
+        useAuthStore.getState().setUser({
+          ...current,
+          name: fresh.name,
+          email: fresh.email,
+          role: fresh.role,
+          mustChangePassword,
+        });
       })
       .catch(() => {
         // 만료·오프라인은 다른 요청이 같은 경로(갱신 → 로그인 화면)로 처리한다

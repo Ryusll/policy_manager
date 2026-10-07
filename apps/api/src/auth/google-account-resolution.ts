@@ -36,6 +36,8 @@ export interface GoogleResolutionInput {
   tenant: { id: string } | null;
   /** 그 조직 안에서 같은 이메일을 쓰는 사용자 */
   userInTenant: { id: string; oauthSub: string | null } | null;
+  /** 공개 회원가입(새 조직 만들기)이 열려 있는가 — 운영은 닫혀 있다(T-122) */
+  allowRegister: boolean;
 }
 
 export type GoogleResolution =
@@ -55,7 +57,8 @@ export type RejectCode =
   | 'missing_tenant_name'
   | 'slug_taken'
   | 'not_invited'
-  | 'email_linked_elsewhere';
+  | 'email_linked_elsewhere'
+  | 'signup_closed';
 
 const SLUG_MIN = 2;
 const SLUG_MAX = 40;
@@ -99,6 +102,14 @@ export function resolveGoogleAccount(input: GoogleResolutionInput): GoogleResolu
   }
 
   if (mode === 'register') {
+    // 공개 회원가입이 닫혀 있으면 구글로도 새 조직을 만들 수 없다. 고객사는 아스트룸이 개설한다
+    if (!input.allowRegister) {
+      return {
+        kind: 'reject',
+        code: 'signup_closed',
+        message: '회원가입은 아스트룸을 통해서만 진행됩니다. 계정이 필요하면 회사 관리자에게 요청하세요.',
+      };
+    }
     if (tenantSlug.length < SLUG_MIN || tenantSlug.length > SLUG_MAX) {
       return { kind: 'reject', code: 'invalid_slug', message: '조직 코드가 올바르지 않습니다.' };
     }

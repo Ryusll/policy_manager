@@ -81,7 +81,33 @@ export async function createTenant(tag: string) {
   };
 }
 
+/**
+ * 로그인. 관리자가 정해 준 비밀번호로 **처음** 들어온 계정(`mustChangePassword`)이면 비밀번호를
+ * 바꾸기 전까지 거의 모든 API 가 403 이다(T-122). 테스트의 초대 계정은 "이미 첫 로그인을 마친
+ * 직원"으로 다룬다 — 다른 값으로 바꿨다가 원래 비밀번호로 되돌린 뒤 다시 로그인해 돌려준다.
+ * 그래야 이후 같은 비밀번호로 다시 로그인하는 테스트가 그대로 돌고, "권한이 없어 403"을 보는
+ * 테스트가 "비밀번호를 안 바꿔서 403"으로 엉뚱하게 통과하지 않는다.
+ * 강제 변경 자체는 `account-provisioning.int.test.ts` 가 `/auth/login` 을 직접 불러 검증한다.
+ */
 export async function login(email: string, password: string, tenantSlug: string) {
+  const first = await api('/auth/login', { method: 'POST', json: { email, password, tenantSlug } });
+  if (first.status !== 200 || !first.body?.user?.mustChangePassword) return first;
+
+  const token = first.body.accessToken as string;
+  const interim = `${password}#onboard`;
+  for (const [currentPassword, newPassword] of [
+    [password, interim],
+    [interim, password],
+  ]) {
+    const changed = await api('/users/me/password', {
+      method: 'POST',
+      token,
+      json: { currentPassword, newPassword },
+    });
+    if (changed.status !== 200) {
+      throw new Error(`초대 계정 첫 로그인 처리 실패 (${changed.status}): ${JSON.stringify(changed.body)}`);
+    }
+  }
   return api('/auth/login', { method: 'POST', json: { email, password, tenantSlug } });
 }
 

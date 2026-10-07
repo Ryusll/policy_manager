@@ -27,12 +27,13 @@ process.stdin.on("end", async () => {
     if (!user) throw new Error("해당 조직·이메일의 사용자가 없습니다.");
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: await bcrypt.hash(pw, 10), refreshToken: null },
+      // 다른 사람이 정한 비밀번호다 — 본인이 다음 로그인 때 바꾸게 한다(T-122)
+      data: { passwordHash: await bcrypt.hash(pw, 10), refreshToken: null, mustChangePassword: true },
     });
     await prisma.auditLog.create({
       data: { tenantId: user.tenantId, action: "user.password_reset", entityType: "user", entityId: user.id, details: { via: "server-script" } },
     });
-    console.log("재설정 완료: " + user.email + " (모든 기기에서 로그아웃됩니다)");
+    console.log("재설정 완료: " + user.email + " (모든 기기에서 로그아웃됩니다. 다음 로그인 때 비밀번호를 바꾸게 됩니다)");
   } catch (e) {
     console.error(e.message);
     process.exitCode = 1;

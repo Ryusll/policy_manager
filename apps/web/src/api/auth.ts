@@ -19,4 +19,6 @@ export const authApi = {
   register: (data: RegisterPayload) => client.post('/auth/register', data).then((r) => r.data),
   logout: () => client.post('/auth/logout'),
   me: () => client.post('/auth/me').then((r) => r.data),
+  /** 로그인 화면 설정 — 공개 회원가입이 열려 있는지(운영은 닫힘, T-122) */
+  options: (): Promise<{ publicSignup: boolean }> => client.get('/auth/options').then((r) => r.data),
 };

@@ -18,12 +18,15 @@ import AuditLogPage from './pages/AuditLogPage';
 import LawsPage from './pages/LawsPage';
 import LawDetailPage from './pages/LawDetailPage';
 import ToastHost from './components/ui/ToastHost';
+import ForcePasswordChangePage from './pages/ForcePasswordChangePage';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { isAuthenticated, user, hasHydrated } = useAuthStore();
   if (!hasHydrated) return null;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  // 남이 정해 준 비밀번호를 바꾸기 전에는 어떤 화면도 열지 않는다(서버도 같은 상태에서 막는다)
+  if (user?.mustChangePassword) return <ForcePasswordChangePage />;
 
   if (user?.role === 'viewer') {
     const allowed =

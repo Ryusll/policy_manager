@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { platformAdminApi } from '../api/platformAdmin';
 import { usePlatformBranding } from '../hooks/usePlatformBranding';
 import LawSyncPanel from '../components/LawSyncPanel';
+import TenantProvisionPanel from '../components/TenantProvisionPanel';
 
 export default function PlatformAdminPage() {
   const qc = useQueryClient();
@@ -163,6 +164,8 @@ export default function PlatformAdminPage() {
           <div className="text-xl font-bold text-amber-700">{summary.expiringSoonCount}</div>
         </div>
       </div>
+
+      <TenantProvisionPanel />
 
       <LawSyncPanel />
 

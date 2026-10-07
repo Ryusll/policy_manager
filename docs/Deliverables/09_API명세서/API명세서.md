@@ -15,9 +15,10 @@
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | login | Public | 이메일/비밀번호 로그인 |
-| POST | register | Public | 테넌트 + 최초 admin 계정 생성 |
-| GET | google | Public | Google OAuth 시작(redirect). 서명된 `state`와 `oauth_state` 쿠키를 함께 내린다. `GOOGLE_CLIENT_ID/SECRET` 미설정 시 **503** |
+| POST | login | Public | 이메일/비밀번호 로그인. 응답 `user.mustChangePassword` 가 true 면 화면은 비밀번호 변경부터 시킨다(T-122) |
+| POST | register | Public | 테넌트 + 최초 admin 계정 생성. **공개 회원가입이 닫힌 서버(운영 기본)에서는 403 `code: SIGNUP_CLOSED`** — 고객사는 아스트룸이 `POST /platform-admin/tenants` 로 개설한다. 개발·CI 만 `ALLOW_PUBLIC_SIGNUP=true` (T-122) |
+| GET | options | Public | 로그인 화면 설정 `{ publicSignup }` — 회원가입 링크를 보일지 (T-122) |
+| GET | google | Public | Google OAuth 시작(redirect). 서명된 `state`와 `oauth_state` 쿠키를 함께 내린다. `GOOGLE_CLIENT_ID/SECRET` 미설정 시 **503**. `mode=register`(구글로 새 조직 만들기)는 공개 회원가입이 닫혀 있으면 구글로 가기 전에 `/login?error=oauth&reason=signup_closed` 로 돌려보낸다(T-122) |
 | GET | google/callback | Public | Google OAuth 콜백. `state`의 서명·유효시간(10분)·쿠키 대조를 **코드 교환보다 먼저** 확인한다. 실패는 `{PUBLIC_URL}/login?error=oauth&reason=<사유>`로 리다이렉트 |
 | POST | refresh | Public | refreshToken으로 재발급. 서명·만료를 검증하고 **매번 새 토큰으로 회전**한다. 잘못된 토큰은 401, 빈 값은 400 |
 | POST | logout | JWT | refreshToken 무효화 |
@@ -37,14 +38,17 @@
 | `provider` / `server` | Google 응답 실패 / 서버 오류 |
 
 ## users (`/api/users`)
+
+> **첫 로그인 비밀번호 변경 (T-122)** — 다른 사람이 정해 준 비밀번호(아래 `POST (root)`·`POST :id/password`, 아스트룸의 고객사 개설, 서버 재설정 스크립트)로 만든 계정은 `mustChangePassword=true` 다. 그 상태에서는 `POST me/password`·`POST /auth/me`·`POST /auth/logout` 과 공개 경로 외 **모든 요청이 403 `code: PASSWORD_CHANGE_REQUIRED`** 다(전역 가드, 인증 직후). 본인이 비밀번호를 바꾸면 풀린다.
+
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | admin, editor | 테넌트 사용자 목록 |
-| POST | (root) | admin | 팀원 초대(사용자 생성). **플랜 게이트 없음** — 플랜별 사용자 상한(`maxUsersForPlan`: Starter 10 / Pro 50)만 강제한다. 문서에 오래 "Pro+"로 적혀 있었으나 코드와 다르다(결정 대기 D-07) |
+| GET | (root) | admin, editor | 테넌트 사용자 목록. 각 사용자에 `mustChangePassword`(첫 로그인 전 여부) |
+| POST | (root) | admin | 팀원 초대(사용자 생성). **플랜 무관** — 플랜별 사용자 상한(`maxUsersForPlan`: Starter 10 / Pro 50)만 강제한다(D-07 정리, 2026-10-08). 만든 계정은 첫 로그인 때 비밀번호를 바꿔야 한다(T-122) |
 | PATCH | me | 로그인한 모든 역할 | **내 이름 수정**(플랜·역할 무관). 이름 외의 항목(`role`·`email` 등)을 보내면 **400** — 일반 사용자가 이 경로로 역할을 올리지 못하게 DTO 가 막는다 (T-113) |
 | PATCH | :id | admin | **같은 기관 사용자의 이름·이메일·역할 수정.** 보낸 항목만 바뀌고, 값이 그대로면 감사 로그를 남기지 않는다. **플랜 게이트 없음**(이미 있는 구성원을 고치는 일이라 초대와 달리 유료 경계가 아니다). 다른 조직 사용자는 **404**, 같은 조직의 이메일 중복(대소문자 무시)은 **409**, **조직의 마지막 admin 을 내리면 409**(동시 요청에도 — 조직 단위로 직렬화). 역할은 JWT 가 아니라 요청마다 DB 에서 읽으므로 **다음 요청부터 즉시** 적용된다. 비밀번호·`platformRole` 은 이 경로로 못 바꾼다(400). 감사 액션: 이름·이메일 `user.updated`, 역할 `user.role_changed` (T-113) |
 | POST | me/password | 로그인한 모든 역할 | **내 비밀번호 변경.** 현재 비밀번호를 확인한다(토큰만 훔친 사람이 계정을 가로채지 못하게). 틀리면 **400** — 401 이면 화면이 토큰 갱신·로그아웃 경로를 탄다. 새 비밀번호는 8자 이상·72바이트 이하(bcrypt 한도, 한글은 글자당 3바이트)·현재와 달라야 한다. 성공하면 `refreshToken` 을 비워 **모든 기기의 세션 갱신이 끊긴다**(화면은 로그인 화면으로 이동). Google 전용 계정(비밀번호 없음)은 400. 감사 `user.password_changed`(비밀번호는 기록하지 않음) (T-114) |
-| POST | :id/password | admin | **다른 구성원의 비밀번호 재설정**(임시 비밀번호). 이메일 발송이 없어 "비밀번호 찾기" 링크는 만들 수 없다 — 관리자가 정해 전달한다. **본인에게는 400**(현재 비밀번호 확인을 건너뛰는 경로가 되므로). 다른 조직은 404. 대상의 세션을 끊는다. 감사 `user.password_reset` (T-114) |
+| POST | :id/password | admin | **다른 구성원의 비밀번호 재설정**(임시 비밀번호). 이메일 발송이 없어 "비밀번호 찾기" 링크는 만들 수 없다 — 관리자가 정해 전달한다. **본인에게는 400**(현재 비밀번호 확인을 건너뛰는 경로가 되므로). 다른 조직은 404. 대상의 세션을 끊는다. 재설정된 계정은 다음 로그인 때 비밀번호를 바꿔야 한다(T-122). 감사 `user.password_reset` (T-114) |
 
 ## policies (`/api/policies`)
 | Method | Path | 인증 | 설명 |
@@ -213,6 +217,7 @@
 ## platform-admin (`/api/platform-admin`) — `global_admin` 전용
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
+| POST | tenants | global_admin | **고객사 개설 + 마스터 계정 발급**(T-122). 회사명·조직 코드(영문 소문자·숫자·하이픈 2~40, 하이픈 시작 불가)·플랜(기본 starter)·마스터 이메일·이름. 마스터 비밀번호는 받지 않는다 — 서버가 임시 비밀번호(헷갈리는 글자 뺀 14자)를 만들어 **응답에 한 번만** 싣는다(저장·감사 기록 없음). 마스터는 첫 로그인 때 바꿔야 한다. 조직 코드 중복 409. 감사 `platform_admin.tenant.create`. 서버에서는 `scripts/oracle/create-tenant.sh` 가 같은 코드를 부른다 |
 | GET | tenants | global_admin | 테넌트 목록 |
 | GET | tenants/:tenantId/users | global_admin | 테넌트 사용자 목록 |
 | PATCH | tenants/:tenantId/plan | global_admin | 테넌트 플랜 변경 |
@@ -398,6 +403,7 @@
 **BillingWebhookDto** — `type`(예 `payment.succeeded`), `data`{ `tenantSlug`, `targetPlan`, `paymentId?` }
 
 ## platform-admin
+**CreateTenantDto** — `name`(1~100, trim), `slug`(trim+소문자, `^[a-z0-9][a-z0-9-]{1,39}$`), `plan?`(starter|pro|enterprise, 기본 starter), `masterEmail`(이메일, trim+소문자), `masterName`(1~100). 비밀번호 필드는 없다(보내면 400)
 **UpdateTenantPlanDto** — `plan`(starter|pro|enterprise), `billingStatus`(active|trial|past_due|canceled), `planExpiresAt?`(ISO-8601, 미입력 시 해제)
 **UpdateTenantUserRoleDto** — `role`(admin|editor|viewer)
 **UpdatePlatformRoleDto** — `platformRole`(none|global_admin)

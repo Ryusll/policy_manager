@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { authApi } from '../api/auth';
@@ -23,6 +24,11 @@ export default function LoginPage() {
     return specific && specific !== key ? specific : t('login.oauthError');
   });
   const [loading, setLoading] = useState(false);
+  const { data: signupOptions } = useQuery({
+    queryKey: ['auth-options'],
+    queryFn: authApi.options,
+    staleTime: 5 * 60_000,
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -192,10 +198,17 @@ export default function LoginPage() {
             </form>
 
             <div className="px-5 pb-4 text-center text-sm text-gray-600">
-              {t('login.noAccount')}{' '}
-              <Link to="/register" className="text-navy-700 font-medium hover:underline">
-                {t('login.registerLink')}
-              </Link>
+              {/* 고객사는 아스트룸이 개설한다 — 공개 가입이 닫힌 서버(운영)에서는 링크 대신 안내(T-122) */}
+              {signupOptions?.publicSignup ? (
+                <>
+                  {t('login.noAccount')}{' '}
+                  <Link to="/register" className="text-navy-700 font-medium hover:underline">
+                    {t('login.registerLink')}
+                  </Link>
+                </>
+              ) : (
+                <span className="text-xs text-gray-500">{t('login.askAdmin')}</span>
+              )}
             </div>
           </div>
         </div>

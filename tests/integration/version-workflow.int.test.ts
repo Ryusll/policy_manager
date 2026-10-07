@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { api, createTenant, createPolicyWithArticle, login, waitForApi } from './helpers';
 
 /**
  * 버전 반려·폐지 (T-10).
@@ -128,10 +128,7 @@ describe('버전 반려·폐지 (T-10)', () => {
         token: t.token,
         json: { email, password: t.password, name: '편집자', role: 'editor' },
       });
-      const r = await api('/auth/login', {
-        method: 'POST',
-        json: { email, password: t.password, tenantSlug: t.slug },
-      });
+      const r = await login(email, t.password, t.slug);
       const editorToken = r.body.accessToken;
 
       const v = await newVersion('편집자가 올린 본문');
