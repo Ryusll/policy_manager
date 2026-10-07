@@ -291,6 +291,23 @@ bash scripts/oracle/reset-password.sh <조직코드> <이메일>
 - 결과는 통합 관리자 콘솔의 `법령 동기화` 패널에서도 보이고, 거기서 바로 실행할 수도 있다(플랫폼 관리자).
 - 실행 중 서버가 재시작돼 `진행 중` 으로 남은 기록은 30분 뒤 다음 실행이 "중단됨"으로 닫는다.
 
+## 7-6. 운영 DB 읽기 전용 점검 (Mac에서, T-121)
+
+데이터를 고치지 않고 **건수만** 보는 점검 SQL은 `scripts/oracle/sql/` 에 둔다. Mac 에서:
+
+```bash
+ORACLE_SSH=ubuntu@<서버주소> bash scripts/oracle/run-readonly-sql.sh scripts/oracle/sql/<파일>.sql
+```
+
+- 서버 주소는 저장소에 적지 않는다(공개 저장소). 실행할 때 넘긴다. 키는 기본 `~/.ssh/veda_oci`(`ORACLE_SSH_KEY` 로 바꿀 수 있다).
+- 읽기 전용은 두 겹이다: SQL 파일이 `BEGIN TRANSACTION READ ONLY` … `ROLLBACK` 으로 감싸고, 접속도 `default_transaction_read_only=on` 으로 연다. 쓰기 문이 섞여 있으면 DB가 거절한다.
+- 점검 SQL은 규정 **본문을 출력하지 않는다**(회사·규정 코드·이름·날짜·건수만).
+
+| 파일 | 보는 것 |
+|---|---|
+| `t121-pdf-import-check.sql` | PDF로 가져와 등록한 규정마다: 수정 전 등록인지, **첫 줄이 빠진 항·호·목 수**(가져올 때의 원본 트리로 센다), **조 번호가 한 칸 밀렸는지**(가짜 "머리말" 조), 본문이 빈 항·목 행 수 (C-44) |
+| `draft-only-articles.sql` | 규정마다 **시행 전 초안만 있는 조문 수**와 그중 내용이 있는 초안 수 — "한꺼번에 시행하기"로 시행될 조문 (C-46) |
+
 ## 8. 운영 체크리스트
 
 - [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가 (→ 7-1. `docker compose config`로 확인)
