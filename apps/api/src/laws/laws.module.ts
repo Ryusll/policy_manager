@@ -4,6 +4,7 @@ import { LawsService } from './laws.service';
 import { LawSyncController } from './law-sync.controller';
 import { LawSyncService } from './law-sync.service';
 import { LawGoKrModule } from '../lawgokr/lawgokr.module';
+import { AmendmentsModule } from '../amendments/amendments.module';
 
 /**
  * S7 법령 개정 연계 — 법령 엔티티 (T-100).
@@ -12,7 +13,7 @@ import { LawGoKrModule } from '../lawgokr/lawgokr.module';
  * 같은 등록 경로를 재사용해 재수신하기 위해서다.
  */
 @Module({
-  imports: [LawGoKrModule],
+  imports: [LawGoKrModule, AmendmentsModule],
   controllers: [LawsController, LawSyncController],
   providers: [LawsService, LawSyncService],
   exports: [LawsService],

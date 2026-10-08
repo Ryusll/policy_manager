@@ -319,6 +319,17 @@ export class LawsService {
         '이 법령의 조항에 연결된 법령 관계 정보가 있어 추적을 해제할 수 없습니다. 먼저 연결을 정리하세요.',
       );
     }
+    // 개정 후보(T-106)는 변경 이벤트를 개정의 원인으로 가리킨다. 법령을 지우면 이벤트가 함께 지워져
+    // 후보·승인 이력의 원천이 사라진다 — 회사·상태와 무관하게 하나라도 있으면 막는다(FK 도 Restrict)
+    const candidate = await this.prisma.amendmentCandidate.findFirst({
+      where: { changeEvent: { lawId: id } },
+      select: { id: true },
+    });
+    if (candidate) {
+      throw new ConflictException(
+        '이 법령의 개정으로 만든 개정 후보가 있어 추적을 해제할 수 없습니다. 개정 이력의 원천이 사라집니다.',
+      );
+    }
     await this.prisma.law.delete({ where: { id } });
     return { ok: true };
   }

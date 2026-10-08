@@ -4,6 +4,7 @@ import type { LawSyncTrigger } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { LawsService } from './laws.service';
+import { AmendmentsService } from '../amendments/amendments.service';
 import {
   decideVersion,
   pickLatestVersion,
@@ -49,6 +50,7 @@ export class LawSyncService {
     private readonly prisma: PrismaService,
     private readonly laws: LawsService,
     private readonly lawGoKr: LawGoKrService,
+    private readonly amendments: AmendmentsService,
   ) {}
 
   async run(options: { trigger: LawSyncTrigger; limit?: number; triggeredBy?: string | null }) {
@@ -66,7 +68,14 @@ export class LawSyncService {
       });
       // 순차 처리 — 법제처 호출량은 인증값 단위로 제한된다
       for (const law of targets) results.push(await this.syncOne(law));
-      return await this.finish(run.id, results);
+      const finished = await this.finish(run.id, results);
+      // 새 변경 이벤트로 개정 후보를 만든다(T-106). 동기화 결과와 따로 간다 — 후보 생성이 실패해도
+      // 법령은 이미 갱신됐고, 처리하지 못한 이벤트는 표시가 남지 않아 다음 실행에서 다시 처리한다
+      const amendments = await this.amendments.processPendingEvents().catch((e) => {
+        this.log.error(`개정 후보 자동 생성 실패: ${errorText(e)}`);
+        return null;
+      });
+      return { ...finished, amendments };
     } catch (e) {
       // 법령별 오류는 syncOne 이 결과로 돌려준다. 여기 오는 것은 DB 장애 같은 실행 전체의 실패다
       await this.finish(run.id, results, errorText(e)).catch(() => undefined);

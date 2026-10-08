@@ -87,6 +87,7 @@ model Tenant {
   favorites               Favorite[]
   branding                TenantBranding?
   lawLinks                LawLink[]
+  amendmentCandidates     AmendmentCandidate[]
 
   @@map("tenants")
 }
@@ -333,6 +334,8 @@ model Article {
   favorites Favorite[]
   lawLinks  LawLink[]
 
+  amendmentCandidates AmendmentCandidate[]
+
   @@map("articles")
 }
 
@@ -374,6 +377,8 @@ model ArticleVersion {
 
   article        Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
   variableUsages VariableUsage[]
+  /// 이 버전을 제1 조문(기준 발행본)으로 삼은 개정 후보(T-106)
+  amendmentBases AmendmentCandidate[] @relation("AmendmentBase")
 
   /// 시점 조회: 조문별로 "기준일 이전 시행분 중 가장 최근" 버전을 찾는다
   @@index([articleId, effectiveDate])
@@ -481,6 +486,8 @@ model UserNotification {
   policyId  String?   @map("policy_id")
   articleId String?   @map("article_id")
   versionId String?   @map("version_id")
+  /// 규정이 아닌 화면으로 가는 알림의 이동 경로(예: 법령 개정 후보 → `/laws/:id?change=`)
+  link      String?
   readAt    DateTime? @map("read_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
@@ -738,6 +745,8 @@ model LawLink {
   lawArticle LawArticle @relation(fields: [lawArticleId], references: [id], onDelete: Cascade)
   article    Article    @relation(fields: [articleId], references: [id], onDelete: Cascade)
 
+  amendmentCandidates AmendmentCandidate[]
+
   @@unique([tenantId, lawArticleId, articleId])
   /// 조문 상세에서 "이 조문이 걸린 법" 보기
   @@index([tenantId, articleId])
@@ -801,14 +810,23 @@ model LawChangeEvent {
   receivedVia LawEventChannel @map("received_via")
   detectedAt  DateTime        @default(now()) @map("detected_at")
 
+  /// 개정 후보 자동 생성(T-106)을 마친 시각. null 이면 아직 — 동기화가 끝날 때마다 null 인 것을
+  /// 다시 처리한다(중간에 끊기거나 한 회사가 실패해도 다음 실행에서 이어진다). 기능 도입 전에
+  /// 감지된 이벤트는 마이그레이션이 감지 시각으로 채워 두었다(한꺼번에 알림이 쏟아지지 않게) —
+  /// 그 이벤트의 후보는 화면에서 직접 만든다
+  amendmentsProcessedAt DateTime? @map("amendments_processed_at")
+
   law        Law         @relation(fields: [lawId], references: [id], onDelete: Cascade)
   lawArticle LawArticle? @relation(fields: [lawArticleId], references: [id], onDelete: SetNull)
+  candidates AmendmentCandidate[]
 
   /// 조문 상세 이력, 영향 분석(T-105)의 "이 법령조항 최근 변경" 조회
   @@index([lawArticleId, detectedAt])
   /// 법령 단위 동기화 이력(T-104)
   @@index([lawId, detectedAt])
   @@index([lawEffectiveDate])
+  /// 자동 생성이 아직 처리하지 않은 이벤트 찾기
+  @@index([amendmentsProcessedAt])
   @@map("law_change_events")
 }
 
@@ -871,4 +889,88 @@ enum LawSyncStatus {
   partial
   /// 전부 실패
   failed
+}
+
+/// 개정 후보 — 특허 청구항 6 의 후보 레코드 (T-106, 설계안 4.3).
+///
+/// **발행 버전과 따로 둔다.** 후보는 시점 조회·전문·인쇄에 나오지 않고, 승인(T-108)될 때에만
+/// 같은 조문(`articleId`)의 후속 버전이 된다. 근거(`rationale`)·비교(`diff`)는 만들 때의 스냅샷이라
+/// 나중에 연결·법령 본문이 바뀌어도 "그때 왜 이렇게 고쳤는지"가 남는다.
+model AmendmentCandidate {
+  id            String  @id @default(uuid())
+  /// ⚠️ 테넌트 경계. 조문의 실제 소속(chapter→policy→tenant)과 같아야 한다 — 만들 때 둘 다 본다
+  tenantId      String  @map("tenant_id")
+  /// 영향 조문 (조문 식별자)
+  articleId     String  @map("article_id")
+  /// 제1 조문 — 만들 때의 기준 발행본. 그 뒤 새 버전이 시행돼도 바꾸지 않는다
+  baseVersionId String  @map("base_version_id")
+  changeEventId String  @map("change_event_id")
+  /// 영향을 찾은 연결. 연결이 지워져도 후보는 남는다(근거는 rationale 에 스냅샷) — 법령조항이
+  /// 개정으로 사라지면 연결이 cascade 로 지워지는데, 그때 동기화가 막히면 안 된다
+  lawLinkId     String? @map("law_link_id")
+
+  /// 제2 조문 — 개정 후보 본문. 반영한 것이 없으면 제1 조문 그대로(reviewFlags 에 manual_draft_required)
+  candidateContent String              @map("candidate_content") @db.Text
+  /// 변경 근거 정보 — 법령 변경 부분·연결(유형·근거 문구·확정 상태)·경로·적용 규칙·반영 못 한 변경
+  rationale        Json
+  /// 변경 전후 비교 정보 — 제1 조문 대 후보의 실제 차이(문자 구간). 규칙 기록과 따로 계산한다
+  diff             Json
+  generationMethod AmendmentMethod     @map("generation_method")
+  /// 같은 생성 방식 안의 개정안 구분. 규칙 기반은 규칙 세트 버전("rule/1") — 다시 눌러도 같은 값이라
+  /// 같은 후보가 또 생기지 않고, 규칙 세트가 바뀌면 새 개정안이 된다
+  variant          String
+  /// 규칙·템플릿과 버전, 입력 원천(이벤트·전후 판 키·조문·발행본·연결·기준일), 신뢰도 판정 근거
+  generationMeta   Json?               @map("generation_meta")
+  /// 후보 신뢰도(검토 보조) — 관계 신뢰도(LawLink.confidence)와 별개다
+  confidence       AmendmentConfidence
+  /// 사람이 봐야 하는 이유. amendment-rules.ts 의 ReviewFlag
+  reviewFlags      String[]            @default([]) @map("review_flags")
+  reviewState      AmendmentState      @default(draft) @map("review_state")
+  /// 영향 분석 기준일 — 제1 조문을 고른 날
+  asOfDate         DateTime            @map("as_of_date") @db.Date
+  /// 만든 사람. 동기화가 자동으로 만들었으면 null
+  createdBy        String?             @map("created_by")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  article     Article        @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  baseVersion ArticleVersion @relation("AmendmentBase", fields: [baseVersionId], references: [id], onDelete: Cascade)
+  /// Restrict — 이벤트가 지워지면 개정의 원인이 사라진다. 법령 추적 해제는 후보가 있으면 거부한다
+  changeEvent LawChangeEvent @relation(fields: [changeEventId], references: [id], onDelete: Restrict)
+  lawLink     LawLink?       @relation(fields: [lawLinkId], references: [id], onDelete: SetNull)
+
+  /// 같은 이벤트·조문·기준 발행본·방식·개정안은 하나 — 자동 생성과 버튼이 겹쳐도 중복이 안 생긴다
+  @@unique([tenantId, changeEventId, articleId, baseVersionId, generationMethod, variant])
+  @@index([tenantId, reviewState, createdAt])
+  @@index([tenantId, articleId])
+  @@index([changeEventId])
+  @@map("amendment_candidates")
+}
+
+enum AmendmentMethod {
+  /// 제1 생성 방식 — 개정 규칙 + 문장 템플릿 (T-106)
+  rule
+  /// 제2 생성 방식 — 언어모델 (T-112)
+  llm
+}
+
+enum AmendmentState {
+  /// 작성 — 만들어졌거나 손질 중
+  draft
+  /// 검토 요청됨 (T-107)
+  review
+  /// 승인 → 후속 버전 발행 (T-108)
+  approved
+  /// 반려 — 발행 보류 (T-108)
+  rejected
+}
+
+enum AmendmentConfidence {
+  /// 대응·근거가 확인되고 대상 변경을 모두 반영
+  high
+  /// 확실한 일부만 반영
+  medium
+  /// 반영 없음, 또는 충돌·모호·근거 없는 변경이 있음
+  low
 }

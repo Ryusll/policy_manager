@@ -5,6 +5,7 @@ import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { labelFromNodeKey } from '../laws/law-rows';
 import { impactReferenceDate } from './law-impact';
+import { CANDIDATE_SELECT, presentCandidate } from '../amendments/amendment-present';
 
 const EVENT_SELECT = {
   id: true,
@@ -44,6 +45,18 @@ function presentEvent(e: EventRow) {
     detectedAt: e.detectedAt,
   };
 }
+
+/** 제1 조문이 없는 이유 — `impactedArticles` 참고 */
+export type ImpactSkipReason = 'not_in_force' | 'effective_date_missing';
+
+export type ImpactedArticle = Awaited<ReturnType<LawChangesService['impactedArticles']>>[number];
+
+/**
+ * 조문이 법령에서 통째로 사라지면 LawArticle 이 지워지고 거기 걸린 LawLink 도 함께 지워진다
+ * (T-101 FK cascade). "영향 없음"으로 보이면 안 되므로 사유를 실어 보낸다
+ */
+export const UNRESOLVABLE_REMOVED =
+  '이 조문이 법령에서 사라져 연결 정보도 함께 지워졌습니다. 영향받던 사내 조문을 자동으로 찾을 수 없습니다.';
 
 /**
  * 법령 변경 이벤트와 그 영향 (T-105, 청구항 1 ④·3).
@@ -106,10 +119,11 @@ export class LawChangesService {
 
   /**
    * 이 변경이 우리 회사의 어느 조문에 걸리는지, 그리고 각 조문의 **제1 조문**(영향 분석
-   * 기준일에 시행 중인 발행 버전)까지. 개정 후보 생성(T-106)이 이 결과를 입력으로 쓴다.
+   * 기준일에 시행 중인 발행 버전)까지. 개정 후보 생성(T-106)도 같은 판정(`referenceDate`·
+   * `impactedArticles`)을 쓴다 — 화면에서 본 영향과 후보가 갈라지지 않게.
    *
-   * 기준일에 시행 중인 버전이 없는 조문(아직 시행 전 등)은 빼지 않고 `baseVersion: null` 로
-   * 돌려준다 — 조용히 빠지면 "영향이 없다"로 읽힌다. 후보를 만들 수 없을 뿐이다.
+   * 기준일에 시행 중인 버전이 없는 조문은 빼지 않고 `baseVersion: null` 로 돌려준다 — 조용히
+   * 빠지면 "영향이 없다"로 읽힌다. 후보를 만들 수 없을 뿐이다.
    */
   async impact(tenantId: string, eventId: string, asOf?: string) {
     const event = await this.prisma.lawChangeEvent.findUnique({
@@ -118,36 +132,71 @@ export class LawChangesService {
     });
     if (!event) throw new NotFoundException('변경 이벤트를 찾을 수 없습니다.');
 
-    let asOfDate: Date;
-    if (asOf !== undefined) {
-      const parsed = parseDateOnly(asOf);
-      if (!parsed) throw new BadRequestException('기준일(asOf)은 실제로 있는 날짜여야 합니다.');
-      asOfDate = parsed;
-    } else {
-      asOfDate = impactReferenceDate(event.lawEffectiveDate, todayDateOnly());
-    }
-
+    const asOfDate = this.referenceDate(event.lawEffectiveDate, asOf);
     const base = {
       event: presentEvent(event),
       asOf: toDateOnlyString(asOfDate),
     };
 
     if (!event.lawArticleId) {
-      // 조문이 법령에서 통째로 사라지면 LawArticle 이 지워지고 거기 걸린 LawLink 도 함께 지워진다
-      // (T-101 FK cascade). "영향 없음"으로 보이면 안 되므로 사유를 실어 보낸다
-      return {
-        ...base,
-        impacted: [],
-        suggestedCount: 0,
-        unresolvable:
-          '이 조문이 법령에서 사라져 연결 정보도 함께 지워졌습니다. 영향받던 사내 조문을 자동으로 찾을 수 없습니다.',
-      };
+      return { ...base, impacted: [], suggestedCount: 0, unresolvable: UNRESOLVABLE_REMOVED };
     }
 
+    const impacted = await this.impactedArticles(tenantId, event.lawArticleId, asOfDate);
+    const suggestedCount = await this.prisma.lawLink.count({
+      where: { tenantId, lawArticleId: event.lawArticleId, confirmState: 'suggested' },
+    });
+
+    // 이 변경으로 만든 개정 후보(T-106)를 조문마다 붙인다 — 지금 기준 본문으로 만든 것이 있으면 그것,
+    // 없으면 가장 최근 것(그 사이 기준 본문이 바뀌었다는 뜻이라 isCurrentBase 로 알린다)
+    const candidates = impacted.length
+      ? await this.prisma.amendmentCandidate.findMany({
+          where: {
+            tenantId,
+            changeEventId: event.id,
+            articleId: { in: impacted.map((i) => i.article.id) },
+            article: { chapter: { policy: { tenantId } } },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: CANDIDATE_SELECT,
+        })
+      : [];
+    const withCandidates = impacted.map((item) => {
+      const c =
+        candidates.find((x) => x.articleId === item.article.id && x.baseVersionId === item.baseVersion?.id) ??
+        candidates.find((x) => x.articleId === item.article.id) ??
+        null;
+      return {
+        ...item,
+        candidate: c ? { ...presentCandidate(c), isCurrentBase: c.baseVersionId === item.baseVersion?.id } : null,
+      };
+    });
+    return { ...base, impacted: withCandidates, suggestedCount, unresolvable: null };
+  }
+
+  /** 영향 분석 기준일 — 지정하면 그날, 아니면 법령 시행일과 오늘 중 늦은 날(T-105) */
+  referenceDate(lawEffectiveDate: Date | null, asOf?: string): Date {
+    if (asOf !== undefined) {
+      const parsed = parseDateOnly(asOf);
+      if (!parsed) throw new BadRequestException('기준일(asOf)은 실제로 있는 날짜여야 합니다.');
+      return parsed;
+    }
+    return impactReferenceDate(lawEffectiveDate, todayDateOnly());
+  }
+
+  /**
+   * 법령조항에 **확정된** 연결로 걸린 우리 회사 조문과 각 조문의 제1 조문.
+   *
+   * 제1 조문이 없으면 이유를 가른다(사용자 지시로 코덱스 자문, T-123 결정 2):
+   * - `effective_date_missing` — 시행본은 있는데 시행일이 기록되지 않았다(T-123 이전에 가져온
+   *   규정). 규정 화면에서 시행일을 보정하면 풀린다. 임의 날짜로 기준 본문을 만들지 않는다
+   * - `not_in_force` — 기준일에 시행 중인 버전이 없다(초안뿐이거나 시행 전)
+   */
+  async impactedArticles(tenantId: string, lawArticleId: string, asOfDate: Date) {
     const links = await this.prisma.lawLink.findMany({
       where: {
         tenantId,
-        lawArticleId: event.lawArticleId,
+        lawArticleId,
         confirmState: 'confirmed',
         // 연결 자체의 tenantId 와 별개로 조문의 실제 소속도 본다 — 부모를 안 보고 자식만 확인한
         // T-41 사고의 재발 방지
@@ -159,6 +208,8 @@ export class LawChangesService {
         relationType: true,
         scope: true,
         evidenceText: true,
+        confidence: true,
+        confirmState: true,
         confirmedAt: true,
         article: {
           select: {
@@ -180,18 +231,34 @@ export class LawChangesService {
       },
     });
 
-    const suggestedCount = await this.prisma.lawLink.count({
-      where: { tenantId, lawArticleId: event.lawArticleId, confirmState: 'suggested' },
-    });
+    const missingBase = links.filter((l) => !l.article.versions.length).map((l) => l.article.id);
+    const undated = missingBase.length
+      ? new Set(
+          (
+            await this.prisma.articleVersion.findMany({
+              where: { articleId: { in: missingBase }, status: { in: ['published', 'archived'] }, effectiveDate: null },
+              select: { articleId: true },
+              distinct: ['articleId'],
+            })
+          ).map((v) => v.articleId),
+        )
+      : new Set<string>();
 
-    const impacted = links
+    return links
       .map((link) => {
         const version = link.article.versions[0] ?? null;
+        const skipReason: ImpactSkipReason | null = version
+          ? null
+          : undated.has(link.article.id)
+            ? 'effective_date_missing'
+            : 'not_in_force';
         return {
           linkId: link.id,
           relationType: link.relationType,
           scope: link.scope,
           evidenceText: link.evidenceText,
+          linkConfidence: link.confidence,
+          confirmState: link.confirmState,
           confirmedAt: link.confirmedAt,
           policy: link.article.chapter.policy,
           article: {
@@ -211,7 +278,7 @@ export class LawChangesService {
                 content: version.content,
               }
             : null,
-          skipReason: version ? null : ('not_in_force' as const),
+          skipReason,
         };
       })
       .sort(
@@ -222,7 +289,5 @@ export class LawChangesService {
           (a.article.clauseNumber ?? 0) - (b.article.clauseNumber ?? 0) ||
           (a.article.itemNumber ?? 0) - (b.article.itemNumber ?? 0),
       );
-
-    return { ...base, impacted, suggestedCount, unresolvable: null };
   }
 }

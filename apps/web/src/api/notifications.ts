@@ -8,6 +8,8 @@ export type UserNotification = {
   policyId: string | null;
   articleId: string | null;
   versionId: string | null;
+  /** 규정이 아닌 화면으로 가는 알림의 이동 경로(예: 법령 개정 후보 → 법령 화면) */
+  link: string | null;
   readAt: string | null;
   createdAt: string;
 };

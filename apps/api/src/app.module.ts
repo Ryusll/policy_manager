@@ -26,6 +26,7 @@ import { LawGoKrModule } from './lawgokr/lawgokr.module';
 import { LawsModule } from './laws/laws.module';
 import { LawLinksModule } from './law-links/law-links.module';
 import { LawChangesModule } from './law-changes/law-changes.module';
+import { AmendmentsModule } from './amendments/amendments.module';
 import { PlatformBrandingModule } from './platform-branding/platform-branding.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
@@ -56,6 +57,7 @@ import { FavoritesModule } from './favorites/favorites.module';
     LawsModule,
     LawLinksModule,
     LawChangesModule,
+    AmendmentsModule,
     PlatformBrandingModule,
     NotificationsModule,
     FavoritesModule,

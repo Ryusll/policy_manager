@@ -29,6 +29,13 @@ async function main(): Promise<number> {
       `[law-sync] ${run.status} — 확인 ${run.checkedCount} · 새 판 ${run.changedCount} · ` +
         `변경 이벤트 ${run.eventCount} · 실패 ${run.failedCount} (run ${run.id})`,
     );
+    if (run.amendments) {
+      const a = run.amendments;
+      console.log(
+        `[law-sync] 개정 후보 — 이벤트 ${a.events}건 처리 · 새 후보 ${a.created}건(회사 ${a.tenants}곳)` +
+          (a.failed ? ` · 실패 ${a.failed}건(다음 실행에서 다시 처리)` : ''),
+      );
+    }
     const results = (run.results ?? []) as { outcome: string; lawName: string; error?: string }[];
     for (const r of results) {
       if (r.outcome === 'failed') console.log(`  실패: ${r.lawName} — ${r.error}`);

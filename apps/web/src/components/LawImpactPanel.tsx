@@ -1,8 +1,11 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { lawChangesApi, type ImpactedArticle } from '../api/lawChanges';
+import { amendmentsApi } from '../api/amendments';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { formatArticleAnchor } from '../lib/articleAnchor';
+import { toast } from '../stores/toastStore';
+import AmendmentCandidatePreview from './AmendmentCandidatePreview';
 
 /**
  * 법령 변경 하나가 우리 회사의 어느 조문에 걸리는지 (T-105).
@@ -11,9 +14,30 @@ import { formatArticleAnchor } from '../lib/articleAnchor';
  * 각 조문에는 **제1 조문**(기준일에 시행 중인 본문)을 함께 보여 준다 — 개정 초안(T-106)의 출발점이다.
  */
 export default function LawImpactPanel({ eventId }: { eventId: string }) {
+  const qc = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ['law-changes', 'impact', eventId],
     queryFn: () => lawChangesApi.impact(eventId),
+  });
+
+  // 개정 후보 만들기(T-106) — 동기화가 자동으로 만들지만, 연결을 나중에 확정했거나 시행일을
+  // 보정한 뒤에는 여기서 만든다. 이미 있는 후보는 다시 만들지 않는다(손질한 것을 덮지 않는다)
+  const generate = useMutation({
+    mutationFn: () => amendmentsApi.generate(eventId),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['law-changes', 'impact', eventId] });
+      if (res.noSubstantiveChange) {
+        toast('개정 연혁 표기만 바뀐 변경이라 고칠 내용이 없습니다.', 'info');
+        return;
+      }
+      const parts = [
+        res.created.length ? `새 후보 ${res.created.length}건` : null,
+        res.existing.length ? `이미 있던 후보 ${res.existing.length}건` : null,
+        res.skipped.length ? `기준 본문이 없어 건너뛴 조문 ${res.skipped.length}건` : null,
+      ].filter(Boolean);
+      toast(parts.length ? parts.join(' · ') : '만들 후보가 없습니다.', res.created.length ? 'success' : 'info');
+    },
+    onError: (err: any) => toast(err?.response?.data?.message ?? '개정 후보를 만들지 못했습니다.', 'error'),
   });
 
   if (isLoading) return <p className="text-xs text-gray-500">불러오는 중…</p>;
@@ -43,6 +67,22 @@ export default function LawImpactPanel({ eventId }: { eventId: string }) {
           </p>
         </div>
       </div>
+
+      {data.impacted.some((i) => i.baseVersion) && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => generate.mutate()}
+            disabled={generate.isPending}
+            className="px-2.5 py-1 rounded bg-navy-700 text-white text-xs hover:bg-navy-800 disabled:opacity-50"
+          >
+            {generate.isPending ? '만드는 중…' : '개정 후보 만들기'}
+          </button>
+          <span className="text-[11px] text-gray-500">
+            바뀐 법 문구를 규칙으로 우리 조문에 옮긴 초안입니다. 승인 전까지 시행 본문은 그대로입니다.
+          </span>
+        </div>
+      )}
 
       <p className="text-[11px] text-gray-500">
         기준일 <b className="text-gray-700 tabular-nums">{data.asOf}</b> — 법령 시행일과 오늘 중 늦은 날에 시행
@@ -111,11 +151,20 @@ function ImpactRow({ item }: { item: ImpactedArticle }) {
           </div>
           <p className="whitespace-pre-wrap text-gray-800 line-clamp-4">{item.baseVersion.content}</p>
         </div>
+      ) : item.skipReason === 'effective_date_missing' ? (
+        <p className="text-[11px] text-amber-700">
+          시행일이 기록되지 않은 시행본이라 기준 본문을 정할 수 없습니다 —{' '}
+          <Link to={`/policies/${item.policy.id}`} className="underline">
+            규정 화면
+          </Link>
+          에서 시행일을 넣으면 개정 후보를 만들 수 있습니다.
+        </p>
       ) : (
         <p className="text-[11px] text-amber-700">
           기준일에 시행 중인 본문이 없습니다(아직 시행 전이거나 초안뿐) — 이 조문은 개정 초안을 만들 수 없습니다.
         </p>
       )}
+      {item.candidate && <AmendmentCandidatePreview candidate={item.candidate} isCurrentBase={item.candidate.isCurrentBase} />}
     </li>
   );
 }

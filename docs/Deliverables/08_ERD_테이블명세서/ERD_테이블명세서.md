@@ -152,7 +152,7 @@ NotificationGroup: tenantId FK, name — `@@unique([tenantId, name])`.
 NotificationGroupMember: 복합 PK `[groupId, userId]`, N:M 매핑 테이블.
 
 ### UserNotification (`user_notifications`)
-tenantId FK, userId FK, kind(기본 "policy_revision"), title, body(text), policyId/articleId/versionId(참조용, FK 아님), readAt. 인덱스: `[userId, readAt, createdAt]`, `[tenantId, createdAt]`.
+tenantId FK, userId FK, kind(기본 "policy_revision", 법령 개정 후보 알림은 "law_amendment" — T-106), title, body(text), policyId/articleId/versionId(참조용, FK 아님), link?(규정이 아닌 화면으로 가는 이동 경로, 예 `/laws/:id?change=` — T-106), readAt. 인덱스: `[userId, readAt, createdAt]`, `[tenantId, createdAt]`.
 
 ### AuditLog (`audit_logs`)
 tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json).
@@ -196,7 +196,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `LawLink` | ✅ **스키마에 있다** (T-101, 마이그레이션 `20260925142102_law_links`) |
 | `LawChangeEvent` | ✅ **스키마에 있다** (T-103, 마이그레이션 `20260930124231_law_change_events`) |
 | `LawSyncRun` · `Law.lastCheckError` | ✅ **스키마에 있다** (T-104, 마이그레이션 `20261007100000_law_sync_runs`) |
-| `AmendmentCandidate` | 설계만 (T-106) |
+| `AmendmentCandidate` · `LawChangeEvent.amendmentsProcessedAt` · `UserNotification.link` | ✅ **스키마에 있다** (T-106, 마이그레이션 `20261008120000_amendment_candidates`) |
 | `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
 
 ### 3.1 관계 개요
@@ -293,7 +293,8 @@ label(사람이 읽는 표기), title?, content(text), versionKey, effectiveDate
 
 #### LawChangeEvent (`law_change_events`) — 변경 이벤트, 테넌트 공용 ✅ 구현됨 (T-103)
 lawId FK(cascade), lawArticleId FK?(**SetNull**), nodeKey, changeType(enum LawChangeType: created/modified/deleted), beforeContent(text?), afterContent(text?), beforeVersionKey?, afterVersionKey?, promulgatedDate(공포일), lawEffectiveDate(법령 시행일), receivedVia(enum LawEventChannel: poll/manual/webhook — **수신경로**), detectedAt.
-인덱스 `[lawArticleId, detectedAt]`, `[lawId, detectedAt]`, `[lawEffectiveDate]`.
+amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. null 이면 동기화가 끝날 때 처리하고, 한 회사라도 실패하면 비워 둬 다음 실행에서 다시 처리한다. 기능 도입 전 이벤트는 마이그레이션이 감지 시각으로 채웠다).
+인덱스 `[lawArticleId, detectedAt]`, `[lawId, detectedAt]`, `[lawEffectiveDate]`, `[amendmentsProcessedAt]`.
 
 `POST /api/laws` 재등록이 만든다 — 조항별 `versionKey` 를 직전 값과 비교해 신설·변경·삭제만 남긴다(공백만 다르면 지문이 같아 제외).
 **최초 등록은 만들지 않는다** — 비교할 이전 상태가 없는데 그대로 돌리면 조문 수만큼 "신설"이 쌓인다.
@@ -318,26 +319,31 @@ lawId FK(cascade), lawArticleId FK?(**SetNull**), nodeKey, changeType(enum LawCh
 
 인덱스 `[startedAt]`. 동시 실행은 advisory lock + "진행 중" 확인으로 막고, 30분 넘게 `running` 인 행은 다음 실행이 "중단됨"(`failed`)으로 닫는다.
 
-#### AmendmentCandidate (`amendment_candidates`) — 후보 레코드 ⚠️ 테넌트별
+#### AmendmentCandidate (`amendment_candidates`) — 후보 레코드 ⚠️ 테넌트별 ✅ 구현됨 (T-106)
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | id | uuid PK | |
-| tenantId | uuid FK → Tenant (cascade) | **누락 금지** |
-| articleId | uuid FK → Article | 영향 조문 |
-| baseVersionId | uuid FK → ArticleVersion | **제1 조문** — 기준이 된 발행 버전 |
-| changeEventId | uuid FK → LawChangeEvent | |
-| candidateContent | text | **제2 조문** — 개정 후보 본문 |
-| rationale | json | 변경 근거 정보 (관계유형·근거문구·확정상태·그래프 경로·생성방식·변수) |
-| diff | json | 변경 전후 비교 정보 |
-| generationMethod | enum AmendmentMethod | rule(규칙+템플릿) / llm(언어모델) |
-| generationMeta | json? | 규칙·템플릿 id 또는 입력 원천·모델 정보 |
-| confidence | float? | |
-| reviewState | enum AmendmentState | draft/review/approved/rejected |
-| reviewNote | text? | 반려 사유 |
-| reviewedBy / reviewedAt | string? / datetime? | |
-| resultVersionId | uuid? unique | 승인 후 만들어진 ArticleVersion |
+| tenantId | uuid FK → Tenant (cascade) | **누락 금지.** 조문의 실제 소속(chapter→policy→tenant)도 함께 본다 |
+| articleId | uuid FK → Article (cascade) | 영향 조문 |
+| baseVersionId | uuid FK → ArticleVersion (cascade) | **제1 조문** — 만들 때의 기준 발행본. 그 뒤 새 버전이 시행돼도 바꾸지 않는다 |
+| changeEventId | uuid FK → LawChangeEvent (**restrict**) | 개정의 원인. 지워지면 원천이 사라지므로 법령 추적 해제를 막는다 |
+| lawLinkId | uuid FK? → LawLink (SetNull) | 영향을 찾은 연결. 지워져도 후보는 남는다(근거는 rationale 스냅샷) |
+| candidateContent | text | **제2 조문** — 개정 후보 본문. 반영한 것이 없으면 제1 조문 그대로 |
+| rationale | json | 변경 근거 정보 — 법령 변경 부분·연결 스냅샷(유형·근거 문구·확정 상태)·경로·적용 규칙·반영하지 못한 변경·충돌·기준 발행본 |
+| diff | json | 변경 전후 비교 정보 — 제1 조문 대 후보의 실제 차이(문자 구간, 구간별 근거 연결, 근거 없는 구간 수) |
+| generationMethod | enum AmendmentMethod | rule(규칙+템플릿) / llm(언어모델, T-112) |
+| variant | string | 같은 방식 안의 개정안 구분 — 규칙 기반은 규칙 세트 버전(`rule/1`) |
+| generationMeta | json? | 규칙·템플릿 id·버전, 신뢰도 판정(단계·이유·반영률), 입력 원천(이벤트·전후 판 키·조문·발행본·연결·기준일), 생성 주체(user/system) |
+| confidence | enum AmendmentConfidence | high / medium / low — 후보 신뢰도. 관계 신뢰도(`LawLink.confidence`)와 별개 |
+| reviewFlags | string[] | 사람이 봐야 하는 이유(`manual_draft_required`·`ambiguous_match`·`rule_conflict` 등) |
+| reviewState | enum AmendmentState | draft / review / approved / rejected (기본 draft) |
+| asOfDate | date | 영향 분석 기준일 — 제1 조문을 고른 날 |
+| createdBy | string? | 만든 사람. 동기화가 자동으로 만들었으면 null |
+| createdAt / updatedAt | datetime | |
 
+유니크 `[tenantId, changeEventId, articleId, baseVersionId, generationMethod, variant]` — 자동 생성과 버튼이 겹치거나 다시 눌러도 같은 후보는 하나다(`INSERT … ON CONFLICT DO NOTHING`).
 인덱스 `[tenantId, reviewState, createdAt]`, `[tenantId, articleId]`, `[changeEventId]`.
+반려 사유·검토자·승인으로 만든 후속 버전(`reviewNote`·`reviewedBy`·`reviewedAt`·`resultVersionId`)은 쓰는 단계(T-108)에서 더한다.
 
 **발행 버전은 승인 전까지 건드리지 않는다.** 후보를 별도 테이블에 두는 것만으로 청구항 5의 *"승인 정보를 수신하기 전까지 발행 버전의 본문을 유지"* 가 충족된다.
 
