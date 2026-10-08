@@ -88,6 +88,8 @@ model Tenant {
   branding                TenantBranding?
   lawLinks                LawLink[]
   amendmentCandidates     AmendmentCandidate[]
+  amendmentRevisions      AmendmentRevision[]
+  amendmentStateChanges   AmendmentStateChange[]
 
   @@map("tenants")
 }
@@ -926,6 +928,10 @@ model AmendmentCandidate {
   /// 사람이 봐야 하는 이유. amendment-rules.ts 의 ReviewFlag
   reviewFlags      String[]            @default([]) @map("review_flags")
   reviewState      AmendmentState      @default(draft) @map("review_state")
+  /// 지금 본문의 판 번호 — 생성본이 1, 사람이 고칠 때마다 1씩 오른다(T-107). 판마다의 본문은 AmendmentRevision
+  revision         Int                 @default(1)
+  /// 낙관적 잠금 — 손질·검토 요청처럼 후보가 바뀔 때마다 1씩 오른다. 화면이 본 값과 다르면 409
+  lockVersion      Int                 @default(0) @map("lock_version")
   /// 영향 분석 기준일 — 제1 조문을 고른 날
   asOfDate         DateTime            @map("as_of_date") @db.Date
   /// 만든 사람. 동기화가 자동으로 만들었으면 null
@@ -940,12 +946,66 @@ model AmendmentCandidate {
   changeEvent LawChangeEvent @relation(fields: [changeEventId], references: [id], onDelete: Restrict)
   lawLink     LawLink?       @relation(fields: [lawLinkId], references: [id], onDelete: SetNull)
 
+  revisions    AmendmentRevision[]
+  stateChanges AmendmentStateChange[]
+
   /// 같은 이벤트·조문·기준 발행본·방식·개정안은 하나 — 자동 생성과 버튼이 겹쳐도 중복이 안 생긴다
   @@unique([tenantId, changeEventId, articleId, baseVersionId, generationMethod, variant])
   @@index([tenantId, reviewState, createdAt])
   @@index([tenantId, articleId])
   @@index([changeEventId])
   @@map("amendment_candidates")
+}
+
+/// 개정 후보의 판 — 생성본(판 1)부터 사람이 고칠 때마다 하나씩 쌓고 **바꾸지 않는다** (T-107, 특허 도 11).
+/// 수정 전 내용은 직전 판이다. 승인(T-108)은 사람이 확인한 판에 대해서만 유효하다
+model AmendmentRevision {
+  id          String  @id @default(uuid())
+  tenantId    String  @map("tenant_id")
+  candidateId String  @map("candidate_id")
+  revision    Int
+  /// 이 판의 후보 본문
+  content     String  @db.Text
+  /// 본문 SHA-256(hex) — 감사 기록·승인 대상 식별용(복원 수단이 아니다, 본문은 이 행에 있다)
+  contentHash String  @map("content_hash")
+  /// 제1 조문 대 이 판의 비교 정보 — 손질한 판은 규칙 근거를 다시 이은 것
+  diff        Json
+  /// 수정 사유 — 사람이 고친 판은 필수, 생성본(판 1)은 없다
+  note        String? @db.Text
+  /// 고친 사람. 생성본이면 null(만든 사람은 후보의 createdBy)
+  editedBy    String? @map("edited_by")
+  /// 고치기 전 상태 — 검토 중이던 후보를 고치면 review 이고, 고친 뒤에는 작성으로 돌아간다
+  stateBefore AmendmentState? @map("state_before")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidate AmendmentCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, revision])
+  @@index([tenantId, candidateId])
+  @@map("amendment_revisions")
+}
+
+/// 개정 후보의 상태 전환 기록 — 검토 요청, 손질로 인한 검토 취소, 반려·승인(T-108). 본문이 바뀌지 않는
+/// 전환도 남아야 해서 판과 따로 둔다. 진행 중인 검토 요청은 "검토 상태일 때 가장 최근의 → review 전환"이다
+model AmendmentStateChange {
+  id          String         @id @default(uuid())
+  tenantId    String         @map("tenant_id")
+  candidateId String         @map("candidate_id")
+  fromState   AmendmentState @map("from_state")
+  toState     AmendmentState @map("to_state")
+  /// 이 전환이 가리키는 판 — 검토 요청이면 검토 대상 판
+  revision    Int
+  /// 요청 사유(본문 차이가 없으면 필수)·취소 사유·반려 사유
+  reason      String?        @db.Text
+  actorId     String?        @map("actor_id")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidate AmendmentCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, createdAt])
+  @@map("amendment_state_changes")
 }
 
 enum AmendmentMethod {

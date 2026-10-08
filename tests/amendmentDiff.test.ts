@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diffCandidate } from '../apps/api/src/amendments/amendment-diff';
+import { diffCandidate, relinkDiff } from '../apps/api/src/amendments/amendment-diff';
 
 describe('diffCandidate — 제1 조문과 후보의 실제 차이 (특허 도 10 단계 1050)', () => {
   it('같으면 변경이 없다', () => {
@@ -60,5 +60,42 @@ describe('diffCandidate — 제1 조문과 후보의 실제 차이 (특허 도 1
     const d = diffCandidate(base, cand, [{ id: 3, base: { start: 7, end: 7 }, candidate: { start: 7, end: 19 } }]);
     expect(d.changes[0].rationaleRefs).toEqual([3]);
     expect(d.unexplained).toBe(0);
+  });
+});
+
+describe('relinkDiff — 손질한 본문의 근거 다시 잇기 (T-107)', () => {
+  const base = '직원에게는 매년 15일의 연차휴가를 준다. 담당은 운영팀이다.';
+  // 규칙이 "15일"(9~12)을 "20일"로 바꿨다
+  const rule = { id: 0, base: { start: 9, end: 12 }, candidate: { text: '20일' } };
+
+  it('손대지 않은 후보는 생성 때와 같은 근거 연결', () => {
+    const cand = '직원에게는 매년 20일의 연차휴가를 준다. 담당은 운영팀이다.';
+    const d = relinkDiff(base, cand, [rule]);
+    expect(d.changes.map((c) => c.rationaleRefs)).toEqual([[0]]);
+    expect(d.unexplained).toBe(0);
+  });
+
+  it('사람이 다른 곳을 고치면 그 구간만 근거 없음, 규칙이 고친 자리는 근거 유지', () => {
+    const cand = '직원에게는 매년 20일의 연차휴가를 부여한다. 담당은 관리팀이다.';
+    const d = relinkDiff(base, cand, [rule]);
+    expect(d.changes.map((c) => [c.candidate.text, c.rationaleRefs])).toEqual([
+      ['20', [0]],
+      ['부여한다', []],
+      ['관리팀이다', []],
+    ]);
+    expect(d.unexplained).toBe(2);
+  });
+
+  it('규칙이 고친 자리를 사람이 다시 고치면 규칙 근거는 끊긴다', () => {
+    const cand = '직원에게는 매년 25일의 연차휴가를 준다. 담당은 운영팀이다.';
+    const d = relinkDiff(base, cand, [rule]);
+    expect(d.changes).toHaveLength(1);
+    expect(d.changes[0].rationaleRefs).toEqual([]);
+    expect(d.unexplained).toBe(1);
+  });
+
+  it('사람이 규칙의 변경을 되돌리면 변경 자체가 없다', () => {
+    const d = relinkDiff(base, base, [rule]);
+    expect(d.changes).toEqual([]);
   });
 });

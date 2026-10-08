@@ -197,6 +197,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `LawChangeEvent` | ✅ **스키마에 있다** (T-103, 마이그레이션 `20260930124231_law_change_events`) |
 | `LawSyncRun` · `Law.lastCheckError` | ✅ **스키마에 있다** (T-104, 마이그레이션 `20261007100000_law_sync_runs`) |
 | `AmendmentCandidate` · `LawChangeEvent.amendmentsProcessedAt` · `UserNotification.link` | ✅ **스키마에 있다** (T-106, 마이그레이션 `20261008120000_amendment_candidates`) |
+| `AmendmentRevision` · `AmendmentStateChange` · `AmendmentCandidate.revision`·`lockVersion` | ✅ **스키마에 있다** (T-107, 마이그레이션 `20261008180000_amendment_review`) |
 | `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
 
 ### 3.1 관계 개요
@@ -337,6 +338,8 @@ amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. n
 | confidence | enum AmendmentConfidence | high / medium / low — 후보 신뢰도. 관계 신뢰도(`LawLink.confidence`)와 별개 |
 | reviewFlags | string[] | 사람이 봐야 하는 이유(`manual_draft_required`·`ambiguous_match`·`rule_conflict` 등) |
 | reviewState | enum AmendmentState | draft / review / approved / rejected (기본 draft) |
+| revision | int | 지금 본문의 판 번호 — 생성본 1, 사람이 고칠 때마다 1씩(T-107). 판마다의 본문은 `AmendmentRevision` |
+| lockVersion | int | 낙관적 잠금 — 손질·검토 요청 등 후보가 바뀔 때마다 1씩. 화면이 본 값과 다르면 409(T-107) |
 | asOfDate | date | 영향 분석 기준일 — 제1 조문을 고른 날 |
 | createdBy | string? | 만든 사람. 동기화가 자동으로 만들었으면 null |
 | createdAt / updatedAt | datetime | |
@@ -344,6 +347,17 @@ amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. n
 유니크 `[tenantId, changeEventId, articleId, baseVersionId, generationMethod, variant]` — 자동 생성과 버튼이 겹치거나 다시 눌러도 같은 후보는 하나다(`INSERT … ON CONFLICT DO NOTHING`).
 인덱스 `[tenantId, reviewState, createdAt]`, `[tenantId, articleId]`, `[changeEventId]`.
 반려 사유·검토자·승인으로 만든 후속 버전(`reviewNote`·`reviewedBy`·`reviewedAt`·`resultVersionId`)은 쓰는 단계(T-108)에서 더한다.
+
+#### AmendmentRevision (`amendment_revisions`) — 개정 후보의 판 ⚠️ 테넌트별 ✅ 구현됨 (T-107)
+생성본(판 1)부터 사람이 고칠 때마다 하나씩 쌓고 **바꾸지 않는다**(특허 도 11 — 수정 전후 보존). 수정 전 내용은 직전 판이다.
+tenantId FK(cascade), candidateId FK → AmendmentCandidate(cascade), revision(int), content(text — 그 판의 본문), contentHash(SHA-256 hex — 감사 기록·승인 대상 식별), diff(json — 제1 조문 대 그 판, 손질한 판은 규칙 근거를 다시 이은 것), note(text? — 수정 사유, 사람이 고친 판은 필수·생성본은 없음), editedBy?(생성본이면 null), stateBefore(enum? — 고치기 전 상태), createdAt.
+유니크 `[candidateId, revision]`, 인덱스 `[tenantId, candidateId]`. 마이그레이션이 기존 후보의 생성본을 판 1 로 채웠다.
+
+#### AmendmentStateChange (`amendment_state_changes`) — 개정 후보의 상태 전환 기록 ⚠️ 테넌트별 ✅ 구현됨 (T-107)
+본문이 바뀌지 않는 전환(검토 요청 등)도 남아야 해서 판과 따로 둔다. tenantId FK(cascade), candidateId FK(cascade), fromState·toState(enum AmendmentState), revision(int — 전환이 가리키는 판, 검토 요청이면 검토 대상 판), reason(text? — 요청 사유·요청 취소 사유·반려 사유), actorId?, createdAt. 인덱스 `[candidateId, createdAt]`.
+진행 중인 검토 요청 = 후보가 검토 상태일 때 가장 최근의 `→ review` 전환.
+
+> 판과 상태 전환은 후보와 함께 지워진다(조문·기준 버전 삭제 → 후보 cascade). 초안의 작업 기록이라 그렇게 두고, 감사 로그(`amendment.edit`·`amendment.request_review`)에는 판 번호·해시·사유가 남는다. 승인된 후보의 보존은 T-108 에서 정한다.
 
 **발행 버전은 승인 전까지 건드리지 않는다.** 후보를 별도 테이블에 두는 것만으로 청구항 5의 *"승인 정보를 수신하기 전까지 발행 버전의 본문을 유지"* 가 충족된다.
 

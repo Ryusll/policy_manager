@@ -27,6 +27,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'version.effective_date_fill': '시행일 보정',
   'version.reject': '검토 반려',
   'amendment.generate': '개정 후보 생성',
+  'amendment.edit': '개정 후보 손질',
+  'amendment.request_review': '개정 후보 검토 요청',
   'version.archive': '게시본 폐지',
   'template.create': '템플릿 생성',
   'template.update': '템플릿 수정',

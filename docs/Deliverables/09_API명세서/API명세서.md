@@ -239,8 +239,8 @@
 
 ## 법령 개정 연계 (2026-09-21 신설)
 
-> `laws`·`law-links`·`law-sync` 절과 `law-changes` 의 조회·영향 분석, `amendments` 의 생성·조회는 **구현됐다**(T-100·T-101·T-104·T-105·T-106).
-> 나머지(`law-changes` 수동 등록, `amendments` 목록·손질·검토 요청·승인·반려)는 아직 **설계**다 — 이 문서의 다른 절이 실제 컨트롤러를 옮긴 것인 반면 그쪽만 계획이다.
+> `laws`·`law-links`·`law-sync` 절과 `law-changes` 의 조회·영향 분석, `amendments` 의 생성·조회·목록·손질·검토 요청은 **구현됐다**(T-100·T-101·T-104·T-105·T-106·T-107).
+> 나머지(`law-changes` 수동 등록, `amendments` 승인·반려)는 아직 **설계**다 — 이 문서의 다른 절이 실제 컨트롤러를 옮긴 것인 반면 그쪽만 계획이다.
 > 근거는 특허 명세서 `26PD0271KR`이고 상세는 [18_법령개정연계_설계 6절](../18_법령개정연계_설계/법령개정연계_설계안.md),
 > 요구사항은 [03_SRS 12절 REQ-LAW](../03_SRS_요구사항명세/SRS_요구사항명세.md), 작업은 [17_작업관리대장 S7](../17_작업관리대장/작업관리대장.md).
 
@@ -304,14 +304,16 @@
 > **예약 실행은 이 API 가 아니다.** 서버 cron 이 `scripts/oracle/law-sync.sh`(→ 컨테이너 안 `node dist/laws/law-sync.cli.js [--limit N]`)를 부르고, 하나라도 실패하면 **종료 코드 1**. global_admin 토큰은 15분이면 만료돼 cron 이 쥘 수 없다. 경로가 `/admin` 이 아닌 것은 그쪽이 회사 관리자 전용이라서다.
 > **실패를 "개정 없음"과 구별한다** — 법제처는 인증·IP 오류도 HTTP 200 으로 준다. 실패한 법령은 `Law.lastCheckError` 에 사유가 남고 다음 확인이 성공하면 지워진다.
 
-### amendments (`/api/amendments`) — 개정 후보, ⚠️ **테넌트별** ✅ 생성·조회 구현됨 (T-106)
+### amendments (`/api/amendments`) — 개정 후보, ⚠️ **테넌트별** ✅ 생성·조회(T-106)·목록·손질·검토 요청(T-107) 구현됨
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | admin·editor | 후보 목록 (상태·규정 필터) — **아직 설계(T-107)** |
-| GET | :id | admin·editor | 후보 1건 — 제1 조문(`baseVersion`)·후보 본문(`candidateContent`)·**변경 근거**(`rationale`: 법령 변경 부분 `lawChanges`, 연결 스냅샷 `link`, 경로 `path`, 적용 규칙 `applications`, 반영하지 못한 변경 `unmapped`, 충돌 `conflicts`)·**변경 전후 비교**(`diff`: 표시용 `parts`, 문자 구간 `changes[]` 과 각 구간의 근거 `rationaleRefs`, 근거 없는 구간 수 `unexplained`)·생성 정보(`generationMeta`: 규칙·템플릿과 버전, 신뢰도 판정, 입력 원천)·`confidence`(high·medium·low)·`reviewFlags`·`reviewState`·`asOf`·`event`·`policy`·`article`. 다른 회사 후보는 **404** |
+| GET | (root) | admin·editor | 후보 목록 `{ rows, total, page, limit }` (최근 순). `state`: `open`(기본 — 처리할 것 = 작성·검토)·`draft`·`review`·`approved`·`rejected`·`all`, `policyId`, `policyActive`(`active`/`inactive`, 생략하면 모두 — 비활성 규정의 후보도 숨기지 않는다), `changeEventId`, `page`, `limit`(1~100, 기본 30). 행마다 규정·조문·법령 변경·`current`(지금 판 기준: `revision`·`hasChanges`(공백 말고 기준 본문과 다른가)·`unexplained`·`edited`)·`isCurrentBase`(지금 다시 만들면 고를 기준 본문이 이 후보의 제1 조문과 같은가 — 시점 조회와 같은 규칙)·`createdBy`(null 이면 자동 생성) |
+| GET | :id | admin·editor | 후보 1건 — 제1 조문(`baseVersion`)·후보 본문(`candidateContent`)·**변경 근거**(`rationale`: 법령 변경 부분 `lawChanges`, 연결 스냅샷 `link`, 경로 `path`, 적용 규칙 `applications`, 반영하지 못한 변경 `unmapped`, 충돌 `conflicts`)·**변경 전후 비교**(`diff`: 표시용 `parts`, 문자 구간 `changes[]` 과 각 구간의 근거 `rationaleRefs`, 근거 없는 구간 수 `unexplained`)·생성 정보(`generationMeta`: 규칙·템플릿과 버전, 신뢰도 판정, 입력 원천)·`confidence`(high·medium·low, **생성 때 값으로 고정**)·`reviewFlags`(생성 때 값)·`current`(지금 판 기준 표시)·`reviewState`·`revision`·`lockVersion`·`asOf`·`event`·`policy`·`article`·`isCurrentBase`·`currentBase`(기준 본문이 그 사이 바뀌었으면 지금 기준 본문)·`reviewRequest`(검토 중이면 요청 — 대상 판·사유·요청자·시각)·`siblings`(같은 변경·조문의 다른 후보). 다른 회사 후보는 **404** |
+| GET | :id/history | admin·editor | 판(`revisions[]` — 생성본 판 1 부터, 판마다 본문·해시·수정 사유·고친 사람·고치기 전 상태·**직전 판 대비** `fromPrevious`)과 상태 전환(`stateChanges[]` — 검토 요청·손질로 인한 요청 취소, 판 번호·사유·누가) (T-107) |
 | POST | generate | admin·editor | 변경 이벤트로 **우리 회사** 영향 조문마다 후보를 만든다(규칙 기반, **확정된 관계만**, 영향 판정은 `law-changes/:id/impact` 와 같다). **200** `{ changeEventId, asOf, created[], existing[], skipped[{articleId, policyId, label, reason}], noSubstantiveChange, unresolvable }` — 같은 이벤트·조문·기준 발행본·생성 방식·개정안의 후보가 이미 있으면 다시 만들지 않고 `existing` 으로 돌려준다(사람이 손댄 후보를 덮지 않는다, 감사 기록도 새로 남기지 않는다). 연혁 표기만 바뀐 개정은 `noSubstantiveChange: true`. 만들면 감사 `amendment.generate`(같은 트랜잭션) |
-| PATCH | :id | admin·editor | 초안 손질 — 법 문구를 그대로 넣으면 문장이 깨지므로 후보는 어디까지나 초안이다 |
-| POST | :id/review | admin·editor | 검토 요청 |
+| PATCH | :id | admin·editor | **손질 — 새 판**(T-107). `{ candidateContent, note, expectedRevision, expectedLockVersion }` — 수정 사유 필수(빈칸 400), 바뀐 것이 없으면 400, 화면이 본 판·잠금 버전이 지금과 다르면 **409**(`{ message, revision, lockVersion }` — 그 사이 누가 고쳤거나 검토를 요청했다). 비교 정보를 다시 만들어 규칙이 낸 문구가 그 자리에 그대로 남은 곳만 규칙 근거로 잇고, 사람이 고친 곳은 근거 없는 변경(검토 대상)으로 남긴다. 검토 중(반려된) 후보를 고치면 **작성으로 되돌린다** — 새 판으로 다시 검토를 요청해야 한다(요청 기록은 이력에 남는다). 승인된 후보는 400. 감사 `amendment.edit`(판 번호·전후 본문 해시·사유, 본문 자체는 판 테이블에만). 응답은 `GET :id` 와 같다 |
+| POST | :id/review | admin·editor | **검토 요청**(작성 → 검토, T-107). `{ expectedRevision, expectedLockVersion, reason? }` — 검토 대상 판을 기록한다. 본문이 기준 본문과 (공백 말고) 다르지 않으면 "개정 불필요" 판단이라 `reason` 필수(400). 작성 상태가 아니면 400, 판·잠금이 다르면 409. 기준 본문이 그 사이 바뀌었어도 막지 않는다(화면이 경고, 승인 때 T-108 이 다시 확인). 감사 `amendment.request_review`(요청 id·판·해시·사유) |
+| POST | :id/regenerate | admin·editor | **다시 만들기**(T-107) — 같은 변경·**그 조문만** 지금 기준 본문으로 후보를 만든다. 옛 후보는 그대로(사람이 고친 것을 옮기지 않는다). `{ candidateId, created, unchanged(기준 본문이 그대로라 같은 후보), skipped, noSubstantiveChange, unresolvable }` |
 | POST | :id/approve | admin·editor | **승인 → 후속 버전 발행.** 한 트랜잭션. 조문 식별자 유지 + 사내 규정 시행일 부여 |
 | POST | :id/reject | admin·editor | 반려 (**사유 필수**) — 발행 보류 |
 
@@ -346,6 +348,9 @@
 **LawChangeListQueryDto** — `lawId?`, `affected?`(`true`/`1` 만 참 — 쿼리 문자열 `"false"` 를 참으로 바꾸는 암묵 변환을 피한다), `limit?`(1~100, 기본 50)
 **LawImpactQueryDto** — `asOf?`(YYYY-MM-DD, 실제로 있는 날짜)
 **GenerateAmendmentsDto**(amendments.generate) — `changeEventId`(uuid), `asOf?`(YYYY-MM-DD, 실제로 있는 날짜 — 이날 시행 중인 본문이 제1 조문, 생략하면 법령 시행일과 오늘 중 늦은 날)
+**AmendmentListQueryDto**(amendments 목록) — `state?`(open·draft·review·approved·rejected·all, 기본 open), `policyId?`(uuid), `policyActive?`(active·inactive), `changeEventId?`(uuid), `page?`(≥1), `limit?`(1~100, 기본 30)
+**EditAmendmentDto**(amendments 손질) — `candidateContent`(1~20000자), `note`(수정 사유, ≤500, 공백만이면 400), `expectedRevision`(≥1), `expectedLockVersion`(≥0)
+**RequestReviewDto**(amendments 검토 요청) — `expectedRevision`, `expectedLockVersion`, `reason?`(≤500 — 본문이 기준 본문과 같으면 필수)
 **UpdateUserDto** — `name?`(trim, 1~100자), `email?`(이메일, 자동 trim+소문자), `role?`(admin|editor|viewer). 하나도 보내지 않으면 400. `null` 도 400 — `@IsOptional` 은 `null` 을 "없음"으로 통과시켜 필수 컬럼에 `null` 이 흘러가므로 `@ValidateIf(!== undefined)` 를 썼다
 
 ## policies

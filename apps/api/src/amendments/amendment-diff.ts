@@ -139,3 +139,59 @@ export function diffCandidate(base: string, candidate: string, edits: ExplainedE
 
   return { parts, changes, unexplained: changes.filter((c) => c.rationaleRefs.length === 0).length };
 }
+
+/** 근거 재연결에 쓰는 규칙 적용 — 제1 조문 쪽 구간과 규칙이 낸 문구만 있으면 된다 */
+export interface AppliedRule {
+  id: number;
+  base: { start: number; end: number };
+  candidate: { text: string };
+}
+
+/**
+ * 사람이 손질한 본문의 비교 정보를 다시 만든다 (T-107, 특허 도 11 — 수정되면 비교 정보를 다시 생성).
+ *
+ * 제1 조문은 바뀌지 않으므로 규칙 적용의 **제1 조문 쪽 구간은 그대로 유효**하다. 새 본문과 제1 조문의
+ * 차이를 다시 계산한 뒤, 규칙마다 그 구간을 새 본문 좌표로 옮겨 **규칙이 낸 문구가 그 자리에 그대로
+ * 남아 있으면** 겹치는 변경 구간에 그 규칙을 근거로 잇는다. 사람이 그 자리를 다시 고쳤으면 규칙 근거는
+ * 끊기고, 근거 없는 변경(검토 대상)으로 남는다.
+ */
+export function relinkDiff(base: string, content: string, applied: AppliedRule[]): CandidateDiff {
+  const d = diffCandidate(base, content, []);
+
+  // 같은 부분은 두 본문에서 1:1 로 대응한다 — 그 대응으로 제1 조문 위치를 새 본문 위치로 옮긴다
+  const equal: Array<{ b0: number; b1: number; c0: number }> = [];
+  let b = 0;
+  let c = 0;
+  for (const part of d.parts) {
+    if (part.op === 'equal') {
+      equal.push({ b0: b, b1: b + part.text.length, c0: c });
+      b += part.text.length;
+      c += part.text.length;
+    } else if (part.op === 'delete') b += part.text.length;
+    else c += part.text.length;
+  }
+  const inChange = (x: number) => d.changes.find((ch) => ch.base.start <= x && x <= ch.base.end);
+  const mapStart = (x: number) => {
+    const seg = equal.find((s) => s.b0 <= x && x < s.b1);
+    if (seg) return seg.c0 + (x - seg.b0);
+    return inChange(x)?.candidate.start ?? content.length;
+  };
+  const mapEnd = (x: number) => {
+    if (x === 0) return 0;
+    const seg = equal.find((s) => s.b0 < x && x <= s.b1);
+    if (seg) return seg.c0 + (x - seg.b0);
+    return inChange(x)?.candidate.end ?? content.length;
+  };
+
+  for (const a of applied) {
+    const cs = mapStart(a.base.start);
+    const ce = mapEnd(a.base.end);
+    if (content.slice(cs, ce) !== a.candidate.text) continue; // 사람이 그 자리를 다시 고쳤다
+    for (const ch of d.changes) {
+      if (overlaps(ch.base, a.base) || overlaps(ch.candidate, { start: cs, end: ce })) {
+        if (!ch.rationaleRefs.includes(a.id)) ch.rationaleRefs.push(a.id);
+      }
+    }
+  }
+  return { ...d, unexplained: d.changes.filter((ch) => ch.rationaleRefs.length === 0).length };
+}

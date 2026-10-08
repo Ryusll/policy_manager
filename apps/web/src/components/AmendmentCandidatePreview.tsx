@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
   CONFIDENCE_LABEL,
@@ -24,7 +25,8 @@ export default function AmendmentCandidatePreview({
 }) {
   const { rationale, diff } = candidate;
   const changes = rationale.lawChanges;
-  const manual = candidate.reviewFlags.includes('manual_draft_required');
+  // 생성 때 표시는 고정이라, 사람이 고친 뒤에도 "직접 작성 필요"로 남는다 — 본문을 보일지는 지금 판으로 정한다
+  const manual = !candidate.current.hasChanges;
 
   return (
     <div className="mt-1.5 rounded border border-navy-100 bg-navy-50/30 px-2 py-1.5 space-y-1.5" data-testid="amendment-candidate">
@@ -43,7 +45,7 @@ export default function AmendmentCandidatePreview({
           신뢰도 {CONFIDENCE_LABEL[candidate.confidence]}
         </span>
         {candidate.reviewFlags
-          .filter((f) => f !== 'unmapped_law_change' || !manual)
+          .filter((f) => (f !== 'unmapped_law_change' || !manual) && f !== 'manual_draft_required')
           .map((f) => (
             <span key={f} className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">
               {REVIEW_FLAG_LABEL[f] ?? f}
@@ -51,6 +53,9 @@ export default function AmendmentCandidatePreview({
           ))}
       </div>
 
+      {manual && (
+        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[11px]">직접 작성 필요</span>
+      )}
       {manual ? (
         <p className="text-[11px] text-amber-800">
           규칙으로 고칠 곳을 찾지 못해 본문은 기준 본문 그대로입니다 — 직접 고쳐야 합니다.
@@ -106,6 +111,10 @@ export default function AmendmentCandidatePreview({
           })}
         </ul>
       )}
+
+      <Link to={`/amendments/${candidate.id}`} className="inline-block text-[11px] text-navy-700 hover:underline">
+        검토 화면에서 보기{candidate.current.edited ? ` (판 ${candidate.current.revision})` : ''}
+      </Link>
 
       {!isCurrentBase && (
         <p className="text-[11px] text-amber-800">

@@ -17,6 +17,8 @@ import PlatformAdminPage from './pages/PlatformAdminPage';
 import AuditLogPage from './pages/AuditLogPage';
 import LawsPage from './pages/LawsPage';
 import LawDetailPage from './pages/LawDetailPage';
+import AmendmentsPage from './pages/AmendmentsPage';
+import AmendmentDetailPage from './pages/AmendmentDetailPage';
 import ToastHost from './components/ui/ToastHost';
 import ForcePasswordChangePage from './pages/ForcePasswordChangePage';
 
@@ -72,6 +74,8 @@ export default function App() {
           <Route path="audit-logs" element={<AuditLogPage />} />
           <Route path="laws" element={<LawsPage />} />
           <Route path="laws/:id" element={<LawDetailPage />} />
+          <Route path="amendments" element={<AmendmentsPage />} />
+          <Route path="amendments/:id" element={<AmendmentDetailPage />} />
           <Route path="admin" element={<PlatformAdminPage />} />
           <Route path="platform-admin" element={<PlatformAdminPage />} />
           <Route path="about" element={<AboutPage />} />

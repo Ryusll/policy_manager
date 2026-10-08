@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
 import { policiesApi } from '../api/policies';
-import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText, Scale } from 'lucide-react';
+import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText, Scale, FileDiff } from 'lucide-react';
 import UserMenu from './UserMenu';
 import { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
@@ -21,6 +21,7 @@ const navDefs = [
   { path: '/', labelKey: 'layout.nav.dashboard', icon: LayoutDashboard, id: 'nav-dashboard' },
   { path: '/policies', labelKey: 'layout.nav.policies', icon: FileText, id: 'nav-policies' },
   { path: '/laws', labelKey: 'layout.nav.laws', icon: Scale, id: 'nav-laws' },
+  { path: '/amendments', labelKey: 'layout.nav.amendments', icon: FileDiff, id: 'nav-amendments' },
   { path: '/search', labelKey: 'layout.nav.search', icon: Search, id: 'nav-search' },
   { path: '/variables', labelKey: 'layout.nav.variables', icon: Variable, id: 'nav-variables' },
   { path: '/settings', labelKey: 'layout.nav.settings', icon: Settings, id: 'nav-settings' },
