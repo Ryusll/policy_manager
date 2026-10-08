@@ -106,7 +106,7 @@
 | POST | versions/:id/reject | admin | 검토 반려(review→draft). Body: `reason`(**필수**) — 사유는 버전의 `reviewNote` 에 남아 편집자에게 보인다. 다시 검토 요청하면 지워진다 (T-10) |
 | POST | versions/:id/archive | admin | 게시본 폐지(published→archived). 응답에 `remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10) |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
-| POST | policies/:policyId/publish-drafts | admin | **시행된 적 없는 조문의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate?`(YYYY-MM-DD, 없으면 오늘). 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건") |
+| POST | policies/:policyId/publish-drafts | admin | **시행된 적 없는 조문의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate`(**필수**, YYYY-MM-DD — 이 조문들이 실제로 시행된 날. 오늘로 채우지 않는다(PAT-02), 없으면 400). 규정의 첫 시행이고 규정 시행일이 비어 있으면 같은 날로 채운다. 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건") |
 | POST | policies/:policyId/fill-effective-date | admin | **시행일 없이 시행된 버전에 확인한 시행일 넣기**(T-123 · PAT-02, 예전 가져오기 데이터 보정). Body: `effectiveDate`(YYYY-MM-DD, **필수** — 최초 제정일이 아니라 지금 본문이 시행된 날), `reason`(**필수**). 시행일이 비어 있는 시행본(published·archived)에만 넣고, 규정 단위 시행일이 비어 있으면 함께 채운다. **같은 조문의 앞뒤 시행본과 순서가 어긋나거나 비어 있는 시행본이 둘 이상인 조문이 하나라도 있으면 409 + `conflicts[]`(label·detail)로 아무것도 바꾸지 않는다.** 넣을 것이 없으면 400. 응답 `{updated}`. 감사 `version.effective_date_fill` |
 
 ## comments (`/api/articles/:articleId/comments`, `/api/comments/:id`)
