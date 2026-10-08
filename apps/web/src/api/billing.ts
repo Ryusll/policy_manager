@@ -29,8 +29,10 @@ export type BillingHistory = {
   payments: BillingPayment[];
 };
 
+/**
+ * 결제 시작(`POST /billing/checkout`)은 부르지 않는다 — 가격 확정 전에는 요금제를 통합 관리의
+ * 플랫폼 관리자만 바꾼다(T-125). 실 PG 를 붙일 때 다시 연다.
+ */
 export const billingApi = {
-  checkout: (targetPlan: 'pro' | 'enterprise') =>
-    client.post('/billing/checkout', { targetPlan }).then((r) => r.data),
   history: (): Promise<BillingHistory> => client.get('/billing/history').then((r) => r.data),
 };

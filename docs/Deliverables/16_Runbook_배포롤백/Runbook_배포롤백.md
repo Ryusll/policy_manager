@@ -322,6 +322,7 @@ bash scripts/oracle/create-tenant.sh astrum "아스트룸" 운영자이메일 "�
   임시 비밀번호는 이 출력에만 나온다. 기관 코드 `astrum` 으로 로그인해 바로 바꾼다.
 - **데모 데이터를 넣은 적 있는 서버**: 시드가 만든 `admin@astrum.com`(비밀번호가 공개 저장소에 적혀 있다)이 플랫폼 관리자로 남아 있다. 실제 운영자를 플랫폼 관리자로 지정한 뒤 이 계정의 플랫폼 관리자 권한을 해제하고 비밀번호도 바꾼다(7-4).
 - 요청 횟수 제한은 IP 당·경로별 분당 100(`THROTTLE_LIMIT`, 운영 기본값). 개발·CI 의 docker-compose 만 1000 으로 올린다 — 통합 테스트가 한 IP 에서 수백 번 로그인한다.
+- **요금제 변경은 통합 관리 › 테넌트 플랜에서 플랫폼 관리자가 한다**(가격 확정 전 임시 운영 방침, T-125 · [ADR-0022](../10_ADR_의사결정기록/ADR.md)). 운영은 **결제 미사용**이다 — Oracle compose 가 `PAYMENT_PROVIDER` 를 넘기지 않으므로 고객사의 결제 시작은 403, 결제 웹훅도 받지 않는다. 운영에 `PAYMENT_PROVIDER=mock` 을 넣지 않는다(돈을 받지 않고 요금제를 올린다). 확인: `curl -s -X POST https://<도메인>/api/billing/webhook -H 'Content-Type: application/json' -d '{"type":"ping"}'` 가 403 `PAYMENT_DISABLED` 면 정상(데이터는 바뀌지 않는다)
 
 ## 8. 운영 체크리스트
 

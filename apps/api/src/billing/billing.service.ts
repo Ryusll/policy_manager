@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PlanTier } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -8,6 +13,20 @@ import {
   resolvePaymentAmount,
   type PlanTierName,
 } from './billing-records';
+import {
+  BILLING_CLOSED_MESSAGE,
+  checkoutBlock,
+  paymentProvider,
+  providerName,
+  webhookBlock,
+  type BillingBlock,
+} from './billing-policy';
+
+function toHttpException(block: BillingBlock) {
+  const error = block.status === 401 ? 'Unauthorized' : 'Forbidden';
+  const body = { statusCode: block.status, error, code: block.code, message: block.message };
+  return block.status === 401 ? new UnauthorizedException(body) : new ForbiddenException(body);
+}
 
 @Injectable()
 export class BillingService {
@@ -22,14 +41,18 @@ export class BillingService {
   }
 
   async startCheckout(tenantId: string, userId: string, tenantSlug: string, targetPlanRaw: string) {
-    const targetPlan = this.normalizeTargetPlan(targetPlanRaw);
-    const provider = (process.env.PAYMENT_PROVIDER || 'mock').toLowerCase();
+    // 결제 미사용 서버(운영 기본)에서는 고객사가 요금제를 바꿀 수 없다 — 플랫폼 관리자만 (T-125)
+    const provider = paymentProvider();
+    const block = checkoutBlock(provider);
+    if (block) throw toHttpException(block);
 
-    // 개발/데모 환경: 결제 성공을 즉시 시뮬레이션
-    if (provider === 'mock') {
+    const targetPlan = this.normalizeTargetPlan(targetPlanRaw);
+
+    // 개발 환경(PAYMENT_PROVIDER=mock 을 명시한 경우만): 결제 성공을 즉시 시뮬레이션
+    if (provider.kind === 'mock') {
       await this.updateTenantPlanByTenantId(tenantId, userId, targetPlan, 'mock_checkout_auto');
       return {
-        provider,
+        provider: providerName(provider),
         upgraded: true,
         targetPlan,
         message: 'Mock checkout completed. Plan upgraded immediately.',
@@ -48,7 +71,7 @@ export class BillingService {
       targetPlan,
     });
     return {
-      provider,
+      provider: providerName(provider),
       upgraded: false,
       targetPlan,
       checkoutUrl: `${checkoutBase}?${params.toString()}`,
@@ -56,10 +79,9 @@ export class BillingService {
   }
 
   async handleWebhook(secretHeader: string | undefined, body: any) {
-    const expected = process.env.PAYMENT_WEBHOOK_SECRET || '';
-    if (expected && secretHeader !== expected) {
-      throw new UnauthorizedException('Invalid webhook secret');
-    }
+    // 결제 미사용·비밀키 미설정이면 본문을 보기 전에 거절한다 (T-125)
+    const block = webhookBlock(paymentProvider(), process.env.PAYMENT_WEBHOOK_SECRET, secretHeader);
+    if (block) throw toHttpException(block);
 
     if (body?.type !== 'payment.succeeded') {
       return { ok: true, ignored: true };
@@ -105,7 +127,18 @@ export class BillingService {
     source: string,
     payment?: { providerPaymentId?: string; providerOrderId?: string; amount?: unknown },
   ) {
-    const provider = (process.env.PAYMENT_PROVIDER || 'mock').toLowerCase();
+    // 들어오는 길(결제 시작·웹훅)에서 이미 막지만, 결제 미사용 서버에서 요금제와 결제 기록이
+    // 바뀌는 일은 어느 경로로도 없어야 한다 — 새 호출 경로가 생겨도 여기서 한 번 더 막는다
+    const resolved = paymentProvider();
+    if (resolved.kind === 'disabled') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'BILLING_CLOSED',
+        message: BILLING_CLOSED_MESSAGE,
+      });
+    }
+    const provider = providerName(resolved);
     const now = new Date();
     const period = nextPeriod(now);
     const { amount, mock } = resolvePaymentAmount(provider, payment?.amount);

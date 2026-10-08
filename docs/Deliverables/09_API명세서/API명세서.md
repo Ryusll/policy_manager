@@ -208,12 +208,13 @@
 ## billing (`/api/billing`)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | checkout | admin | 플랜 업그레이드 체크아웃 (mock: 즉시 반영). 성공 시 **구독·결제 기록을 남기고** `tenant.planExpiresAt` 을 구독 종료일로 채운다 (T-17) |
+| POST | checkout | admin | 플랜 업그레이드 체크아웃. **결제 미사용 서버(`PAYMENT_PROVIDER` 미설정 — 운영 기본)는 403 `BILLING_CLOSED`** 이고 요금제·구독·결제 기록을 바꾸지 않는다(가격 확정 전 임시 운영 방침, T-125 — 요금제 변경은 `PATCH /platform-admin/tenants/:tenantId/plan`). `mock`(명시해야 켜짐)은 즉시 반영, 실 PG 는 결제창 주소만 돌려준다. 반영 시 **구독·결제 기록을 남기고** `tenant.planExpiresAt` 을 구독 종료일로 채운다 (T-17) |
 | GET | history | admin | 결제·구독 이력. 응답 `{currentSubscription, subscriptions[], payments[]}` |
-| POST | webhook | Public | 결제 프로바이더 웹훅 수신. `data.amount`·`data.orderId` 를 결제 기록에 남긴다 |
+| POST | webhook | Public | 결제 프로바이더 웹훅 수신. **실결제 프로바이더 + `PAYMENT_WEBHOOK_SECRET` 설정 + 헤더 `x-billing-secret` 일치일 때만** 받는다 — 결제 미사용·mock 403 `PAYMENT_DISABLED`, 비밀키 미설정 403 `WEBHOOK_SECRET_NOT_CONFIGURED`, 불일치 401 `INVALID_WEBHOOK_SECRET`(본문을 보기 전에 판단, T-125). `data.amount`·`data.orderId` 를 결제 기록에 남긴다 |
 
 > **mock 결제는 0원으로 기록된다** — 실제로 돈이 오가지 않으므로 요금표를 지어내 넣지 않는다(`metadata.mock: true`). 실 PG 를 붙이면 결제사가 알려 준 금액을 쓴다(요금 정책은 D-03).
 > **구독 전이**: 같은 요금제를 다시 사면 기존 구독을 **연장**(이력이 쪼개지지 않게), 요금제가 바뀌면 이전 구독을 `canceled` 로 닫고 새로 연다(활성 구독은 항상 1개).
+> **결제 미사용이 기본(T-125, [ADR-0022](../10_ADR_의사결정기록/ADR.md))**: 2026-10-08 전에는 `PAYMENT_PROVIDER` 가 비어 있으면 `mock` 이라, 이 값을 넘기지 않던 운영에서 고객사 관리자가 결제 없이 요금제를 올릴 수 있었다. 웹훅도 비밀키가 없으면 검사를 건너뛰었다(요금제가 안 바뀐 건 아래 DTO 의 `data` 가 검증에서 통째로 거부됐기 때문).
 
 ## platform-admin (`/api/platform-admin`) — `global_admin` 전용
 | Method | Path | 인증 | 설명 |
@@ -221,7 +222,7 @@
 | POST | tenants | global_admin | **고객사 개설 + 마스터 계정 발급**(T-122). 회사명·조직 코드(영문 소문자·숫자·하이픈 2~40, 하이픈 시작 불가)·플랜(기본 starter)·마스터 이메일·이름. 마스터 비밀번호는 받지 않는다 — 서버가 임시 비밀번호(헷갈리는 글자 뺀 14자)를 만들어 **응답에 한 번만** 싣는다(저장·감사 기록 없음). 마스터는 첫 로그인 때 바꿔야 한다. 조직 코드 중복 409. 감사 `platform_admin.tenant.create`. 서버에서는 `scripts/oracle/create-tenant.sh` 가 같은 코드를 부른다 |
 | GET | tenants | global_admin | 테넌트 목록 |
 | GET | tenants/:tenantId/users | global_admin | 테넌트 사용자 목록 |
-| PATCH | tenants/:tenantId/plan | global_admin | 테넌트 플랜 변경 |
+| PATCH | tenants/:tenantId/plan | global_admin | 테넌트 플랜 변경. **가격 확정 전에는 요금제를 바꾸는 유일한 경로**(T-125). 결제가 아니므로 결제·구독 기록은 만들지 않고 감사 로그 `platform_admin.tenant_plan.update` 를 남긴다. 다음 요청부터 반영(다시 로그인 불필요) |
 | PATCH | tenants/:tenantId/users/:userId/role | global_admin | 테넌트 내 역할 변경 |
 | PATCH | users/:userId/platform-role | global_admin | 플랫폼 역할(global_admin) 부여/해제 |
 | PATCH | branding | global_admin | 플랫폼 브랜딩(법인명·로고 등) 수정 |
@@ -407,7 +408,7 @@
 
 ## billing
 **CheckoutDto** — `targetPlan`(pro|enterprise)
-**BillingWebhookDto** — `type`(예 `payment.succeeded`), `data`{ `tenantSlug`, `targetPlan`, `paymentId?` }
+**BillingWebhookDto** — `type`(예 `payment.succeeded`), `data?`{ `tenantSlug`(필수), `targetPlan`(starter|pro|enterprise — 반영은 pro·enterprise 만), `paymentId?`, `orderId?`, `amount?`(숫자) }. T-125 전에는 `data` 에 검증 데코레이터가 없어 전역 검증이 `data` 를 거부했다
 
 ## platform-admin
 **CreateTenantDto** — `name`(1~100, trim), `slug`(trim+소문자, `^[a-z0-9][a-z0-9-]{1,39}$`), `plan?`(starter|pro|enterprise, 기본 starter), `masterEmail`(이메일, trim+소문자), `masterName`(1~100). 비밀번호 필드는 없다(보내면 400)

@@ -7,9 +7,11 @@ import { api, createTenant, login, waitForApi } from './helpers';
  * 예전에는 결제가 `tenant.plan` 한 칸만 바꿨다. 누가 언제 무엇을 샀는지, 이 요금제가
  * 언제까지인지 남는 곳이 없었고 이력 테이블 셋은 만들어만 두고 쓰이지 않았다.
  *
- * 개발 환경은 `PAYMENT_PROVIDER=mock` 이라 결제가 즉시 성공한다.
+ * mock 결제(즉시 성공)로 기록 경로를 본다. 결제 미사용이 기본이 된 뒤로(T-125) mock 은
+ * 명시해야만 켜지므로, 이 묶음은 API 를 `PAYMENT_PROVIDER=mock` 으로 띄우고
+ * `BILLING_TEST_PROVIDER=mock` 을 줄 때만 돈다. 기본(결제 미사용) 동작은 billing-policy.int.test.ts.
  */
-describe('결제·구독 기록 (T-17)', () => {
+describe.runIf(process.env.BILLING_TEST_PROVIDER === 'mock')('결제·구독 기록 (T-17)', () => {
   let t: Awaited<ReturnType<typeof createTenant>>;
 
   beforeAll(async () => {

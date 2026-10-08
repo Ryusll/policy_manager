@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { X, Check, Zap, Building2, Rocket } from 'lucide-react';
+import { X, Check, Zap, Building2, Rocket, Info } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { useI18n } from '../i18n/useI18n';
 import { billingApi } from '../api/billing';
@@ -9,13 +9,21 @@ interface Props {
   onClose: () => void;
 }
 
+type PlanId = 'starter' | 'pro' | 'enterprise';
+
+/**
+ * 요금제 안내 (T-125).
+ *
+ * 가격 정책(D-02)이 정해지기 전까지 이 창은 **비교만** 한다. 가격 자리에는 "아스트룸에 문의",
+ * 결제 버튼 자리에는 문의 안내를 보이고, 어떤 버튼도 서버를 부르지 않는다. 요금제는 통합
+ * 관리에서 플랫폼 관리자만 바꾼다 — 예전에는 여기 버튼이 결제 없이 요금제를 바로 올렸다(mock).
+ */
 export default function PlanModal({ onClose }: Props) {
   const { t, locale } = useI18n();
-  const { user, updateUserPlan } = useAuthStore();
+  const { user } = useAuthStore();
   const currentPlan = user?.plan || 'starter';
-  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
-  const [pendingPlan, setPendingPlan] = useState<'pro' | 'enterprise' | null>(null);
   const isAdmin = user?.role === 'admin';
+  const [inquiryPlan, setInquiryPlan] = useState<PlanId | null>(null);
 
   /**
    * 결제·구독 이력 (T-17). 기록을 남기기 시작했으니 볼 수 있어야 한다 —
@@ -30,15 +38,11 @@ export default function PlanModal({ onClose }: Props) {
   const plans = useMemo(
     () => [
       {
-        id: 'starter',
+        id: 'starter' as const,
         name: t('plan.name.starter'),
-        price: t('plan.price.free'),
-        priceDetail: t('plan.price.freeDetail'),
         icon: Zap,
         color: 'border-gray-300',
         headerColor: 'bg-gray-100',
-        btnColor: 'bg-gray-200 text-gray-600 cursor-default',
-        btnLabel: t('plan.btn.current'),
         features: [
           { text: t('plan.f1'), available: true },
           { text: t('plan.f2'), available: true },
@@ -51,22 +55,18 @@ export default function PlanModal({ onClose }: Props) {
         ],
       },
       {
-        id: 'pro',
+        id: 'pro' as const,
         name: t('plan.name.pro'),
-        price: t('plan.price.pro'),
-        priceDetail: t('plan.price.proDetail'),
         icon: Rocket,
         color: 'border-navy-600',
         headerColor: 'bg-navy-800',
         textColor: 'text-white',
-        btnColor: 'bg-navy-800 text-white hover:bg-navy-700',
-        btnLabel: t('plan.btn.upgrade'),
         badge: t('plan.badge.popular'),
         features: [
           { text: t('plan.f1u'), available: true },
           { text: t('plan.f2u'), available: true },
           { text: t('plan.f3'), available: true },
-          { text: t('plan.f4p'), available: true },
+          { text: t('plan.f4'), available: true },
           { text: t('plan.f5'), available: true },
           { text: t('plan.ft1'), available: true },
           { text: t('plan.ft2'), available: false },
@@ -74,21 +74,17 @@ export default function PlanModal({ onClose }: Props) {
         ],
       },
       {
-        id: 'enterprise',
+        id: 'enterprise' as const,
         name: t('plan.name.enterprise'),
-        price: t('plan.price.contact'),
-        priceDetail: t('plan.price.contactDetail'),
         icon: Building2,
         color: 'border-gold-500',
         headerColor: 'bg-navy-900',
         textColor: 'text-white',
-        btnColor: 'bg-gold-500 text-white hover:bg-gold-400',
-        btnLabel: t('plan.btn.sales'),
         features: [
           { text: t('plan.f1u'), available: true },
           { text: t('plan.f2e'), available: true },
           { text: t('plan.f3'), available: true },
-          { text: t('plan.f4e'), available: true },
+          { text: t('plan.f4'), available: true },
           { text: t('plan.f5'), available: true },
           { text: t('plan.ft1'), available: true },
           { text: t('plan.ft2'), available: true },
@@ -99,28 +95,7 @@ export default function PlanModal({ onClose }: Props) {
     [t, locale],
   );
 
-  const runCheckout = async (planId: 'pro' | 'enterprise') => {
-    setLoadingPlan(planId);
-    try {
-      const res = await billingApi.checkout(planId);
-      if (res?.upgraded) {
-        updateUserPlan(res.targetPlan);
-        alert(t('plan.checkoutSuccess', { plan: res.targetPlan }));
-        setPendingPlan(null);
-        onClose();
-        return;
-      }
-      if (res?.checkoutUrl) {
-        window.location.href = res.checkoutUrl;
-        return;
-      }
-      alert(t('plan.checkoutPending'));
-    } catch (e: any) {
-      alert(e?.response?.data?.message || t('plan.checkoutFailed'));
-    } finally {
-      setLoadingPlan(null);
-    }
-  };
+  const inquiryName = plans.find((p) => p.id === inquiryPlan)?.name;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -157,9 +132,12 @@ export default function PlanModal({ onClose }: Props) {
                       <Icon size={18} className={plan.textColor || 'text-gray-700'} />
                       <span className={`font-bold text-base ${plan.textColor || 'text-gray-800'}`}>{plan.name}</span>
                     </div>
-                    <div className={`text-2xl font-bold ${plan.textColor || 'text-gray-900'}`}>{plan.price}</div>
+                    {/* 가격 정책(D-02) 확정 전 — 정해지지 않은 금액을 보이지 않는다 */}
+                    <div className={`text-lg font-bold ${plan.textColor || 'text-gray-900'}`}>
+                      {t('plan.price.inquiry')}
+                    </div>
                     <div className={`text-xs ${plan.textColor ? 'text-gray-300' : 'text-gray-500'} mt-0.5`}>
-                      {plan.priceDetail}
+                      {t('plan.price.inquiryDetail')}
                     </div>
                   </div>
 
@@ -178,30 +156,41 @@ export default function PlanModal({ onClose }: Props) {
                       ))}
                     </ul>
 
+                    {/* 안내만 보인다 — 서버를 부르지 않으므로 이 버튼으로 요금제가 바뀌는 일은 없다 */}
                     <button
                       type="button"
-                      onClick={async () => {
-                        if (plan.id === 'starter') return;
-                        if (plan.id === 'pro') {
-                          setPendingPlan('pro');
-                          return;
-                        }
-                        await runCheckout(plan.id as 'pro' | 'enterprise');
-                      }}
-                      disabled={isCurrent || loadingPlan === plan.id}
-                      className={`w-full py-2 text-sm font-medium rounded transition-colors ${plan.btnColor} ${isCurrent ? 'opacity-70' : ''}`}
+                      data-testid={`plan-inquiry-${plan.id}`}
+                      onClick={() => setInquiryPlan(plan.id)}
+                      disabled={isCurrent}
+                      className={`w-full py-2 text-sm font-medium rounded transition-colors ${
+                        isCurrent
+                          ? 'bg-gray-200 text-gray-600 cursor-default opacity-70'
+                          : 'border border-navy-600 text-navy-800 bg-white hover:bg-navy-50'
+                      }`}
                     >
-                      {loadingPlan === plan.id
-                        ? t('plan.checkoutProcessing')
-                        : isCurrent
-                        ? t('plan.btn.current')
-                        : plan.btnLabel}
+                      {isCurrent ? t('plan.btn.current') : t('plan.btn.inquiry')}
                     </button>
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {inquiryName && (
+            <div
+              role="status"
+              data-testid="plan-inquiry-notice"
+              className="mt-5 flex gap-2 border border-navy-200 bg-navy-50 rounded px-4 py-3"
+            >
+              <Info size={16} className="text-navy-700 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-navy-900">
+                  {t('plan.inquiry.title', { plan: inquiryName })}
+                </p>
+                <p className="text-xs text-gray-600 mt-1">{t('plan.inquiry.body')}</p>
+              </div>
+            </div>
+          )}
 
           {isAdmin && history && (
             <div className="mt-5 border border-gray-200 rounded overflow-hidden">
@@ -253,43 +242,9 @@ export default function PlanModal({ onClose }: Props) {
           <div className="mt-5 bg-gray-50 border border-gray-200 rounded p-3 text-xs text-gray-500">
             <p>{t('plan.footer1')}</p>
             <p>{t('plan.footer2')}</p>
-            <p>{t('plan.footer3')}</p>
           </div>
         </div>
       </div>
-
-      {pendingPlan === 'pro' && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white w-full max-w-md border border-gray-300 shadow-2xl">
-            <div className="bg-navy-900 text-white px-5 py-3 font-medium text-sm">
-              {t('plan.confirmTitle')}
-            </div>
-            <div className="p-5 space-y-4">
-              <p className="text-sm text-gray-700">{t('plan.proConfirmMessage')}</p>
-              <div className="bg-navy-50 border border-navy-100 rounded px-3 py-2 text-xs text-gray-600">
-                {t('plan.proConfirmPrice')}
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  className="btn-secondary text-sm"
-                  onClick={() => setPendingPlan(null)}
-                >
-                  {t('policies.cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary text-sm"
-                  onClick={() => runCheckout('pro')}
-                  disabled={loadingPlan === 'pro'}
-                >
-                  {loadingPlan === 'pro' ? t('plan.checkoutProcessing') : t('plan.confirmPayButton')}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
