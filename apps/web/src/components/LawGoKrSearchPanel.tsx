@@ -78,8 +78,8 @@ export function LawGoKrSearchPanel({
           에서 OPEN API를 신청해 발급받으세요.
         </p>
         <p className="text-xs text-amber-800 leading-relaxed">
-          인증값만으로는 부족합니다 — <b>배포 서버의 공인 IP</b>도 마이페이지 &gt; API인증키관리에
-          등록해야 운영에서 호출이 통과합니다.
+          인증값을 넣었는데도 법제처가 &ldquo;사용자 정보 검증에 실패&rdquo;로 거절하면, 법제처에 등록된
+          <b>서버 IP·도메인</b>에 이 서버가 들어 있는지 확인하세요.
         </p>
       </div>
     );

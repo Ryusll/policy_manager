@@ -24,9 +24,10 @@ import { RegulationArticleNode } from '../regulation-parse/regulation-tree.build
  * 1. 인증값(OC)이 브라우저 번들에 실리면 그대로 공개된다. 서버에만 둔다.
  * 2. law.go.kr은 CORS 헤더를 주지 않아 브라우저에서는 애초에 호출이 막힌다.
  *
- * 운영 주의 — 법제처는 **OC와 서버 IP를 함께** 검증한다. 배포 서버의 공인 IP를
- * open.law.go.kr 마이페이지에 등록하지 않으면 로컬에서 되던 호출이 운영에서 실패한다.
- * 그때 돌아오는 응답이 `{ result, msg }`이며, 이 서비스는 이를 503으로 바꿔 알린다.
+ * 운영 주의 — 법제처는 OC와 함께 **호출한 서버의 IP·도메인**을 검증해 거절할 수 있다.
+ * 그때 돌아오는 응답이 `{ result, msg }`(HTTP 200)이며, 이 서비스는 이를 503으로 바꿔 알린다.
+ * IP 등록이 늘 필요한 건 아니다 — 2026-10-07 운영 서버는 로컬과 같은 OC로, IP를 따로 등록하지
+ * 않고도 통과했다. open.law.go.kr의 "API인증키관리" 화면에는 IP 칸이 없다(등록 위치로 안내하지 말 것).
  */
 @Injectable()
 export class LawGoKrService {
@@ -104,7 +105,7 @@ export class LawGoKrService {
       this.log.error(`법제처 인증 실패 [${path}]: ${detail}`);
       throw new ServiceUnavailableException(
         `법제처 API 인증에 실패했습니다: ${detail} ` +
-          '(open.law.go.kr 마이페이지에서 이 서버의 공인 IP가 등록돼 있는지 확인하세요.)',
+          '(인증값이 맞는지, 그리고 법제처에 등록된 서버 IP·도메인에 이 서버가 들어 있는지 확인하세요.)',
       );
     }
 
