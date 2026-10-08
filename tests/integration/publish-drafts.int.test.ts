@@ -85,6 +85,16 @@ describe('시행 전 초안 — 표시와 한꺼번에 시행', () => {
     expect(status).toBe(400);
   });
 
+  it('시행일 없이는 시행하지 않는다 — 오늘로 채우지 않는다 (PAT-02)', async () => {
+    const { status } = await api(`/policies/${policyId}/publish-drafts`, {
+      method: 'POST',
+      token: t.token,
+      json: { changeNote: '제정' },
+    });
+    expect(status).toBe(400);
+    expect(articleOf(await detail(t.token), 'jo1').versions).toEqual([]);
+  });
+
   it('시행된 적 없는 조문만 시행하고, 시행 중인 조문의 개정 초안은 그대로 둔다', async () => {
     const { status, body } = await api(`/policies/${policyId}/publish-drafts`, {
       method: 'POST',
@@ -105,14 +115,30 @@ describe('시행 전 초안 — 표시와 한꺼번에 시행', () => {
     // 제3조: 시행본은 원래 문구 그대로, 개정 초안은 여전히 초안
     expect(articleOf(p, 'jo3').versions[0].content).toBe('시행 중인 원래 문구');
     expect(articleOf(p, 'jo3').pendingVersion).toMatchObject({ status: 'draft', content: '검토 전 개정 문구' });
+    // 제3조가 먼저 시행 중이었으니 규정의 첫 시행이 아니다 — 규정 시행일은 건드리지 않는다
+    expect(p.effectiveDate ?? null).toBeNull();
   });
 
   it('다시 부르면 시행할 것이 없다', async () => {
     const { body } = await api(`/policies/${policyId}/publish-drafts`, {
       method: 'POST',
       token: t.token,
-      json: { changeNote: '제정' },
+      json: { changeNote: '제정', effectiveDate: '2024-07-26' },
     });
     expect(body).toEqual({ published: 0 });
+  });
+
+  it('규정의 첫 시행이면 규정 시행일도 같은 날로 채운다', async () => {
+    const fresh = await createPolicyWithArticle(t.token, `PD1-${Date.now().toString(36)}`);
+    const { status, body } = await api(`/policies/${fresh.policy.id}/publish-drafts`, {
+      method: 'POST',
+      token: t.token,
+      json: { changeNote: '기존 규정 등록', effectiveDate: '2019-03-01' },
+    });
+    expect(status).toBe(200);
+    expect(body).toEqual({ published: 1 });
+    const p = (await api(`/policies/${fresh.policy.id}`, { token: t.token })).body;
+    expect(String(p.effectiveDate)).toMatch(/^2019-03-01/);
+    expect(String(p.chapters[0].articles[0].versions[0].effectiveDate)).toMatch(/^2019-03-01/);
   });
 });

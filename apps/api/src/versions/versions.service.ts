@@ -222,7 +222,9 @@ export class VersionsService {
    * 결과도 달랐다.
    *
    * 이미 시행본이 있는 조문의 개정 초안은 건드리지 않는다 — 그건 개정이고, 하나씩 검토하는
-   * 원래 절차를 탄다. 승인 권한(관리자)과 사유·시행일·감사 기록은 단건 승인과 같다.
+   * 원래 절차를 탄다. 승인 권한(관리자)과 사유·감사 기록은 단건 승인과 같다.
+   * 시행일은 단건 승인과 달리 필수다 — 여기로 오는 건 대개 옮겨 적은 기존 규정이라 "오늘"로
+   * 채우면 과거 시점 조회가 틀어진다(PAT-02, 가져오기와 같은 규칙).
    * 알림은 조문 수만큼 보내지 않고 한 번만 보낸다.
    */
   async publishInitialDrafts(
@@ -230,16 +232,16 @@ export class VersionsService {
     policyId: string,
     userId: string,
     changeNote: string,
-    effectiveDate?: string,
+    effectiveDate: string,
   ) {
     const reason = changeNote?.trim();
     if (!reason) throw new BadRequestException('시행 사유를 입력하세요.');
-    const effective = effectiveDate ? coerceNullableDate(effectiveDate) : todayDateOnly();
-    if (!effective) throw new BadRequestException('시행일은 YYYY-MM-DD 형식이어야 합니다.');
+    const effective = coerceNullableDate(effectiveDate);
+    if (!effective) throw new BadRequestException('시행일(YYYY-MM-DD)을 입력하세요.');
 
     const policy = await this.prisma.policy.findFirst({
       where: { id: policyId, tenantId },
-      select: { id: true, title: true, code: true, metadata: true },
+      select: { id: true, title: true, code: true, metadata: true, effectiveDate: true },
     });
     if (!policy) throw new NotFoundException('Policy not found');
 
@@ -267,15 +269,26 @@ export class VersionsService {
     const targets = articles.filter((a) => a.versions.length > 0);
     if (!targets.length) return { published: 0 };
 
+    // 규정의 첫 시행이면 규정 단위 시행일도 같은 날로 채운다(가져오기와 같다). 이미 시행 중인
+    // 조문이 있는 규정에 새로 넣은 조문이면 그 날짜는 규정 시행일이 아니므로 건드리지 않는다.
+    const firstPublication =
+      !policy.effectiveDate &&
+      (await this.prisma.articleVersion.count({
+        where: { status: 'published', article: { chapter: { policyId } } },
+      })) === 0;
+
     const approvedAt = new Date();
-    await this.prisma.$transaction(
-      targets.map((a) =>
+    await this.prisma.$transaction([
+      ...targets.map((a) =>
         this.prisma.articleVersion.update({
           where: { id: a.versions[0].id },
           data: { status: 'published', approvedBy: userId, approvedAt, effectiveDate: effective, changeNote: reason },
         }),
       ),
-    );
+      ...(firstPublication
+        ? [this.prisma.policy.update({ where: { id: policyId }, data: { effectiveDate: effective } })]
+        : []),
+    ]);
 
     await this.audit.log({
       tenantId,

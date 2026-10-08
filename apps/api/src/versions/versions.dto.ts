@@ -49,10 +49,13 @@ export class PublishDraftsDto {
   @MinLength(1, { message: '시행 사유를 입력하세요.' })
   changeNote: string;
 
-  @ApiProperty({ required: false, description: '시행일 (YYYY-MM-DD). 생략하면 오늘.' })
-  @IsOptional()
-  @IsDateString()
-  effectiveDate?: string;
+  /**
+   * 이 조문들이 실제로 시행된 날. 필수이고 "오늘"로 채우지 않는다 — 이 경로로 들어오는 건 대개
+   * 옮겨 적은 기존 규정이라, 오늘로 시행하면 그 전 날짜의 시점 조회에서 빠진다(PAT-02, 가져오기와 같은 규칙).
+   */
+  @ApiProperty({ description: '이 조문들이 실제로 시행된 날 (YYYY-MM-DD). 기존 규정을 옮겨 적었다면 원래 시행일' })
+  @IsDateString({}, { message: '시행일(YYYY-MM-DD)을 입력하세요.' })
+  effectiveDate: string;
 }
 
 /** 시행일 없이 발행된 버전의 시행일 보정 (PAT-02) */

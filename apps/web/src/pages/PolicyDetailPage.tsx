@@ -1011,10 +1011,7 @@ export default function PolicyDetailPage() {
   );
   const publishDraftsMutation = useMutation({
     mutationFn: (form: { changeNote: string; effectiveDate: string }) =>
-      versionsApi.publishDrafts(id!, {
-        changeNote: form.changeNote.trim(),
-        ...(form.effectiveDate ? { effectiveDate: form.effectiveDate } : {}),
-      }),
+      versionsApi.publishDrafts(id!, { changeNote: form.changeNote.trim(), effectiveDate: form.effectiveDate }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['policy', id] });
       setPublishDraftsForm(null);
@@ -1022,11 +1019,10 @@ export default function PolicyDetailPage() {
       setTimeout(() => setLawToolMsg(''), 4000);
     },
   });
+  // 시행일은 비워 둔다 — 오늘로 채워 두면 옮겨 적은 기존 규정이 그대로 오늘 시행으로 들어간다(PAT-02)
   const openPublishDrafts = () => {
-    const d = new Date();
-    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     publishDraftsMutation.reset();
-    setPublishDraftsForm({ changeNote: '제정', effectiveDate: today });
+    setPublishDraftsForm({ changeNote: '제정', effectiveDate: '' });
   };
 
   const saveArticleMetaMutation = useMutation({
@@ -4474,7 +4470,8 @@ export default function PolicyDetailPage() {
                   onChange={(e) => setPublishDraftsForm({ ...publishDraftsForm, effectiveDate: e.target.value })}
                 />
                 <span className="block mt-1 text-[11px] font-normal text-gray-500">
-                  기존 규정을 옮겨 적는 경우 원래 시행일을 넣으면 시점 조회가 정확해집니다.
+                  조문이 실제로 시행된 날입니다. 기존 규정을 옮겨 적었다면 오늘이 아니라 원래 시행일을 넣으세요 —
+                  오늘로 넣으면 그 전 날짜로 조회할 때 이 조문들이 빠집니다.
                 </span>
               </label>
               {publishDraftsMutation.isError && (
@@ -4487,7 +4484,9 @@ export default function PolicyDetailPage() {
                 <button
                   type="button"
                   className="btn-primary"
-                  disabled={!publishDraftsForm.changeNote.trim() || publishDraftsMutation.isPending}
+                  disabled={
+                    !publishDraftsForm.changeNote.trim() || !publishDraftsForm.effectiveDate || publishDraftsMutation.isPending
+                  }
                   onClick={() => publishDraftsMutation.mutate(publishDraftsForm)}
                 >
                   {publishDraftsMutation.isPending ? '시행 중…' : `${draftOnlyCount}건 시행`}

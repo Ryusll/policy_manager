@@ -181,7 +181,7 @@ export default function PoliciesPage() {
       // 그러지 않으면 조문이 전부 초안으로 남아 전문 보기에 "시행중 버전이 없습니다"만 뜬다.
       // 시행 승인은 관리자 권한이라, 편집자가 가져오면 초안으로 두고 관리자가 상세 화면에서 한꺼번에 시행한다.
       // 시행일은 "오늘"이 아니라 그 본문이 실제로 시행된 날이다 — 오늘로 두면 과거 시점 조회가 틀어진다(PAT-02).
-      if (user?.role === 'admin') {
+      if (user?.role === 'admin' && effectiveDate) {
         await versionsApi.publishDrafts(policy.id, { changeNote: '기존 규정 가져오기 자동 게시', effectiveDate });
         await policiesApi.update(policy.id, { effectiveDate });
       }

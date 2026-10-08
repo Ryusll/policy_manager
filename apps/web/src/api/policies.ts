@@ -234,7 +234,7 @@ export const versionsApi = {
   /** 시행된 적 없는 조문의 초안을 한꺼번에 시행 (관리자). 이미 시행 중인 조문의 개정 초안은 제외 */
   publishDrafts: (
     policyId: string,
-    data: { changeNote: string; effectiveDate?: string },
+    data: { changeNote: string; effectiveDate: string },
   ): Promise<{ published: number }> =>
     client.post('/policies/' + policyId + '/publish-drafts', data).then((r) => r.data),
   /** 시행일 없이 발행된 버전에 확인한 시행일 넣기 (관리자, 예전 가져오기 데이터 보정) */
