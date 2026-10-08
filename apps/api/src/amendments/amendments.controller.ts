@@ -2,11 +2,19 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Request } f
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/guards/decorators';
 import { AmendmentsService } from './amendments.service';
-import { AmendmentListQueryDto, EditAmendmentDto, GenerateAmendmentsDto, RequestReviewDto } from './amendments.dto';
+import {
+  AmendmentListQueryDto,
+  ApproveAmendmentDto,
+  EditAmendmentDto,
+  GenerateAmendmentsDto,
+  RegenerateAmendmentDto,
+  RejectAmendmentDto,
+  RequestReviewDto,
+} from './amendments.dto';
 
 /**
- * 개정 후보 (T-106·T-107). admin·editor 만 — 개정 초안은 확정 전 내부 문서다(설계안 6절).
- * 승인·반려는 T-108.
+ * 개정 후보 (T-106·T-107·T-108). admin·editor 만 — 개정 초안은 확정 전 내부 문서다(설계안 6절).
+ * 승인·반려는 관리자만 — 일반 조문 승인(`versions/:id/approve`)과 같다.
  */
 @ApiTags('amendments')
 @ApiBearerAuth()
@@ -63,7 +71,25 @@ export class AmendmentsController {
   @Post(':id/regenerate')
   @HttpCode(200)
   @ApiOperation({ summary: '다시 만들기 — 같은 변경·조문으로 지금 기준 본문의 후보(옛 후보는 그대로)' })
-  regenerate(@Request() req: any, @Param('id') id: string) {
-    return this.service.regenerate(req.user.tenantId, id, req.user.id);
+  regenerate(@Request() req: any, @Param('id') id: string, @Body() dto: RegenerateAmendmentDto) {
+    return this.service.regenerate(req.user.tenantId, id, req.user.id, dto.asOf);
+  }
+
+  @Post(':id/approve')
+  @HttpCode(200)
+  @Roles('admin')
+  @ApiOperation({
+    summary: '승인 → 같은 조문의 후속 버전 발행(관리자). 검토를 요청한 판만, 사내 시행일 필수·소급 안 됨, 기준 본문이 어긋나면 409(reason)',
+  })
+  approve(@Request() req: any, @Param('id') id: string, @Body() dto: ApproveAmendmentDto) {
+    return this.service.approve(req.user.tenantId, id, req.user.id, dto);
+  }
+
+  @Post(':id/reject')
+  @HttpCode(200)
+  @Roles('admin')
+  @ApiOperation({ summary: '반려(관리자) — 검토 중인 후보만, 사유 필수. 발행본은 그대로' })
+  reject(@Request() req: any, @Param('id') id: string, @Body() dto: RejectAmendmentDto) {
+    return this.service.reject(req.user.tenantId, id, req.user.id, dto);
   }
 }

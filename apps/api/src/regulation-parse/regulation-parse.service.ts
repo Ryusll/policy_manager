@@ -396,6 +396,7 @@ export class RegulationParseService {
           status: 'published',
           approvedBy: userId,
           approvedAt: new Date(),
+          publishedAt: new Date(), // 발행일(T-108) — 시행일과 다르다
           effectiveDate: effective,
           changeNote,
         },

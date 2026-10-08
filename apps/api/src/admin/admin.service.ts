@@ -100,6 +100,8 @@ export class AdminService {
                 status,
                 changeNote: status === 'published' ? '일괄 import' : undefined,
                 effectiveDate: status === 'published' ? effective : undefined,
+                // 발행일(T-108) — 시스템에서 시행본으로 발행한 시각. 시행일과 다르다
+                publishedAt: status === 'published' ? new Date() : undefined,
                 createdBy: userId,
               },
             });

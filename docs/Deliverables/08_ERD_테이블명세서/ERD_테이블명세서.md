@@ -116,6 +116,9 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | effectiveDate | date? | **이 버전이 시행된 날. 시점 조회(as-of)의 기준.** 승인 시 확정(미지정이면 승인일) |
 | approvedBy / approvedAt | string?/datetime? | |
 | createdBy | string? | |
+| publishedAt | datetime? | **발행일** — 시스템에서 시행본으로 발행한 시각(T-108). 시행일·법령 시행일과 다르고 시점 조회의 기준이 아니다. 개정 후보 승인·일반 승인·한꺼번에 시행·가져오기 확정·JSON 일괄 등록이 남긴다(그 전 버전은 비어 있다 — 보정은 T-111) |
+| changeEventId | uuid FK? → LawChangeEvent (SetNull) | 이 버전을 낳은 법령 변경 — 개정 후보 승인으로 발행됐을 때만(T-108) |
+| sourceCandidateId | uuid FK? unique → AmendmentCandidate (SetNull) | 이 버전을 낳은 개정 후보(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다 |
 
 인덱스: `[articleId, effectiveDate]` — 시점 조회에서 조문별 "기준일 이전 시행분 중 가장 최근"을 찾는 경로.
 
@@ -198,6 +201,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `LawSyncRun` · `Law.lastCheckError` | ✅ **스키마에 있다** (T-104, 마이그레이션 `20261007100000_law_sync_runs`) |
 | `AmendmentCandidate` · `LawChangeEvent.amendmentsProcessedAt` · `UserNotification.link` | ✅ **스키마에 있다** (T-106, 마이그레이션 `20261008120000_amendment_candidates`) |
 | `AmendmentRevision` · `AmendmentStateChange` · `AmendmentCandidate.revision`·`lockVersion` | ✅ **스키마에 있다** (T-107, 마이그레이션 `20261008180000_amendment_review`) |
+| `ArticleVersion.publishedAt`·`changeEventId`·`sourceCandidateId` · `AmendmentCandidate.baseFingerprint` | ✅ **스키마에 있다** (T-108, 마이그레이션 `20261009090000_amendment_approval`) |
 | `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
 
 ### 3.1 관계 개요
@@ -327,6 +331,7 @@ amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. n
 | tenantId | uuid FK → Tenant (cascade) | **누락 금지.** 조문의 실제 소속(chapter→policy→tenant)도 함께 본다 |
 | articleId | uuid FK → Article (cascade) | 영향 조문 |
 | baseVersionId | uuid FK → ArticleVersion (cascade) | **제1 조문** — 만들 때의 기준 발행본. 그 뒤 새 버전이 시행돼도 바꾸지 않는다 |
+| baseFingerprint | string? | 만들 때 그 조문의 **발행 이력 지문** — 시행본·폐지본의 id·상태·시행일·번호의 SHA-256(`fp1:` 접두어, T-108). 승인 때 다시 계산해 다르면 그 사이 다른 발행·폐지·시행일 보정이 있었다는 뜻이라 막는다. 마이그레이션이 기존 후보를 같은 계산으로 채웠다 |
 | changeEventId | uuid FK → LawChangeEvent (**restrict**) | 개정의 원인. 지워지면 원천이 사라지므로 법령 추적 해제를 막는다 |
 | lawLinkId | uuid FK? → LawLink (SetNull) | 영향을 찾은 연결. 지워져도 후보는 남는다(근거는 rationale 스냅샷) |
 | candidateContent | text | **제2 조문** — 개정 후보 본문. 반영한 것이 없으면 제1 조문 그대로 |
@@ -344,9 +349,9 @@ amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. n
 | createdBy | string? | 만든 사람. 동기화가 자동으로 만들었으면 null |
 | createdAt / updatedAt | datetime | |
 
-유니크 `[tenantId, changeEventId, articleId, baseVersionId, generationMethod, variant]` — 자동 생성과 버튼이 겹치거나 다시 눌러도 같은 후보는 하나다(`INSERT … ON CONFLICT DO NOTHING`).
+유니크 `[tenantId, changeEventId, articleId, baseVersionId, baseFingerprint, generationMethod, variant]` — 자동 생성과 버튼이 겹치거나 다시 눌러도 같은 후보는 하나다(`INSERT … ON CONFLICT DO NOTHING`). 발행 이력 지문이 들어 있어, 기준 본문은 같아도 그 사이 다른 발행이 있었으면 "다시 만들기"가 새 후보를 만든다(T-108).
 인덱스 `[tenantId, reviewState, createdAt]`, `[tenantId, articleId]`, `[changeEventId]`.
-반려 사유·검토자·승인으로 만든 후속 버전(`reviewNote`·`reviewedBy`·`reviewedAt`·`resultVersionId`)은 쓰는 단계(T-108)에서 더한다.
+승인·반려(T-108)는 컬럼을 더하지 않았다 — 결정(누가·언제·어느 판·사유)은 `AmendmentStateChange` 에, 승인으로 발행된 버전은 `ArticleVersion.sourceCandidateId` 역관계로 찾는다.
 
 #### AmendmentRevision (`amendment_revisions`) — 개정 후보의 판 ⚠️ 테넌트별 ✅ 구현됨 (T-107)
 생성본(판 1)부터 사람이 고칠 때마다 하나씩 쌓고 **바꾸지 않는다**(특허 도 11 — 수정 전후 보존). 수정 전 내용은 직전 판이다.

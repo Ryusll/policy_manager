@@ -87,3 +87,34 @@ export class RequestReviewDto extends LockedRequestDto {
   @MaxLength(500)
   reason?: string;
 }
+
+export class ApproveAmendmentDto extends LockedRequestDto {
+  @ApiProperty({ description: '사내 규정 시행일(YYYY-MM-DD) — 기본값 없음. 오늘이나 그 뒤(소급 안 됨)', example: '2027-01-01' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '사내 규정 시행일은 YYYY-MM-DD 형식이어야 합니다.' })
+  effectiveDate: string;
+
+  @ApiProperty({ description: '개정 사유 — 필수. 발행되는 버전의 개정 사유(changeNote)가 된다' })
+  @IsString()
+  @MaxLength(500)
+  changeNote: string;
+
+  @ApiPropertyOptional({ description: '사내 시행일이 법령 시행일보다 이를 때 그 이유 — 그 경우 필수' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  earlyReason?: string;
+}
+
+export class RejectAmendmentDto extends LockedRequestDto {
+  @ApiProperty({ description: '반려 사유 — 필수("개정 불필요" 판단도 여기)' })
+  @IsString()
+  @MaxLength(1000)
+  reason: string;
+}
+
+export class RegenerateAmendmentDto {
+  @ApiPropertyOptional({ description: '이 날 시행 중인 본문을 기준으로(승인하려던 시행일). 생략하면 법령 시행일과 오늘 중 늦은 날' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '기준일(asOf)은 YYYY-MM-DD 형식이어야 합니다.' })
+  asOf?: string;
+}

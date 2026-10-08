@@ -11,6 +11,7 @@ export const CANDIDATE_SELECT = {
   tenantId: true,
   articleId: true,
   baseVersionId: true,
+  baseFingerprint: true,
   changeEventId: true,
   lawLinkId: true,
   candidateContent: true,

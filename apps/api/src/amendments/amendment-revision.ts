@@ -17,3 +17,22 @@ export function hasSubstantiveChange(base: string, content: string): boolean {
   const squash = (s: string) => (s ?? '').replace(/\s+/g, '');
   return squash(base) !== squash(content);
 }
+
+export type HistoryVersion = { id: string; status: string; effectiveDate: Date | null; versionNum: number };
+
+/**
+ * 조문의 발행 이력 지문(T-108) — 시행본·폐지본(published·archived)의 id·상태·시행일·버전 번호.
+ *
+ * 후보를 만들 때 고정하고 승인 때 다시 계산한다. 다르면 그 사이 이 조문에 다른 발행·폐지·시행일 보정이
+ * 있었다는 뜻이다 — 기준 본문 id 가 같아도(예: 기준본보다 이른 시행일로 다른 버전을 발행) 잡는다.
+ * 마이그레이션 보정 SQL 과 **같은 계산**이다: 줄 `id|상태|YYYY-MM-DD|번호`, id 바이트 순서, 줄바꿈 이음, 접두어 `fp1:`.
+ */
+export function historyFingerprint(versions: HistoryVersion[]): string {
+  const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : '');
+  const lines = versions
+    .filter((v) => v.status === 'published' || v.status === 'archived')
+    .map((v) => `${v.id}|${v.status}|${day(v.effectiveDate)}|${v.versionNum}`)
+    // id 는 ASCII(uuid)라 문자열 정렬이 바이트 순서(SQL 의 COLLATE "C")와 같다
+    .sort();
+  return `fp1:${createHash('sha256').update(lines.join('\n'), 'utf8').digest('hex')}`;
+}

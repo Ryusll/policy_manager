@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 import {
   amendmentsApi,
+  type ApproveBlock,
   CONFIDENCE_LABEL,
   REVIEW_FLAG_LABEL,
   REVIEW_STATE_LABEL,
@@ -24,7 +25,8 @@ import { StateBadge } from './AmendmentsPage';
  * 개정 후보 검토 화면 (T-107, 특허 도 11).
  *
  * 기준 본문(제1 조문) · 개정 후보(바뀐 곳을 누르면) · 그 변경의 근거를 나란히 둔다. 근거가 없는 변경은
- * 점선으로 표시한다 — 사람이 고쳤거나 규칙 밖에서 바뀐 곳이라 검토해야 한다. 승인·반려는 T-108.
+ * 점선으로 표시한다 — 사람이 고쳤거나 규칙 밖에서 바뀐 곳이라 검토해야 한다. 승인·반려(관리자, T-108)는 검토
+ * 중인 후보에서 — 승인하면 같은 조문의 후속 버전이 발행된다.
  */
 export default function AmendmentDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -110,7 +112,8 @@ export default function AmendmentDetailPage() {
       </div>
 
       <LawChangeCard data={data} />
-      {(data.reviewState === 'draft' || data.reviewState === 'review') && <Actions data={data} />}
+      {data.reviewState === 'review' && user?.role === 'admin' && <DecisionPanel data={data} />}
+      {data.reviewState !== 'approved' && <Actions data={data} />}
       {history && <HistoryCard history={history} />}
       {data.siblings.length > 0 && (
         <section className="card p-3 space-y-1.5">
@@ -195,14 +198,42 @@ function Alerts({ data }: { data: AmendmentDetail }) {
 
   return (
     <>
-      {!data.isCurrentBase && (
+      {data.decision?.state === 'approved' && data.resultVersion && (
+        <div className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900" data-testid="amendment-approved">
+          승인됨 — <b>v{data.resultVersion.versionNum}</b> 발행 · 시행 {data.resultVersion.effectiveDate}
+          {data.resultVersion.effectiveDate && data.resultVersion.effectiveDate > new Date().toISOString().slice(0, 10) && ' (시행 예정)'} ·{' '}
+          {data.decision.by?.name ?? '알 수 없음'} · {new Date(data.decision.at).toLocaleString('ko-KR')}
+          {data.decision.reason && <span className="block text-xs mt-0.5 whitespace-pre-wrap">개정 사유: {data.decision.reason}</span>}
+          <Link to={`/policies/${data.policy.id}#${formatArticleAnchor(data.article)}`} className="block text-xs mt-1 text-emerald-800 underline">
+            규정에서 보기
+          </Link>
+        </div>
+      )}
+      {data.decision?.state === 'rejected' && data.reviewState === 'rejected' && (
+        <div className="rounded border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900" data-testid="amendment-rejected">
+          반려됨 — 판 {data.decision.revision} · {data.decision.by?.name ?? '알 수 없음'} ·{' '}
+          {new Date(data.decision.at).toLocaleString('ko-KR')}
+          {data.decision.reason && <span className="block text-xs mt-0.5 whitespace-pre-wrap">반려 사유: {data.decision.reason}</span>}
+          <span className="block text-xs mt-0.5">고치면 작성 상태로 돌아가 다시 검토를 요청할 수 있습니다. 시행 본문은 그대로입니다.</span>
+        </div>
+      )}
+      {!data.isCurrentBase && data.reviewState !== 'approved' && (
         <div role="alert" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 space-y-1.5">
           <p>
-            후보를 만든 뒤 이 조문이 개정됐습니다
-            {data.currentBase &&
-              ` — 지금 기준 본문은 v${data.currentBase.versionNum}${data.currentBase.effectiveDate ? `(시행 ${data.currentBase.effectiveDate})` : ''}입니다`}
-            . 비교는 후보를 만들 때의 본문(v{data.baseVersion.versionNum}) 기준이라, 이대로 승인하면 그 사이 개정이
-            빠질 수 있습니다.
+            {data.staleReason === 'history_changed' ? (
+              <>
+                후보를 만든 뒤 이 조문에 다른 발행·폐지·시행일 보정이 있었습니다 — 기준 본문(v{data.baseVersion.versionNum})은
+                같아도 그대로 승인할 수 없습니다. 다시 만들어 검토하세요.
+              </>
+            ) : (
+              <>
+                후보를 만든 뒤 이 조문이 개정됐습니다
+                {data.currentBase &&
+                  ` — 지금 기준 본문은 v${data.currentBase.versionNum}${data.currentBase.effectiveDate ? `(시행 ${data.currentBase.effectiveDate})` : ''}입니다`}
+                . 비교는 후보를 만들 때의 본문(v{data.baseVersion.versionNum}) 기준이라, 이대로 승인하면 그 사이 개정이
+                빠질 수 있습니다.
+              </>
+            )}
           </p>
           {data.currentBase && (
             <details className="text-xs">
@@ -339,6 +370,174 @@ function LawChangeCard({ data }: { data: AmendmentDetail }) {
   );
 }
 
+/**
+ * 승인·반려 (관리자, T-108). 검토를 요청한 판에 대해서만 — 화면이 본 판·잠금 버전을 함께 보낸다.
+ * 사내 시행일은 기본값 없이 직접 고른다(법령 시행일은 참고로만 보인다).
+ */
+function DecisionPanel({ data }: { data: AmendmentDetail }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const today = new Date().toISOString().slice(0, 10);
+  const [effectiveDate, setEffectiveDate] = useState('');
+  const [changeNote, setChangeNote] = useState('');
+  const [earlyReason, setEarlyReason] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
+  const [block, setBlock] = useState<{ reason: ApproveBlock; message: string } | null>(null);
+  const lawDate = data.event.lawEffectiveDate;
+  const early = !!(lawDate && effectiveDate && effectiveDate < lawDate);
+  const lock = { expectedRevision: data.revision, expectedLockVersion: data.lockVersion };
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['amendment', data.id] });
+    qc.invalidateQueries({ queryKey: ['amendments'] });
+  };
+
+  const approve = useMutation({
+    mutationFn: () =>
+      amendmentsApi.approve(data.id, {
+        effectiveDate,
+        changeNote,
+        earlyReason: early ? earlyReason : undefined,
+        ...lock,
+      }),
+    onSuccess: (r) => {
+      setBlock(null);
+      refresh();
+      toast(r.alreadyApproved ? '이미 승인된 후보입니다.' : `승인했습니다 — v${r.resultVersion?.versionNum} 발행`, 'success');
+    },
+    onError: (err: any) => {
+      const body = err?.response?.data;
+      if (err?.response?.status === 409 && body?.reason) {
+        setBlock({ reason: body.reason, message: body.message });
+      } else {
+        if (err?.response?.status === 409) refresh();
+        toast(body?.message ?? '승인하지 못했습니다.', 'error');
+      }
+    },
+  });
+  const reject = useMutation({
+    mutationFn: () => amendmentsApi.reject(data.id, { reason: rejectReason, ...lock }),
+    onSuccess: () => {
+      refresh();
+      toast('반려했습니다. 시행 본문은 그대로입니다.', 'success');
+    },
+    onError: (err: any) => {
+      if (err?.response?.status === 409) refresh();
+      toast(err?.response?.data?.message ?? '반려하지 못했습니다.', 'error');
+    },
+  });
+  const regenerate = useMutation({
+    mutationFn: () => amendmentsApi.regenerate(data.id, effectiveDate),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['amendments'] });
+      if (r.candidateId && !r.unchanged) {
+        toast(r.created ? `${effectiveDate} 기준으로 새 후보를 만들었습니다.` : '그 기준의 후보가 이미 있어 그것을 엽니다.', 'success');
+        navigate(`/amendments/${r.candidateId}`);
+      } else {
+        toast('새로 만들 후보가 없습니다.', 'info');
+      }
+    },
+    onError: (err: any) => toast(err?.response?.data?.message ?? '다시 만들지 못했습니다.', 'error'),
+  });
+
+  const canApprove = !!effectiveDate && effectiveDate >= today && !!changeNote.trim() && (!early || !!earlyReason.trim());
+  const future = effectiveDate > today;
+  return (
+    <section className="card p-3 space-y-3" aria-labelledby="decision-title">
+      <h2 id="decision-title" className="text-sm font-semibold text-gray-800">
+        승인 · 반려 <span className="font-normal text-gray-500">(판 {data.revision})</span>
+      </h2>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label htmlFor="approve-effective" className="block text-xs text-gray-600 mb-1">
+            사내 규정 시행일 <span className="text-red-600">*</span>
+          </label>
+          <input
+            id="approve-effective"
+            type="date"
+            className="input"
+            min={today}
+            value={effectiveDate}
+            onChange={(e) => {
+              setEffectiveDate(e.target.value);
+              setBlock(null);
+            }}
+          />
+          <p className="text-[11px] text-gray-500 mt-1">
+            {lawDate ? `참고: 법령 시행일 ${lawDate}. ` : ''}오늘이나 그 뒤 — 소급 개정은 하지 않습니다.
+          </p>
+        </div>
+        <div>
+          <label htmlFor="approve-note" className="block text-xs text-gray-600 mb-1">
+            개정 사유 <span className="text-red-600">*</span>
+          </label>
+          <input
+            id="approve-note"
+            className="input"
+            maxLength={500}
+            value={changeNote}
+            onChange={(e) => setChangeNote(e.target.value)}
+          />
+          <button
+            type="button"
+            className="text-[11px] text-navy-700 hover:underline mt-1"
+            onClick={() => setChangeNote(`${data.event.lawName} ${data.event.label} 개정 반영`)}
+          >
+            사유 초안 넣기
+          </button>
+        </div>
+      </div>
+      {early && (
+        <div>
+          <label htmlFor="approve-early" className="block text-xs text-amber-800 mb-1">
+            법령 시행일({lawDate})보다 이르게 시행하는 이유 <span className="text-red-600">*</span>
+          </label>
+          <input id="approve-early" className="input" maxLength={500} value={earlyReason} onChange={(e) => setEarlyReason(e.target.value)} />
+        </div>
+      )}
+      {effectiveDate && effectiveDate >= today && (
+        <p className="text-xs text-gray-600">
+          승인하면 이 조문의 새 버전이 발행되고 <b>{effectiveDate}</b>부터 시행됩니다
+          {future ? ' — 그날 전까지 시점 조회는 지금 본문을 보여 줍니다' : ''}.
+        </p>
+      )}
+      {block && (
+        <div role="alert" className="rounded border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-800 space-y-1.5">
+          <p className="font-medium">{block.message}</p>
+          {block.reason === 'undated_history' ? (
+            <Link to={`/policies/${data.policy.id}`} className="underline">
+              규정 화면에서 시행일 보정하기
+            </Link>
+          ) : block.reason !== 'later_version' ? (
+            <button type="button" className="btn-secondary text-xs" disabled={regenerate.isPending} onClick={() => regenerate.mutate()}>
+              {regenerate.isPending ? '만드는 중…' : `${effectiveDate} 기준으로 다시 만들기`}
+            </button>
+          ) : null}
+        </div>
+      )}
+      <button type="button" className="btn-primary text-xs" disabled={!canApprove || approve.isPending} onClick={() => approve.mutate()}>
+        {approve.isPending ? '승인 중…' : '승인 — 후속 버전 발행'}
+      </button>
+
+      <div className="border-t border-gray-100 pt-3 space-y-2">
+        <label htmlFor="reject-reason" className="block text-xs text-gray-600">
+          반려 사유 <span className="text-red-600">*</span>
+        </label>
+        <textarea
+          id="reject-reason"
+          className="input min-h-[3.5rem]"
+          maxLength={1000}
+          placeholder="예: 우리 규정은 이미 법보다 긴 휴가를 주므로 개정이 필요 없다"
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+        />
+        <button type="button" className="btn-secondary text-xs" disabled={!rejectReason.trim() || reject.isPending} onClick={() => reject.mutate()}>
+          {reject.isPending ? '반려 중…' : '반려 — 발행하지 않음'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Actions({ data }: { data: AmendmentDetail }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -402,6 +601,11 @@ function Actions({ data }: { data: AmendmentDetail }) {
           {data.reviewState === 'review' && (
             <p className="text-xs text-amber-800">
               검토 중인 후보를 고치면 작성 상태로 돌아가고, 고친 판으로 검토를 다시 요청해야 합니다.
+            </p>
+          )}
+          {data.reviewState === 'rejected' && (
+            <p className="text-xs text-amber-800">
+              반려된 후보를 고치면 작성 상태로 돌아갑니다. 반려 사유와 고치기 전 내용은 이력에 남습니다.
             </p>
           )}
           {conflict && (
@@ -502,7 +706,17 @@ function Actions({ data }: { data: AmendmentDetail }) {
 }
 
 const STATE_CHANGE_LABEL = (from: string, to: string) =>
-  to === 'review' ? '검토 요청' : from === 'review' && to === 'draft' ? '검토 요청 취소(본문 손질)' : `${REVIEW_STATE_LABEL[from as 'draft']} → ${REVIEW_STATE_LABEL[to as 'draft']}`;
+  to === 'review'
+    ? '검토 요청'
+    : to === 'approved'
+      ? '승인 — 후속 버전 발행'
+      : to === 'rejected'
+        ? '반려'
+        : from === 'review' && to === 'draft'
+          ? '검토 요청 취소(본문 손질)'
+          : from === 'rejected' && to === 'draft'
+            ? '반려 뒤 손질 — 작성으로'
+            : `${REVIEW_STATE_LABEL[from as 'draft']} → ${REVIEW_STATE_LABEL[to as 'draft']}`;
 
 function HistoryCard({ history }: { history: AmendmentHistory }) {
   type Item = { at: string; key: string; node: React.ReactNode };

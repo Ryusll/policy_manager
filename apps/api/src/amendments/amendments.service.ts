@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { formatJo } from '../common/article-label';
-import { toDateOnlyString, todayDateOnly } from '../common/date-only';
+import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
+import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notify.types';
 import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
 import { impactReferenceDate } from '../law-changes/law-impact';
 import { labelFromNodeKey } from '../laws/law-rows';
@@ -15,9 +16,15 @@ import {
 import { diffLawText } from './amendment-text';
 import { generateRuleCandidate, RULES, RULESET_VERSION, TEMPLATES } from './amendment-rules';
 import { CANDIDATE_SELECT, currentState, presentCandidate } from './amendment-present';
-import { contentHash, hasSubstantiveChange } from './amendment-revision';
+import { contentHash, hasSubstantiveChange, historyFingerprint } from './amendment-revision';
 import { diffCandidate, relinkDiff, type AppliedRule } from './amendment-diff';
-import type { AmendmentListQueryDto, EditAmendmentDto, RequestReviewDto } from './amendments.dto';
+import type {
+  AmendmentListQueryDto,
+  ApproveAmendmentDto,
+  EditAmendmentDto,
+  RejectAmendmentDto,
+  RequestReviewDto,
+} from './amendments.dto';
 
 const SOURCE_SELECT = {
   id: true,
@@ -47,14 +54,42 @@ const OWNED_SELECT = {
   articleId: true,
   changeEventId: true,
   baseVersionId: true,
+  baseFingerprint: true,
   candidateContent: true,
   rationale: true,
+  generationMeta: true,
   revision: true,
   lockVersion: true,
   reviewState: true,
-  baseVersion: { select: { content: true } },
-  changeEvent: { select: { lawEffectiveDate: true } },
+  createdBy: true,
+  baseVersion: { select: { content: true, versionNum: true } },
+  changeEvent: {
+    select: {
+      lawEffectiveDate: true,
+      nodeKey: true,
+      beforeVersionKey: true,
+      afterVersionKey: true,
+      law: { select: { lawName: true } },
+      lawArticle: { select: { label: true } },
+    },
+  },
+  article: {
+    select: {
+      number: true,
+      branchNumber: true,
+      clauseNumber: true,
+      itemNumber: true,
+      title: true,
+      chapter: { select: { policy: { select: { id: true, code: true, title: true, metadata: true } } } },
+    },
+  },
 } satisfies Prisma.AmendmentCandidateSelect;
+
+type OwnedCandidate = Prisma.AmendmentCandidateGetPayload<{ select: typeof OWNED_SELECT }>;
+
+/** 승인을 막는 이유 — 화면이 원인별로 안내한다(코덱스 자문 결정 3) */
+type ApproveBlock = 'undated_history' | 'base_mismatch' | 'later_version' | 'history_changed';
+const blocked = (reason: ApproveBlock, message: string) => new ConflictException({ message, reason });
 
 /** "취업규칙 제28조제2항" — 근거의 연결 경로 표기. 사내 규정은 조·항·목이다(법령의 호와 다르다) */
 function articlePathLabel(policyTitle: string, a: ImpactedArticle['article']): string {
@@ -137,6 +172,8 @@ export class AmendmentsService {
       (item) => !opts.articleId || item.article.id === opts.articleId,
     );
     const rows: Prisma.AmendmentCandidateCreateManyInput[] = [];
+    // 기준 본문과 함께 그 조문의 발행 이력 지문을 고정한다(T-108) — 승인 때 다시 계산해 그 사이 다른 발행을 잡는다
+    const fps = await this.fingerprints(impacted.filter((i) => i.baseVersion).map((i) => i.article.id));
     for (const item of impacted) {
       if (!item.baseVersion) {
         result.skipped.push({
@@ -147,7 +184,7 @@ export class AmendmentsService {
         });
         continue;
       }
-      rows.push(this.buildRow(tenantId, event, item, asOfDate, opts.userId));
+      rows.push(this.buildRow(tenantId, event, item, asOfDate, opts.userId, fps.get(item.article.id)!));
     }
     if (!rows.length) return result;
 
@@ -205,8 +242,8 @@ export class AmendmentsService {
     });
 
     result.created = created;
-    const createdKeys = new Set(created.map((c) => `${c.articleId}/${c.baseVersionId}`));
-    const notCreated = rows.filter((r) => !createdKeys.has(`${r.articleId}/${r.baseVersionId}`));
+    const createdArticles = new Set(created.map((c) => c.articleId));
+    const notCreated = rows.filter((r) => !createdArticles.has(r.articleId));
     if (notCreated.length) {
       result.existing = await this.prisma.amendmentCandidate.findMany({
         where: {
@@ -214,7 +251,7 @@ export class AmendmentsService {
           changeEventId: event.id,
           generationMethod: 'rule',
           variant: RULESET_VERSION,
-          OR: notCreated.map((r) => ({ articleId: r.articleId, baseVersionId: r.baseVersionId })),
+          OR: notCreated.map((r) => ({ articleId: r.articleId, baseVersionId: r.baseVersionId, baseFingerprint: r.baseFingerprint })),
         },
         select: { id: true, articleId: true, baseVersionId: true, confidence: true, reviewFlags: true },
       });
@@ -303,6 +340,7 @@ export class AmendmentsService {
           id: true,
           articleId: true,
           baseVersionId: true,
+          baseFingerprint: true,
           reviewState: true,
           revision: true,
           candidateContent: true,
@@ -343,6 +381,7 @@ export class AmendmentsService {
     const current = await this.currentBaseIds(
       rows.map((r) => ({ articleId: r.articleId, lawEffectiveDate: r.changeEvent.lawEffectiveDate })),
     );
+    const fps = await this.fingerprints([...new Set(rows.map((r) => r.articleId))]);
     const creatorIds = [...new Set(rows.map((r) => r.createdBy).filter((v): v is string => !!v))];
     const creators = creatorIds.length
       ? await this.prisma.user.findMany({ where: { tenantId, id: { in: creatorIds } }, select: { id: true, name: true } })
@@ -376,7 +415,11 @@ export class AmendmentsService {
             title: article.title,
           },
           baseVersion: { id: r.baseVersionId, versionNum: r.baseVersion.versionNum },
-          isCurrentBase: current.get(this.baseKey(r.articleId, e.lawEffectiveDate)) === r.baseVersionId,
+          ...this.staleness(
+            r,
+            current.get(this.baseKey(r.articleId, e.lawEffectiveDate)) ?? null,
+            fps.get(r.articleId) ?? null,
+          ),
           event: {
             id: e.id,
             lawId: e.lawId,
@@ -502,7 +545,12 @@ export class AmendmentsService {
       );
     }
     const current = await this.currentBaseIds([{ articleId: cand.articleId, lawEffectiveDate: cand.changeEvent.lawEffectiveDate }]);
-    const baseChanged = current.get(this.baseKey(cand.articleId, cand.changeEvent.lawEffectiveDate)) !== cand.baseVersionId;
+    const fps = await this.fingerprints([cand.articleId]);
+    const baseChanged = !this.staleness(
+      cand,
+      current.get(this.baseKey(cand.articleId, cand.changeEvent.lawEffectiveDate)) ?? null,
+      fps.get(cand.articleId) ?? null,
+    ).isCurrentBase;
 
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.amendmentCandidate.updateMany({
@@ -539,9 +587,10 @@ export class AmendmentsService {
    * 옛 후보는 그대로 두고(사람이 고친 것을 옮기지 않는다) 둘은 같은 변경·조문의 후보로 이어진다.
    * 지금 기준 본문의 후보가 이미 있으면 그것을 돌려준다.
    */
-  async regenerate(tenantId: string, id: string, userId: string) {
+  async regenerate(tenantId: string, id: string, userId: string, asOf?: string) {
     const cand = await this.findOwned(tenantId, id);
-    const r = await this.generateForEvent(tenantId, cand.changeEventId, { userId, articleId: cand.articleId });
+    // asOf — 승인하려던 시행일로 다시 만들 때(T-108). 그 날 시행 중인 본문이 새 후보의 기준 본문이 된다
+    const r = await this.generateForEvent(tenantId, cand.changeEventId, { userId, articleId: cand.articleId, asOf });
     const hit = [...r.created, ...r.existing].find((c) => c.articleId === cand.articleId) ?? null;
     return {
       candidateId: hit?.id ?? null,
@@ -552,6 +601,341 @@ export class AmendmentsService {
       noSubstantiveChange: r.noSubstantiveChange,
       unresolvable: r.unresolvable,
     };
+  }
+
+  /**
+   * 승인 → 후속 버전 발행 (T-108, 특허 청구항 1 ⑦·6, 도 12). 관리자만(일반 조문 승인과 같다).
+   *
+   * 결정(사용자 지시로 코덱스 자문):
+   * - 검토 중인 후보만, 그리고 검토를 요청한 **그 판**만 승인한다. 화면이 본 판·잠금 버전이 다르면 409
+   * - 사내 규정 시행일은 필수이고 소급하지 않는다(오늘 이후). 법령 시행일보다 이르면 이유가 있어야 한다
+   * - 본문은 그 판(바뀌지 않는 기록)을 그대로 발행한다. 기준 본문과 (공백 말고) 같으면 400 — "개정 불필요"는 반려로
+   * - 조문 행을 잠그고 다시 확인한다: 시행일 미기록 이력 / 그 시행일의 시점 조회 결과가 기준 본문인가 / 그보다 늦은
+   *   시행본이 있는가 / 발행 이력 지문이 그대로인가 — 하나라도 어긋나면 원인을 담아 409(다시 만들어 검토)
+   * - 같은 요청을 다시 보내면(응답 유실) 기존 결과를 돌려주고, 다른 시행일·사유면 409
+   * - 버전 생성·후보 전환·상태 기록·감사 기록·알림은 한 트랜잭션
+   */
+  async approve(tenantId: string, id: string, userId: string, dto: ApproveAmendmentDto) {
+    const changeNote = dto.changeNote?.trim();
+    if (!changeNote) throw new BadRequestException('개정 사유를 입력하세요.');
+    const effective = parseDateOnly(dto.effectiveDate);
+    if (!effective) throw new BadRequestException('사내 규정 시행일은 실제로 있는 날짜(YYYY-MM-DD)여야 합니다.');
+    const today = todayDateOnly();
+    const cand = await this.findOwned(tenantId, id);
+
+    if (cand.reviewState === 'approved') {
+      // 응답을 못 받고 다시 누른 경우 — 같은 요청이면 이미 발행한 결과를 돌려준다(버전·감사·알림을 또 만들지 않는다)
+      const v = await this.prisma.articleVersion.findUnique({
+        where: { sourceCandidateId: id },
+        select: { effectiveDate: true, changeNote: true },
+      });
+      const same =
+        !!v &&
+        dto.expectedRevision === cand.revision &&
+        !!v.effectiveDate &&
+        toDateOnlyString(v.effectiveDate) === toDateOnlyString(effective) &&
+        v.changeNote === changeNote;
+      if (same) return { ...(await this.get(tenantId, id)), alreadyApproved: true };
+      throw new ConflictException('이미 승인된 후보입니다 — 다른 시행일·사유로 다시 승인할 수 없습니다.');
+    }
+    if (cand.reviewState !== 'review') {
+      throw new BadRequestException('검토 중인 후보만 승인할 수 있습니다 — 먼저 검토를 요청하세요.');
+    }
+    this.assertLock(cand, dto);
+    if (effective.getTime() < today.getTime()) {
+      throw new BadRequestException('사내 규정 시행일은 오늘이나 그 뒤여야 합니다 — 소급 개정은 하지 않습니다.');
+    }
+    const lawEffective = cand.changeEvent.lawEffectiveDate;
+    const earlyReason = dto.earlyReason?.trim() || null;
+    if (lawEffective && effective.getTime() < lawEffective.getTime() && !earlyReason) {
+      throw new BadRequestException(
+        `사내 규정 시행일이 법령 시행일(${toDateOnlyString(lawEffective)})보다 이릅니다 — 그렇게 하는 이유를 적어 주세요.`,
+      );
+    }
+    const request = await this.prisma.amendmentStateChange.findFirst({
+      where: { candidateId: id, tenantId, toState: 'review' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, revision: true, actorId: true },
+    });
+    if (!request || request.revision !== cand.revision) {
+      throw new ConflictException('검토를 요청한 판과 지금 판이 다릅니다 — 다시 검토를 요청하세요.');
+    }
+    const rev = await this.prisma.amendmentRevision.findUnique({
+      where: { candidateId_revision: { candidateId: id, revision: cand.revision } },
+      select: { id: true, content: true, contentHash: true, diff: true },
+    });
+    if (!rev || rev.content !== cand.candidateContent || rev.contentHash !== contentHash(rev.content)) {
+      throw new ConflictException('판 기록이 후보 본문과 맞지 않습니다 — 관리자에게 알려 주세요.');
+    }
+    if (!hasSubstantiveChange(cand.baseVersion.content, rev.content)) {
+      throw new BadRequestException('본문이 기준 본문과 같습니다 — 개정이 필요 없으면 반려로 닫으세요.');
+    }
+    const E = toDateOnlyString(effective);
+
+    await this.prisma.$transaction(async (tx) => {
+      // 조문 단위로 줄 세운다 — 같은 조문의 다른 후보 승인·일반 승인과 겹치면 앞선 개정을 덮어쓴다
+      await tx.$queryRaw`SELECT id FROM articles WHERE id = ${cand.articleId} FOR UPDATE`;
+      const history = await tx.articleVersion.findMany({
+        where: { articleId: cand.articleId },
+        select: { id: true, status: true, effectiveDate: true, versionNum: true },
+      });
+      const issued = history.filter((v) => v.status === 'published' || v.status === 'archived');
+      if (issued.some((v) => !v.effectiveDate)) {
+        throw blocked('undated_history', '시행일이 기록되지 않은 시행본이 있습니다 — 규정 화면에서 시행일을 먼저 보정하세요.');
+      }
+      const asOf = await tx.articleVersion.findFirst({
+        where: { articleId: cand.articleId, ...asOfVersionWhere(effective) },
+        orderBy: AS_OF_VERSION_ORDER,
+        select: { id: true },
+      });
+      if (asOf?.id !== cand.baseVersionId) {
+        throw blocked(
+          'base_mismatch',
+          `${E}에 시행 중일 본문이 이 후보의 기준 본문(v${cand.baseVersion.versionNum})이 아닙니다 — 이 시행일 기준으로 다시 만들어 검토하세요.`,
+        );
+      }
+      if (issued.some((v) => v.effectiveDate!.getTime() > effective.getTime())) {
+        throw blocked('later_version', `${E}보다 늦게 시행되는 버전이 이미 있습니다 — 그 버전과 함께 정리한 뒤 승인하세요.`);
+      }
+      if (cand.baseFingerprint && historyFingerprint(history) !== cand.baseFingerprint) {
+        throw blocked(
+          'history_changed',
+          '후보를 만든 뒤 이 조문에 다른 발행·폐지·시행일 보정이 있었습니다 — 다시 만들어 검토하세요.',
+        );
+      }
+
+      const updated = await tx.amendmentCandidate.updateMany({
+        where: { id, tenantId, reviewState: 'review', revision: cand.revision, lockVersion: cand.lockVersion },
+        data: { reviewState: 'approved', lockVersion: { increment: 1 } },
+      });
+      if (updated.count !== 1) throw new ConflictException(LOCK_MESSAGE);
+
+      const now = new Date();
+      await tx.articleVersion.updateMany({
+        where: { articleId: cand.articleId, status: 'published' },
+        data: { status: 'archived' },
+      });
+      const version = await tx.articleVersion.create({
+        data: {
+          articleId: cand.articleId, // 조문 식별자를 유지한다 — 연결·이력이 그대로 이어진다(청구항 1)
+          versionNum: Math.max(0, ...history.map((v) => v.versionNum)) + 1,
+          content: rev.content,
+          status: 'published',
+          effectiveDate: effective,
+          changeNote,
+          approvedBy: userId,
+          approvedAt: now,
+          publishedAt: now,
+          createdBy: userId,
+          changeEventId: cand.changeEventId,
+          sourceCandidateId: id,
+        },
+        select: { id: true, versionNum: true },
+      });
+      const decision = await tx.amendmentStateChange.create({
+        data: {
+          tenantId,
+          candidateId: id,
+          fromState: 'review',
+          toState: 'approved',
+          revision: cand.revision,
+          reason: earlyReason ? `${changeNote}\n(법령 시행일보다 이른 시행: ${earlyReason})` : changeNote,
+          actorId: userId,
+        },
+      });
+
+      // 감사 기록 — 발행 버전·변경 이벤트·후보·비교 정보·승인자를 한 줄에(청구항 6), 개정 당시 근거도 함께(PAT-20)
+      const rationale = (cand.rationale ?? {}) as { link?: unknown };
+      const meta = (cand.generationMeta ?? {}) as { engine?: unknown; rules?: unknown; templates?: unknown };
+      const revDiff = (rev.diff ?? {}) as { changes?: unknown[]; unexplained?: number };
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId,
+          action: 'amendment.approve',
+          entityType: 'amendment_candidate',
+          entityId: id,
+          details: {
+            version: {
+              id: version.id,
+              versionNum: version.versionNum,
+              contentHash: rev.contentHash,
+              effectiveDate: E,
+              publishedAt: now.toISOString(),
+            },
+            changeEvent: {
+              id: cand.changeEventId,
+              law: cand.changeEvent.law.lawName,
+              label: cand.changeEvent.lawArticle?.label ?? labelFromNodeKey(cand.changeEvent.nodeKey),
+              lawEffectiveDate: dateOnly(lawEffective),
+              beforeVersionKey: cand.changeEvent.beforeVersionKey,
+              afterVersionKey: cand.changeEvent.afterVersionKey,
+            },
+            candidate: {
+              id,
+              revision: cand.revision,
+              revisionHash: rev.contentHash,
+              reviewRequestId: request.id,
+              decisionId: decision.id,
+              baseVersionId: cand.baseVersionId,
+              baseFingerprint: cand.baseFingerprint,
+            },
+            // 비교 정보는 승인한 판(바뀌지 않는 기록)의 것 — 기준 본문 대 승인 본문
+            comparison: {
+              revisionId: rev.id,
+              changes: revDiff.changes?.length ?? 0,
+              unexplained: revDiff.unexplained ?? 0,
+            },
+            changeNote,
+            earlyReason,
+            evidence: { link: rationale.link ?? null, engine: meta.engine ?? null, rules: meta.rules ?? null, templates: meta.templates ?? null },
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      await this.notifyDecision(tx, tenantId, cand, {
+        kind: 'approved',
+        actorId: userId,
+        requesterId: request.actorId,
+        versionId: version.id,
+        effectiveDate: effective,
+        today,
+        note: changeNote,
+      });
+    });
+    return this.get(tenantId, id);
+  }
+
+  /** 반려 (T-108, 도 12 단계 1280) — 검토 중인 후보만, 관리자만, 사유 필수. 발행본은 그대로 둔다 */
+  async reject(tenantId: string, id: string, userId: string, dto: RejectAmendmentDto) {
+    const reason = dto.reason?.trim();
+    if (!reason) throw new BadRequestException('반려 사유를 입력하세요.');
+    const cand = await this.findOwned(tenantId, id);
+    if (cand.reviewState !== 'review') throw new BadRequestException('검토 중인 후보만 반려할 수 있습니다.');
+    this.assertLock(cand, dto);
+    const request = await this.prisma.amendmentStateChange.findFirst({
+      where: { candidateId: id, tenantId, toState: 'review' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, actorId: true },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.amendmentCandidate.updateMany({
+        where: { id, tenantId, reviewState: 'review', revision: cand.revision, lockVersion: cand.lockVersion },
+        data: { reviewState: 'rejected', lockVersion: { increment: 1 } },
+      });
+      if (updated.count !== 1) throw new ConflictException(LOCK_MESSAGE);
+      const decision = await tx.amendmentStateChange.create({
+        data: { tenantId, candidateId: id, fromState: 'review', toState: 'rejected', revision: cand.revision, reason, actorId: userId },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId,
+          action: 'amendment.reject',
+          entityType: 'amendment_candidate',
+          entityId: id,
+          details: {
+            revision: cand.revision,
+            contentHash: contentHash(cand.candidateContent),
+            reason,
+            reviewRequestId: request?.id ?? null,
+            decisionId: decision.id,
+            changeEventId: cand.changeEventId,
+          },
+        },
+      });
+      await this.notifyDecision(tx, tenantId, cand, {
+        kind: 'rejected',
+        actorId: userId,
+        requesterId: request?.actorId ?? null,
+        note: reason,
+      });
+    });
+    return this.get(tenantId, id);
+  }
+
+  /**
+   * 결정 알림 — 같은 트랜잭션에서 저장한다. 승인이면 규정에 지정한 개정 알림 수신자에게 개정 시행(미래면 시행 예정)
+   * 알림, 검토를 요청한 사람·후보를 만든 사람에게 결과 알림. 반려면 요청자·생성자에게만. 결정한 사람은 빼고, 한
+   * 사람에게 한 건만 간다.
+   */
+  private async notifyDecision(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    cand: OwnedCandidate,
+    d: {
+      kind: 'approved' | 'rejected';
+      actorId: string;
+      requesterId: string | null;
+      note: string;
+      versionId?: string;
+      effectiveDate?: Date;
+      today?: Date;
+    },
+  ) {
+    const policy = cand.article.chapter.policy;
+    const articleLabel = `${formatJo(cand.article.number, cand.article.branchNumber)}${cand.article.clauseNumber ? `제${cand.article.clauseNumber}항` : ''}${cand.article.itemNumber ? `제${cand.article.itemNumber}목` : ''}`;
+    const lawLabel = `${cand.changeEvent.law.lawName} ${cand.changeEvent.lawArticle?.label ?? labelFromNodeKey(cand.changeEvent.nodeKey)}`;
+    const inTenant = async (ids: string[]) =>
+      ids.length
+        ? (await tx.user.findMany({ where: { tenantId, id: { in: ids } }, select: { id: true } })).map((u) => u.id)
+        : [];
+
+    const notified = new Set<string>([d.actorId]);
+    const rows: Prisma.UserNotificationCreateManyInput[] = [];
+    const E = d.effectiveDate ? toDateOnlyString(d.effectiveDate) : null;
+    const future = !!(d.effectiveDate && d.today && d.effectiveDate.getTime() > d.today.getTime());
+
+    // 요청자·생성자 — 결과 알림(개정 검토 화면으로)
+    for (const uid of await inTenant([d.requesterId, cand.createdBy].filter((v): v is string => !!v))) {
+      if (notified.has(uid)) continue;
+      notified.add(uid);
+      rows.push({
+        tenantId,
+        userId: uid,
+        kind: 'law_amendment',
+        title: `[개정 후보 ${d.kind === 'approved' ? '승인' : '반려'}] ${policy.title} ${articleLabel}`,
+        body: [
+          `법령 개정: ${lawLabel}`,
+          d.kind === 'approved' ? `${future ? '발행 완료 · 시행 예정' : '시행'} ${E}` : null,
+          `${d.kind === 'approved' ? '개정 사유' : '반려 사유'}: ${d.note}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        link: `/amendments/${cand.id}`,
+      });
+    }
+
+    // 승인이면 규정에 지정한 개정 알림 수신자에게 — 일반 조문 승인과 같은 대상(revisionNotify)
+    if (d.kind === 'approved') {
+      const cfg = parseRevisionNotifyFromMetadata(policy.metadata);
+      if (cfg.enabled) {
+        const ids = new Set<string>(cfg.userIds);
+        if (cfg.groupIds.length) {
+          const members = await tx.notificationGroupMember.findMany({
+            where: { groupId: { in: cfg.groupIds }, group: { tenantId } },
+            select: { userId: true },
+          });
+          members.forEach((m) => ids.add(m.userId));
+        }
+        for (const uid of await inTenant([...ids])) {
+          if (notified.has(uid)) continue;
+          notified.add(uid);
+          rows.push({
+            tenantId,
+            userId: uid,
+            kind: 'policy_revision',
+            title: future ? `[개정 발행 · ${E} 시행 예정] ${policy.title}` : `[개정 시행] ${policy.title}`,
+            body: [`규정: ${policy.code} · ${policy.title}`, `조문: ${articleLabel}`, `개정 사유: ${d.note}`, `법령 개정 반영: ${lawLabel}`].join('\n'),
+            policyId: policy.id,
+            articleId: cand.articleId,
+            versionId: d.versionId,
+          });
+        }
+      }
+    }
+    if (rows.length) await tx.userNotification.createMany({ data: rows });
   }
 
   /** 판과 상태 전환 이력 — 판마다 직전 판 대비 바뀐 곳을 함께 */
@@ -613,6 +997,32 @@ export class AmendmentsService {
 
   private baseKey(articleId: string, lawEffectiveDate: Date | null) {
     return `${articleId}|${toDateOnlyString(impactReferenceDate(lawEffectiveDate, todayDateOnly()))}`;
+  }
+
+  /** 조문별 발행 이력 지문(T-108) */
+  private async fingerprints(articleIds: string[], db: Prisma.TransactionClient = this.prisma) {
+    if (!articleIds.length) return new Map<string, string>();
+    const versions = await db.articleVersion.findMany({
+      where: { articleId: { in: articleIds }, status: { in: ['published', 'archived'] } },
+      select: { id: true, articleId: true, status: true, effectiveDate: true, versionNum: true },
+    });
+    return new Map(articleIds.map((aid) => [aid, historyFingerprint(versions.filter((v) => v.articleId === aid))]));
+  }
+
+  /**
+   * 기준 본문이 그 사이 바뀌었나 — 지금 다시 만들면 고를 기준 본문이 다르거나(`base_changed`), 기준 본문은 같아도
+   * 발행 이력이 바뀌었으면(`history_changed` — 다른 버전 발행·폐지·시행일 보정) 낡은 후보다.
+   */
+  private staleness(
+    c: { baseVersionId: string; baseFingerprint: string | null },
+    currentBaseId: string | null,
+    currentFingerprint: string | null,
+  ): { isCurrentBase: boolean; staleReason: 'base_changed' | 'history_changed' | null } {
+    if (currentBaseId !== c.baseVersionId) return { isCurrentBase: false, staleReason: 'base_changed' };
+    if (c.baseFingerprint && currentFingerprint && currentFingerprint !== c.baseFingerprint) {
+      return { isCurrentBase: false, staleReason: 'history_changed' };
+    }
+    return { isCurrentBase: true, staleReason: null };
   }
 
   /**
@@ -679,6 +1089,17 @@ export class AmendmentsService {
 
     const current = await this.currentBaseIds([{ articleId: row.articleId, lawEffectiveDate: e.lawEffectiveDate }]);
     const currentBaseId = current.get(this.baseKey(row.articleId, e.lawEffectiveDate)) ?? null;
+    const fps = await this.fingerprints([row.articleId]);
+    const stale = this.staleness(row, currentBaseId, fps.get(row.articleId) ?? null);
+    const decision = await this.prisma.amendmentStateChange.findFirst({
+      where: { candidateId: id, tenantId, toState: { in: ['approved', 'rejected'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { toState: true, revision: true, reason: true, actorId: true, createdAt: true },
+    });
+    const resultVersion = await this.prisma.articleVersion.findUnique({
+      where: { sourceCandidateId: id },
+      select: { id: true, versionNum: true, effectiveDate: true, publishedAt: true },
+    });
     const currentBase =
       currentBaseId && currentBaseId !== row.baseVersionId
         ? await this.prisma.articleVersion.findUnique({
@@ -699,12 +1120,26 @@ export class AmendmentsService {
       orderBy: { createdAt: 'desc' },
       select: { id: true, reviewState: true, revision: true, createdAt: true, baseVersion: { select: { versionNum: true } } },
     });
-    const names = await this.userNames(tenantId, [row.createdBy, reviewRequest?.actorId]);
+    const names = await this.userNames(tenantId, [row.createdBy, reviewRequest?.actorId, decision?.actorId]);
 
     return {
       ...presentCandidate(rest),
       createdByName: row.createdBy ? names.get(row.createdBy) ?? null : null,
-      isCurrentBase: currentBaseId === row.baseVersionId,
+      ...stale,
+      /** 마지막 결정(승인·반려) — 누가, 언제, 어느 판에, 왜 */
+      decision: decision
+        ? {
+            state: decision.toState,
+            revision: decision.revision,
+            reason: decision.reason,
+            at: decision.createdAt,
+            by: decision.actorId ? { id: decision.actorId, name: names.get(decision.actorId) ?? null } : null,
+          }
+        : null,
+      /** 승인으로 발행된 후속 버전 */
+      resultVersion: resultVersion
+        ? { ...resultVersion, effectiveDate: dateOnly(resultVersion.effectiveDate) }
+        : null,
       /** 지금 다시 만들면 고를 기준 본문 — 이 후보의 제1 조문과 다를 때만(그 사이 조문이 개정됐다) */
       currentBase: currentBase
         ? { ...currentBase, effectiveDate: dateOnly(currentBase.effectiveDate) }
@@ -754,6 +1189,7 @@ export class AmendmentsService {
     item: ImpactedArticle,
     asOfDate: Date,
     userId: string | null,
+    baseFingerprint: string,
   ): Prisma.AmendmentCandidateCreateManyInput {
     const base = item.baseVersion!;
     const r = generateRuleCandidate({
@@ -816,6 +1252,7 @@ export class AmendmentsService {
         afterVersionKey: event.afterVersionKey,
         articleId: item.article.id,
         baseVersionId: base.id,
+        baseFingerprint,
         lawLinkId: item.linkId,
         asOf,
       },
@@ -825,6 +1262,7 @@ export class AmendmentsService {
       tenantId,
       articleId: item.article.id,
       baseVersionId: base.id,
+      baseFingerprint,
       changeEventId: event.id,
       lawLinkId: item.linkId,
       candidateContent: r.content,

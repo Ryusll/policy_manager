@@ -70,9 +70,25 @@ export type AmendmentCandidate = {
   diff: { parts: CandidateDiffPart[]; changes: CandidateChange[]; unexplained: number };
 };
 
+export type StaleReason = 'base_changed' | 'history_changed' | null;
+
 export type AmendmentDetail = AmendmentCandidate & {
   createdByName: string | null;
   isCurrentBase: boolean;
+  /** base_changed: 지금 다시 만들면 다른 기준 본문 / history_changed: 기준 본문은 같아도 그 사이 다른 발행·폐지·시행일 보정 */
+  staleReason: StaleReason;
+  /** 마지막 결정(승인·반려) */
+  decision: {
+    state: 'approved' | 'rejected';
+    revision: number;
+    reason: string | null;
+    at: string;
+    by: { id: string; name: string | null } | null;
+  } | null;
+  /** 승인으로 발행된 후속 버전 */
+  resultVersion: { id: string; versionNum: number; effectiveDate: string | null; publishedAt: string | null } | null;
+  /** 같은 승인을 다시 보냈을 때(응답 유실) — 새로 발행하지 않고 기존 결과 */
+  alreadyApproved?: boolean;
   /** 지금 다시 만들면 고를 기준 본문 — 이 후보의 제1 조문과 다를 때만 */
   currentBase: { id: string; versionNum: number; effectiveDate: string | null; content: string } | null;
   reviewRequest: {
@@ -210,6 +226,7 @@ export type AmendmentListItem = {
   baseVersion: { id: string; versionNum: number };
   /** false 면 후보를 만든 뒤 조문이 개정돼 기준 본문이 바뀌었다 */
   isCurrentBase: boolean;
+  staleReason: StaleReason;
   event: { id: string; lawId: string; lawName: string; label: string; changeType: string; lawEffectiveDate: string | null };
 };
 
@@ -235,5 +252,23 @@ export const amendmentsApi = {
     id: string,
     body: { reason?: string; expectedRevision: number; expectedLockVersion: number },
   ): Promise<AmendmentDetail> => client.post(`/amendments/${id}/review`, body).then((r) => r.data),
-  regenerate: (id: string): Promise<RegenerateResult> => client.post(`/amendments/${id}/regenerate`).then((r) => r.data),
+  regenerate: (id: string, asOf?: string): Promise<RegenerateResult> =>
+    client.post(`/amendments/${id}/regenerate`, asOf ? { asOf } : {}).then((r) => r.data),
+  approve: (
+    id: string,
+    body: {
+      effectiveDate: string;
+      changeNote: string;
+      earlyReason?: string;
+      expectedRevision: number;
+      expectedLockVersion: number;
+    },
+  ): Promise<AmendmentDetail> => client.post(`/amendments/${id}/approve`, body).then((r) => r.data),
+  reject: (
+    id: string,
+    body: { reason: string; expectedRevision: number; expectedLockVersion: number },
+  ): Promise<AmendmentDetail> => client.post(`/amendments/${id}/reject`, body).then((r) => r.data),
 };
+
+/** 승인을 막은 이유(409 의 reason) — 화면 안내용 */
+export type ApproveBlock = 'undated_history' | 'base_mismatch' | 'later_version' | 'history_changed';

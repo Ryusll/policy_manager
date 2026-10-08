@@ -152,17 +152,21 @@ export class VersionsService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // 개정 후보 승인(T-108)과 같은 조문 잠금 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게 줄 세운다
+      await tx.$queryRaw`SELECT id FROM articles WHERE id = ${version.articleId} FOR UPDATE`;
       await tx.articleVersion.updateMany({
         where: { articleId: version.articleId, status: 'published' },
         data: { status: 'archived' },
       });
 
+      const now = new Date();
       return tx.articleVersion.update({
         where: { id: versionId },
         data: {
           status: 'published',
           approvedBy: userId,
-          approvedAt: new Date(),
+          approvedAt: now,
+          publishedAt: now,
           effectiveDate: effective,
           changeNote: reason,
         },
@@ -282,7 +286,7 @@ export class VersionsService {
       ...targets.map((a) =>
         this.prisma.articleVersion.update({
           where: { id: a.versions[0].id },
-          data: { status: 'published', approvedBy: userId, approvedAt, effectiveDate: effective, changeNote: reason },
+          data: { status: 'published', approvedBy: userId, approvedAt, publishedAt: approvedAt, effectiveDate: effective, changeNote: reason },
         }),
       ),
       ...(firstPublication

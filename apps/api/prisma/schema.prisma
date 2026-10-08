@@ -376,11 +376,20 @@ model ArticleVersion {
   createdBy     String?       @map("created_by")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
+  /// 발행일 — 시스템에서 시행본으로 발행한 시각(T-108, 특허 청구항 7). 시행일(effectiveDate)·법령 시행일과
+  /// 다르다. 시점 조회의 기준은 여전히 시행일이다. T-108 이전에 발행된 버전은 비어 있다(보정은 T-111)
+  publishedAt   DateTime?     @map("published_at")
+  /// 이 버전을 낳은 법령 변경 이벤트 — 개정 후보 승인으로 발행됐을 때만(T-108)
+  changeEventId String?       @map("change_event_id")
+  /// 이 버전을 낳은 개정 후보 — 승인 이력의 원천(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다
+  sourceCandidateId String?   @unique @map("source_candidate_id")
 
   article        Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
   variableUsages VariableUsage[]
   /// 이 버전을 제1 조문(기준 발행본)으로 삼은 개정 후보(T-106)
   amendmentBases AmendmentCandidate[] @relation("AmendmentBase")
+  changeEvent     LawChangeEvent?     @relation(fields: [changeEventId], references: [id], onDelete: SetNull)
+  sourceCandidate AmendmentCandidate? @relation("AmendmentResult", fields: [sourceCandidateId], references: [id], onDelete: SetNull)
 
   /// 시점 조회: 조문별로 "기준일 이전 시행분 중 가장 최근" 버전을 찾는다
   @@index([articleId, effectiveDate])
@@ -821,6 +830,8 @@ model LawChangeEvent {
   law        Law         @relation(fields: [lawId], references: [id], onDelete: Cascade)
   lawArticle LawArticle? @relation(fields: [lawArticleId], references: [id], onDelete: SetNull)
   candidates AmendmentCandidate[]
+  /// 이 변경으로 발행된 사내 조문 버전(T-108)
+  versions   ArticleVersion[]
 
   /// 조문 상세 이력, 영향 분석(T-105)의 "이 법령조항 최근 변경" 조회
   @@index([lawArticleId, detectedAt])
@@ -906,6 +917,9 @@ model AmendmentCandidate {
   articleId     String  @map("article_id")
   /// 제1 조문 — 만들 때의 기준 발행본. 그 뒤 새 버전이 시행돼도 바꾸지 않는다
   baseVersionId String  @map("base_version_id")
+  /// 만들 때 그 조문의 발행 이력 지문 — 시행본·폐지본의 id·상태·시행일·버전 번호(T-108). 승인 때 다시 계산해
+  /// 다르면 그 사이 다른 발행이 있었다는 뜻이라 막는다. T-108 이전 후보는 비어 있다
+  baseFingerprint String? @map("base_fingerprint")
   changeEventId String  @map("change_event_id")
   /// 영향을 찾은 연결. 연결이 지워져도 후보는 남는다(근거는 rationale 에 스냅샷) — 법령조항이
   /// 개정으로 사라지면 연결이 cascade 로 지워지는데, 그때 동기화가 막히면 안 된다
@@ -948,9 +962,13 @@ model AmendmentCandidate {
 
   revisions    AmendmentRevision[]
   stateChanges AmendmentStateChange[]
+  /// 승인으로 발행된 후속 버전(T-108) — ArticleVersion.sourceCandidateId 의 역관계
+  resultVersion ArticleVersion? @relation("AmendmentResult")
 
-  /// 같은 이벤트·조문·기준 발행본·방식·개정안은 하나 — 자동 생성과 버튼이 겹쳐도 중복이 안 생긴다
-  @@unique([tenantId, changeEventId, articleId, baseVersionId, generationMethod, variant])
+  /// 같은 이벤트·조문·기준 발행본·발행 이력·방식·개정안은 하나 — 자동 생성과 버튼이 겹쳐도 중복이 안 생긴다.
+  /// 발행 이력 지문이 들어간 것은, 기준 본문은 같아도 그 사이 다른 발행이 있었으면 "다시 만들기"가 새 후보를
+  /// 만들게 하려는 것이다(같은 낡은 후보만 되돌려 주지 않게)
+  @@unique([tenantId, changeEventId, articleId, baseVersionId, baseFingerprint, generationMethod, variant])
   @@index([tenantId, reviewState, createdAt])
   @@index([tenantId, articleId])
   @@index([changeEventId])

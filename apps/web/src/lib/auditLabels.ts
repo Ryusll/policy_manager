@@ -29,6 +29,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'amendment.generate': '개정 후보 생성',
   'amendment.edit': '개정 후보 손질',
   'amendment.request_review': '개정 후보 검토 요청',
+  'amendment.approve': '개정 후보 승인(후속 버전 발행)',
+  'amendment.reject': '개정 후보 반려',
   'version.archive': '게시본 폐지',
   'template.create': '템플릿 생성',
   'template.update': '템플릿 수정',
