@@ -58,6 +58,17 @@ export type ReparseItem = {
   decidedBy: string | null;
   decidedAt: string | null;
   diff: { value: string; added?: boolean; removed?: boolean }[] | null;
+  /** 반영·승인의 결과(T-110 ②) */
+  outcome: {
+    action: 'amend' | 'structure' | 'chapter' | 'create' | 'row' | 'repeal' | 'same' | 'hold' | 'keep' | 'undecided';
+    versionId?: string;
+    articleId?: string;
+    status?: 'planned' | 'done' | 'deferred';
+    repealedOn?: string;
+    released?: { articleId: string };
+  } | null;
+  /** 이 항목이 만든 묶음 버전 */
+  version: { id: string; articleId: string; versionNum: number; status: string; content: string; structure: unknown } | null;
 };
 
 export type ReparseChapterChange = {
@@ -71,8 +82,8 @@ export type ReparseReview = {
   policyId: string;
   sessionId: string | null;
   sourceName: string;
-  /** open | superseded | applied */
-  status: string;
+  /** open | superseded | applied(반영 — 묶음 초안) | submitted(묶음 검토 요청) | approved | rejected */
+  status: 'open' | 'superseded' | 'applied' | 'submitted' | 'approved' | 'rejected';
   algorithm: string;
   normalizer: string;
   summary: {
@@ -83,6 +94,21 @@ export type ReparseReview = {
   };
   createdBy: string | null;
   createdAt: string;
+  /** 반영 계획 — 승인 때 만들 장·절·새 조문, 장 번호·제목 변경, 폐지 */
+  plan: {
+    rowUpdates?: unknown[];
+    chapters: { create: { key: string; number: number; title: string }[]; update: { id: string; number: number; title: string }[] };
+    sections: { create: unknown[]; update: unknown[] };
+    newArticles: { itemId: string; number: number; title: string }[];
+    repeals: { itemId: string; articleId: string }[];
+  } | null;
+  appliedAt: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  effectiveDate: string | null;
+  changeNote: string | null;
+  rejectedAt: string | null;
+  rejectReason: string | null;
   policy: { id: string; code: string; title: string };
   /** 비교한 뒤 규정이 바뀌었다(개정·재정렬 등) */
   stale: boolean;
@@ -113,7 +139,55 @@ export const reparseApi = {
     client.patch(`/reparse-reviews/${id}/decisions`, { items }).then((r) => r.data),
   listForPolicy: (policyId: string): Promise<ReparseReviewRow[]> =>
     client.get(`/policies/${policyId}/reparse-reviews`).then((r) => r.data),
+  /** 반영 — 기존 조문의 묶음 초안만 만든다(지금 규정은 그대로). 새 조문·장은 승인 때 */
+  apply: (id: string): Promise<ReparseReview> => client.post(`/reparse-reviews/${id}/apply`).then((r) => r.data),
+  submit: (id: string): Promise<ReparseReview> => client.post(`/reparse-reviews/${id}/submit`).then((r) => r.data),
+  approve: (id: string, data: { effectiveDate: string; changeNote: string }): Promise<ReparseReview> =>
+    client.post(`/reparse-reviews/${id}/approve`, data).then((r) => r.data),
+  reject: (id: string, reason: string): Promise<ReparseReview> =>
+    client.post(`/reparse-reviews/${id}/reject`, { reason }).then((r) => r.data),
+  /** 승인·반려 뒤 원문에 없는 조문 — 유지로 닫거나 오늘 폐지(관리자) */
+  resolve: (id: string, itemId: string, decision: 'keep' | 'repeal'): Promise<ReparseReview> =>
+    client.post(`/reparse-reviews/${id}/items/${itemId}/resolve`, { decision }).then((r) => r.data),
 };
+
+export const REPARSE_STATUS_LABEL: Record<ReparseReview['status'], string> = {
+  open: '결정 중',
+  superseded: '지나간 비교',
+  applied: '반영함 — 묶음 검토 요청 전',
+  submitted: '묶음 검토 중',
+  approved: '승인함',
+  rejected: '반려함',
+};
+
+/** 항목이 반영·승인에서 한 일 */
+export function outcomeLabel(item: ReparseItem): string | null {
+  const o = item.outcome;
+  if (!o) return null;
+  const v = item.version ? ` v${item.version.versionNum}` : '';
+  // 묶음 버전이 어디까지 왔는지 — 초안 → 검토 중 → 시행(승인)
+  const stage = item.version?.status === 'published' || item.version?.status === 'archived' ? '시행' : item.version?.status === 'review' ? '검토 중' : '초안';
+  switch (o.action) {
+    case 'amend':
+      return `개정 ${stage}${v}`;
+    case 'structure':
+      return `자리 옮김 ${stage}${v}`;
+    case 'chapter':
+      return `장 번호·제목 변경 ${stage}${v}`;
+    case 'create':
+      return o.articleId ? '새 조문 만듦' : '새 조문 — 승인 때 만듦';
+    case 'row':
+      return o.status === 'done' ? '조 제목 행 옮김' : '조 제목 행 — 승인 때 옮김';
+    case 'repeal':
+      return o.status === 'done' ? `폐지함${o.repealedOn ? `(${o.repealedOn})` : ''}` : o.status === 'deferred' ? '폐지 미결 — 시행일 뒤에' : '폐지 — 승인 때';
+    case 'hold':
+      return '보류 — 반영 안 함';
+    case 'keep':
+      return '유지';
+    default:
+      return null;
+  }
+}
 
 export const REPARSE_KIND_LABEL: Record<ReparseKind, string> = {
   same: '그대로',

@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CreateVersionDto, UpdateVersionDto } from './versions.dto';
@@ -10,6 +10,24 @@ import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
 import { planEffectiveDateFill } from './effective-date-fill';
 import * as Diff from 'diff';
 import { ARTICLE_ORDER, formatJo } from '../common/article-label';
+
+/** 재파싱 묶음의 버전은 묶음으로만 검토 요청·승인·반려한다(T-110 ②) — 하나씩 처리하면 같은 시행일·계층 확인을 건너뛴다 */
+function assertNotBundle(version: { reparseItemId?: string | null }) {
+  if (version.reparseItemId) {
+    throw new ConflictException('재파싱 묶음의 버전입니다 — 재파싱 검토 화면에서 묶음으로 검토 요청·승인·반려하세요.');
+  }
+}
+
+/** 조문 행 잠금 — 승인·폐지·재파싱 묶음과 같은 잠금으로 줄 세운다 */
+async function lockArticle(tx: Prisma.TransactionClient, articleId: string) {
+  await tx.$queryRaw`SELECT id FROM articles WHERE id = ${articleId} FOR UPDATE`;
+}
+
+/** 여러 조문 — 늘 id 순으로(재파싱 묶음과 같은 순서라 서로 기다리다 멈추지 않는다) */
+async function lockArticles(tx: Prisma.TransactionClient, articleIds: string[]) {
+  if (!articleIds.length) return;
+  await tx.$queryRaw`SELECT id FROM articles WHERE id IN (${Prisma.join([...articleIds].sort())}) ORDER BY id FOR UPDATE`;
+}
 
 @Injectable()
 export class VersionsService {
@@ -33,7 +51,11 @@ export class VersionsService {
       where: { articleId },
       orderBy: { versionNum: 'desc' },
       // 버전 카드의 "변수 연결 N"(T-109) — 다시 이어야 하는 것도 센다
-      include: { _count: { select: { variableBindings: { where: { state: { in: ['active', 'needs_review'] } } } } } },
+      include: {
+        _count: { select: { variableBindings: { where: { state: { in: ['active', 'needs_review'] } } } } },
+        // 재파싱 묶음의 버전이면 그 검토로 이끈다(T-110 ②)
+        reparseItem: { select: { reviewId: true } },
+      },
     });
   }
 
@@ -61,21 +83,22 @@ export class VersionsService {
     });
     if (!article) throw new NotFoundException('Article not found');
 
-    const last = await this.prisma.articleVersion.findFirst({
-      where: { articleId },
-      orderBy: { versionNum: 'desc' },
-    });
-    const nextNum = last ? last.versionNum + 1 : 1;
-
-    const created = await this.prisma.articleVersion.create({
-      data: {
-        articleId,
-        versionNum: nextNum,
-        content: dto.content,
-        changeNote: dto.changeNote,
-        status: 'draft',
-        createdBy: userId,
-      },
+    const created = await this.prisma.$transaction(async (tx) => {
+      await lockArticle(tx, articleId);
+      const last = await tx.articleVersion.findFirst({
+        where: { articleId },
+        orderBy: { versionNum: 'desc' },
+      });
+      return tx.articleVersion.create({
+        data: {
+          articleId,
+          versionNum: last ? last.versionNum + 1 : 1,
+          content: dto.content,
+          changeNote: dto.changeNote,
+          status: 'draft',
+          createdBy: userId,
+        },
+      });
     });
 
     await this.audit.log({
@@ -96,6 +119,9 @@ export class VersionsService {
       throw new BadRequestException('Only draft versions can be edited');
     }
     const updated = await this.prisma.$transaction(async (tx) => {
+      await lockArticle(tx, version.articleId);
+      const fresh = await tx.articleVersion.findUniqueOrThrow({ where: { id: versionId }, select: { status: true } });
+      if (fresh.status !== 'draft') throw new BadRequestException('Only draft versions can be edited');
       const row = await tx.articleVersion.update({ where: { id: versionId }, data: dto });
       // 검토 요청 때 표식을 바꿔 넣은 자리(T-109) — 본문을 고치면 위치를 옮기고, 못 옮기면 "다시 이어야 함"
       if (dto.content !== undefined) await this.variablesService.reanchorVersion(tx, versionId, version.content, row.content);
@@ -117,9 +143,14 @@ export class VersionsService {
     if (version.status !== 'draft') {
       throw new BadRequestException('Only draft versions can be submitted for review');
     }
+    assertNotBundle(version);
     // 본문의 변수 표식({{KEY}})은 입력용이다 — 검토 전에 오늘(한국 날짜) 값으로 바꿔 본문에 저장하고 그 자리를 변수
     // 연결로 남긴다(T-109, 사용자 지시로 코덱스 자문). 검토자는 실제로 발행될 문구를 본다. 값을 고를 수 없으면 400
     const { row, applied } = await this.prisma.$transaction(async (tx) => {
+      await lockArticle(tx, version.articleId);
+      const fresh = await tx.articleVersion.findUniqueOrThrow({ where: { id: versionId }, select: { status: true, reparseItemId: true } });
+      if (fresh.status !== 'draft') throw new BadRequestException('Only draft versions can be submitted for review');
+      assertNotBundle(fresh);
       const { content, applied } = await this.variablesService.resolveMarkers(tx, tenantId, version.content, todayDateOnly());
       const row = await tx.articleVersion.update({
         where: { id: versionId },
@@ -168,10 +199,14 @@ export class VersionsService {
     if (version.status !== 'review') {
       throw new BadRequestException('Only versions in review can be approved');
     }
+    assertNotBundle(version);
 
     const result = await this.prisma.$transaction(async (tx) => {
       // 개정 후보 승인(T-108)과 같은 조문 잠금 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게 줄 세운다
-      await tx.$queryRaw`SELECT id FROM articles WHERE id = ${version.articleId} FOR UPDATE`;
+      await lockArticle(tx, version.articleId);
+      const fresh = await tx.articleVersion.findUniqueOrThrow({ where: { id: versionId }, select: { status: true, reparseItemId: true } });
+      if (fresh.status !== 'review') throw new BadRequestException('Only versions in review can be approved');
+      assertNotBundle(fresh);
       await assertAfterRepeal(tx, version.articleId, effective);
       // 변수(T-109): 표식이 남은 본문은 발행하지 않고, 검토 요청 때 넣은 값이 그 시행일에도 맞는지 다시 본다
       await this.variablesService.assertNoMarkers(tx, tenantId, [{ label: '이 버전', content: version.content }]);
@@ -288,7 +323,8 @@ export class VersionsService {
         clauseNumber: true,
         itemNumber: true,
         versions: {
-          where: { status: { in: ['draft', 'review'] } },
+          // 재파싱 묶음의 초안은 묶음으로만 승인한다(T-110 ②)
+          where: { status: { in: ['draft', 'review'] }, reparseItemId: null },
           orderBy: { versionNum: 'desc' },
           take: 1,
           select: { id: true, content: true },
@@ -338,7 +374,12 @@ export class VersionsService {
     // 변수 연결을 옮길 것은 폐지 뒤 다시 쓴 조문 중 폐지한 버전에 연결이 있는 것뿐이다(T-109)
     await this.prisma.$transaction(
       async (tx) => {
+        await lockArticles(tx, targets.map((a) => a.id));
         const draftIds = targets.map((a) => a.versions[0].id);
+        // 잠근 뒤 다시 본다 — 그 사이 시행본이 생겼거나 초안이 바뀌었으면 아무것도 시행하지 않는다
+        const still = await tx.articleVersion.count({ where: { id: { in: draftIds }, status: { in: ['draft', 'review'] }, reparseItemId: null } });
+        const nowPublished = await tx.articleVersion.count({ where: { articleId: { in: targets.map((a) => a.id) }, status: 'published' } });
+        if (still !== draftIds.length || nowPublished) throw new ConflictException('그 사이 조문이 바뀌었습니다 — 화면을 새로 고친 뒤 다시 시행하세요.');
         await tx.articleVersion.updateMany({
           where: { id: { in: draftIds } },
           data: { status: 'published', approvedBy: userId, approvedAt, publishedAt: approvedAt, effectiveDate: effective, changeNote: reason },
@@ -435,64 +476,66 @@ export class VersionsService {
     });
     if (!policy) throw new NotFoundException('Policy not found');
 
-    const versions = await this.prisma.articleVersion.findMany({
-      where: { article: { chapter: { policyId } }, status: { in: ['published', 'archived'] } },
-      select: {
-        id: true,
-        articleId: true,
-        versionNum: true,
-        effectiveDate: true,
-        article: { select: { number: true, branchNumber: true, clauseNumber: true, itemNumber: true } },
-      },
-    });
-    const plan = planEffectiveDateFill(versions, date);
-    if (plan.conflicts.length) {
-      const labelOf = new Map(
-        versions.map((v) => {
-          const a = v.article;
-          const tail = `${a.clauseNumber ? ` 제${a.clauseNumber}항` : ''}${a.itemNumber ? ` 제${a.itemNumber}목` : ''}`;
-          return [v.articleId, `${formatJo(a.number, a.branchNumber)}${tail}`];
-        }),
-      );
-      const why = (c: (typeof plan.conflicts)[number]) =>
-        c.reason === 'multiple-missing'
-          ? '시행일 없는 시행본이 둘 이상'
-          : c.reason === 'after-later-version'
-            ? `다음 버전 시행일(${c.boundary})보다 늦음`
-            : `앞 버전 시행일(${c.boundary})보다 이름`;
-      throw new ConflictException({
-        message: `시행일을 일괄로 넣을 수 없는 조문이 ${plan.conflicts.length}건 있습니다. 아무것도 바꾸지 않았습니다.`,
-        conflicts: plan.conflicts.map((c) => ({ ...c, label: labelOf.get(c.articleId) ?? c.articleId, detail: why(c) })),
+    // 조문을 잠근 뒤 읽고 고친다 — 승인·재파싱 묶음과 줄 세운다(묶음 지문에 시행일이 들어 있다)
+    return this.prisma.$transaction(async (tx) => {
+      const articleIds = (await tx.article.findMany({ where: { chapter: { policyId } }, select: { id: true } })).map((a) => a.id);
+      await lockArticles(tx, articleIds);
+      const versions = await tx.articleVersion.findMany({
+        where: { article: { chapter: { policyId } }, status: { in: ['published', 'archived'] } },
+        select: {
+          id: true,
+          articleId: true,
+          versionNum: true,
+          effectiveDate: true,
+          article: { select: { number: true, branchNumber: true, clauseNumber: true, itemNumber: true } },
+        },
       });
-    }
-    if (!plan.updateIds.length) {
-      throw new BadRequestException('시행일이 비어 있는 시행본이 없습니다.');
-    }
+      const plan = planEffectiveDateFill(versions, date);
+      if (plan.conflicts.length) {
+        const labelOf = new Map(
+          versions.map((v) => {
+            const a = v.article;
+            const tail = `${a.clauseNumber ? ` 제${a.clauseNumber}항` : ''}${a.itemNumber ? ` 제${a.itemNumber}목` : ''}`;
+            return [v.articleId, `${formatJo(a.number, a.branchNumber)}${tail}`];
+          }),
+        );
+        const why = (c: (typeof plan.conflicts)[number]) =>
+          c.reason === 'multiple-missing'
+            ? '시행일 없는 시행본이 둘 이상'
+            : c.reason === 'after-later-version'
+              ? `다음 버전 시행일(${c.boundary})보다 늦음`
+              : `앞 버전 시행일(${c.boundary})보다 이름`;
+        throw new ConflictException({
+          message: `시행일을 일괄로 넣을 수 없는 조문이 ${plan.conflicts.length}건 있습니다. 아무것도 바꾸지 않았습니다.`,
+          conflicts: plan.conflicts.map((c) => ({ ...c, label: labelOf.get(c.articleId) ?? c.articleId, detail: why(c) })),
+        });
+      }
+      if (!plan.updateIds.length) {
+        throw new BadRequestException('시행일이 비어 있는 시행본이 없습니다.');
+      }
 
-    await this.prisma.$transaction([
-      this.prisma.articleVersion.updateMany({
+      await tx.articleVersion.updateMany({
         where: { id: { in: plan.updateIds }, effectiveDate: null },
         data: { effectiveDate: date },
-      }),
-      ...(policy.effectiveDate
-        ? []
-        : [this.prisma.policy.update({ where: { id: policyId }, data: { effectiveDate: date } })]),
-    ]);
-
-    await this.audit.log({
-      tenantId,
-      userId,
-      action: 'version.effective_date_fill',
-      entityType: 'Policy',
-      entityId: policyId,
-      details: {
-        count: plan.updateIds.length,
-        effectiveDate,
-        reason: note,
-        versionIds: plan.updateIds.slice(0, 200),
-      },
-    });
-    return { updated: plan.updateIds.length };
+      });
+      if (!policy.effectiveDate) await tx.policy.update({ where: { id: policyId }, data: { effectiveDate: date } });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId,
+          action: 'version.effective_date_fill',
+          entityType: 'Policy',
+          entityId: policyId,
+          details: {
+            count: plan.updateIds.length,
+            effectiveDate,
+            reason: note,
+            versionIds: plan.updateIds.slice(0, 200),
+          },
+        },
+      });
+      return { updated: plan.updateIds.length };
+    }, { maxWait: 10_000, timeout: 60_000 });
   }
 
   async reject(tenantId: string, versionId: string, userId: string, reason?: string) {
@@ -503,9 +546,16 @@ export class VersionsService {
     const note = String(reason ?? '').trim();
     if (!note) throw new BadRequestException('반려 사유를 입력하세요.');
 
-    const row = await this.prisma.articleVersion.update({
-      where: { id: versionId },
-      data: { status: 'draft', reviewNote: note.slice(0, 2000) },
+    assertNotBundle(version);
+    const row = await this.prisma.$transaction(async (tx) => {
+      await lockArticle(tx, version.articleId);
+      const fresh = await tx.articleVersion.findUniqueOrThrow({ where: { id: versionId }, select: { status: true, reparseItemId: true } });
+      if (fresh.status !== 'review') throw new BadRequestException('Only versions in review can be rejected');
+      assertNotBundle(fresh);
+      return tx.articleVersion.update({
+        where: { id: versionId },
+        data: { status: 'draft', reviewNote: note.slice(0, 2000) },
+      });
     });
     await this.audit.log({
       tenantId,
@@ -605,7 +655,7 @@ export class VersionsService {
  * 버전이 이기므로 그날부터 새 본문이 시행된다. 더 이르면 폐지가 지워지고 폐지 전 날짜의 시점 조회까지 새 본문으로
  * 바뀐다. 조문 잠금 안에서 부른다.
  */
-async function assertAfterRepeal(tx: Prisma.TransactionClient, articleId: string, effective: Date) {
+export async function assertAfterRepeal(tx: Prisma.TransactionClient, articleId: string, effective: Date) {
   const repeal = await tx.articleVersion.findFirst({
     where: { articleId, repealedOn: { not: null } },
     orderBy: { repealedOn: 'desc' },
@@ -622,7 +672,7 @@ async function assertAfterRepeal(tx: Prisma.TransactionClient, articleId: string
  * 새로 발행하는 버전의 앞 시행본 — 변수 연결을 옮겨 올 버전(T-109). 지금 시행본이 있으면 그것, 없으면(폐지 뒤 다시
  * 시행) 가장 최근에 시행했던 버전.
  */
-async function previousIssued(tx: Prisma.TransactionClient, articleId: string, excludeId: string) {
+export async function previousIssued(tx: Prisma.TransactionClient, articleId: string, excludeId: string) {
   const published = await tx.articleVersion.findFirst({
     where: { articleId, status: 'published', id: { not: excludeId } },
     orderBy: { versionNum: 'desc' },

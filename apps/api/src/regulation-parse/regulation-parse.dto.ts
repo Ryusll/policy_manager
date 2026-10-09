@@ -96,3 +96,31 @@ export class ReparseDecisionsDto {
   @Type(() => ReparseDecisionDto)
   items: ReparseDecisionDto[];
 }
+
+/** 재파싱 묶음 승인(T-110 ②) — 묶음의 모든 버전을 같은 사내 규정 시행일로 */
+export class ApproveReparseDto {
+  @ApiProperty({ description: '사내 규정 시행일 (YYYY-MM-DD)' })
+  @IsDateString()
+  effectiveDate: string;
+
+  @ApiProperty({ description: '개정 사유' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  changeNote: string;
+}
+
+export class RejectReparseDto {
+  @ApiProperty({ description: '반려 사유' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1000)
+  reason: string;
+}
+
+/** 승인·반려 뒤 원문에 없는 조문의 삭제 여부 */
+export class ResolveMissingDto {
+  @ApiProperty({ enum: ['keep', 'repeal'] })
+  @IsIn(['keep', 'repeal'])
+  decision: 'keep' | 'repeal';
+}

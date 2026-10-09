@@ -121,6 +121,8 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | changeEventId | uuid FK? → LawChangeEvent (SetNull) | 이 버전을 낳은 법령 변경 — 개정 후보 승인으로 발행됐을 때만(T-108) |
 | sourceCandidateId | uuid FK? unique → AmendmentCandidate (SetNull) | 이 버전을 낳은 개정 후보(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다 |
 | repealedOn | date? | **폐지 시행일**(T-126) — "게시본 폐지"로 내린 버전만 있다(폐지한 날, 한국 날짜). 이 날부터 조문은 시행 중이 아니다: 시점 조회가 이 버전을 고르면 옛 버전으로 되돌아가지 않고 "폐지"로 본다(규정 시점 조회·신구 대비·법령 영향 분석·개정 후보 공통). 새 버전에 밀려 내려간 버전은 비어 있다. 마이그레이션 `20261009120000_article_repeal` 이 기존 폐지를 감사 기록(`version.archive`, 같은 회사) 시각의 한국 날짜로 채웠다 — 감사가 없는 archived 는 비워 둠 |
+| structure | json? | **버전별 계층**(T-110 ②, 특허 도 5·13) — 발행 이력이면 그 버전이 시행된 동안의 **얼린 계층**(장 id·번호·제목, 절, 조·가지·항·목, 조 제목 — 계층이 실제로 바뀌는 승인 때 그 조문의 얼리지 않은 발행 이력 모두에 넣는다), 초안·검토 중이면 재파싱의 **제안 계층**(승인 때 조문 행으로 옮기고 비운다). 시행본은 늘 비어 있다(지금 계층 = 조문 행). 옛 기록은 비어 있어 지금 계층을 따른다 |
+| reparseItemId | uuid? (unique) | 이 버전을 만든 재파싱 검토 항목(T-110 ②) — 묶음으로만 검토 요청·승인·반려한다(단건 처리·한꺼번에 시행에서 빠진다) |
 
 인덱스: `[articleId, effectiveDate]` — 시점 조회에서 조문별 "기준일 이전 시행분 중 가장 최근"을 찾는 경로.
 
@@ -213,6 +215,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `VariableValue` · `VariableBinding`(옛 `VariableUsage` 대체) | ✅ **스키마에 있다** (T-109 ①, 마이그레이션 `20261009150000_variable_values_bindings`) |
 | `AmendmentCandidate.plannedEffectiveDate`·`variableFingerprint` | ✅ **스키마에 있다** (T-109 ②, 마이그레이션 `20261009180000_amendment_variables`) |
 | `ReparseReview` · `ReparseReviewItem` | ✅ **스키마에 있다** (T-110 ①, 마이그레이션 `20261009210000_reparse_reviews`) |
+| `ArticleVersion.structure`·`reparseItemId` · `ReparseReview` 반영·승인 필드 · `ReparseReviewItem.outcome` | ✅ **스키마에 있다** (T-110 ②, 마이그레이션 `20261009230000_reparse_apply`) |
 
 ### 3.1 관계 개요
 
@@ -390,7 +393,10 @@ tenantId FK(cascade), candidateId FK → AmendmentCandidate(cascade), revision(i
 |---|---|---|
 | ReparseReview.tenantId · policyId · sessionId? | uuid | 회사·대상 규정(사람이 고른 규정 식별 정보, 규정을 지우면 함께)·원문 세션(세션을 지우면 비움) |
 | ReparseReview.sourceName | string | 원문 출처 이름(업로드 파일명·법제처 법령명) — 규정 식별 정보와 따로 둔다 |
-| ReparseReview.status | string | `open`(결정 중) · `superseded`(같은 원문을 다시 비교함) · `applied`(반영함, 2단계) |
+| ReparseReview.status | string | `open`(결정 중) · `superseded`(같은 원문을 다시 비교함) · `applied`(반영함 — 묶음 초안) · `submitted`(묶음 검토 요청) · `approved`(묶음 승인) · `rejected`(묶음 반려) |
+| ReparseReview.plan | json | 반영 계획(T-110 ②) — 승인 때 만들 장·절(계획 키), 기존 장·절의 번호·제목 변경, 새 조문(자리·본문), 버전 없는 조 머리 행 옮김, 폐지 |
+| ReparseReview.bundleFingerprint | string | 묶음 지문(`bf1:`) — 반영·검토 요청 때의 장·절·조문 계층, 조문마다 발행 이력(상태·시행일·폐지일·얼린 계층)과 작업본(상태·제안 계층·묶음 여부), 계획. 검토 요청 뒤에는 묶음 버전 본문까지. 다음 단계에서 다시 계산해 다르면 409 |
+| ReparseReview.appliedAt·By · submittedAt·By · effectiveDate · changeNote · approvedAt·By · rejectedAt·By · rejectReason | timestamp·uuid·date·string | 반영·묶음 검토 요청·묶음 승인(사내 규정 시행일·개정 사유)·묶음 반려(사유) |
 | ReparseReview.algorithm · normalizer | string | 판정 규칙 `reparse/1` · 정규화 규칙 `norm/1` — 바뀌면 지문끼리 비교할 수 없어 함께 남긴다 |
 | ReparseReview.stateFingerprint | string | 비교할 때의 규정 상태 지문(`st1:` — 장·절·조문 계층·제목, 비교 대상 버전 id·상태·본문 지문, 작업본). 다시 계산해 다르면 "다시 비교" |
 | ReparseReview.summary | json | 종류별 개수·장 단위 변경·부칙·별표 수·작업본이 있는 조문 수·원문 트리 지문(`tr1:`) |
@@ -399,6 +405,7 @@ tenantId FK(cascade), candidateId FK → AmendmentCandidate(cascade), revision(i
 | ReparseReviewItem.parsed · stored · candidates | json | 재파싱 행(계층·장·절·제목·본문·지문·번호 다시 매김) · 비교 대상(버전 id·번호·상태·시행/폐지일·본문·지문, 계층·장·절·제목, 작업본) — 반영·승인 때 다시 확인할 기준 · 판정 보류 후보 |
 | ReparseReviewItem.reasons · changes · recommended | json · json · bool | 판정 근거 · 바뀐 것(본문·띄어쓰기만·번호·장·절·제목) · 결정을 미리 골라 둘 만큼 근거가 있다 |
 | ReparseReviewItem.decision? · targetArticleId? · decidedBy? · decidedAt? | string · uuid · uuid · timestamp | 결정(accept·amend·new·hold·pick·link·keep·repeal, 비우면 미결)과 고르기·잇기 대상, 정한 사람·시각 |
+| ReparseReviewItem.outcome | json | 반영·승인의 결과(T-110 ②) — 개정·자리 옮김·장 변경 초안(버전 id), 새 조문(승인 때 조문·버전 id), 조 머리 행 옮김, 폐지(예정·함·미결), 보류, 유지 |
 
 인덱스 `[tenantId, policyId, createdAt]`·`[sessionId]`·항목 `[articleId]`, 유니크 `[reviewId, seq]`. **내용 지문은 저장하지 않는다**(아래 3.4) —
 비교할 때 비교 대상 버전 본문으로 계산해 항목에 남긴다.

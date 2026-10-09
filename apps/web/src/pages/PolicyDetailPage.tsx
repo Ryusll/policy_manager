@@ -3272,7 +3272,9 @@ export default function PolicyDetailPage() {
                           <span className="font-mono text-[11px] text-gray-600">v{v.versionNum}</span>
                           <StatusBadge status="draft" />
                         </span>
-                        {canEdit && (
+                        {v.reparseItem ? (
+                          <ReparseBundleLink policyId={id!} reviewId={v.reparseItem.reviewId} />
+                        ) : canEdit && (
                           <button
                             type="button"
                             onClick={() => submitMutation.mutate(v.id)}
@@ -3290,7 +3292,9 @@ export default function PolicyDetailPage() {
                           <span className="font-mono text-[11px] text-gray-600">v{v.versionNum}</span>
                           <StatusBadge status="review" />
                         </span>
-                        {user?.role === 'admin' && (
+                        {v.reparseItem ? (
+                          <ReparseBundleLink policyId={id!} reviewId={v.reparseItem.reviewId} />
+                        ) : user?.role === 'admin' && (
                           <span className="shrink-0 inline-flex items-center gap-3">
                             <button
                               type="button"
@@ -3359,7 +3363,10 @@ export default function PolicyDetailPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-2">
-                          {version.status === 'draft' && canEdit && (
+                          {version.reparseItem && (version.status === 'draft' || version.status === 'review') && (
+                            <ReparseBundleLink policyId={id!} reviewId={version.reparseItem.reviewId} />
+                          )}
+                          {version.status === 'draft' && canEdit && !version.reparseItem && (
                             <button
                               onClick={() => submitMutation.mutate(version.id)}
                               className="text-xs text-blue-600 hover:underline flex items-center gap-1"
@@ -3367,7 +3374,7 @@ export default function PolicyDetailPage() {
                               <Clock size={12} /> 검토 요청
                             </button>
                           )}
-                          {version.status === 'review' && user?.role === 'admin' && (
+                          {version.status === 'review' && user?.role === 'admin' && !version.reparseItem && (
                             <>
                               <button
                                 type="button"
@@ -3422,6 +3429,15 @@ export default function PolicyDetailPage() {
                       </div>
                       {version.changeNote && (
                         <p className="text-xs text-gray-400 mt-1.5 italic">변경사유: {version.changeNote}</p>
+                      )}
+                      {(version.status === 'draft' || version.status === 'review') && version.structure?.kind === 'proposal' && (
+                        // 재파싱이 제안한 새 자리(T-110 ②) — 승인한 시행일부터 이 자리로 옮긴다
+                        <p className="text-xs text-sky-800 mt-1.5" data-testid="proposed-structure">
+                          제안 계층: {formatArticleJo(version.structure.number, version.structure.branchNumber)}
+                          {version.structure.clauseNumber ? ` 제${version.structure.clauseNumber}항` : ''}
+                          {version.structure.itemNumber ? ` 제${version.structure.itemNumber}목` : ''}
+                          {version.structure.title ? ` (${version.structure.title})` : ''} — 승인한 시행일부터 이 자리로 옮깁니다
+                        </p>
                       )}
                       {version.status === 'draft' && version.reviewNote && (
                         /* 반려된 초안. 사유가 보이지 않으면 편집자는 같은 내용을 다시 올린다. */
@@ -5318,5 +5334,21 @@ export default function PolicyDetailPage() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * 재파싱 묶음의 버전(T-110 ②) — 하나씩 검토 요청·승인·반려하지 않고 재파싱 검토 화면에서 묶음으로 처리한다.
+ */
+function ReparseBundleLink({ policyId, reviewId }: { policyId: string; reviewId: string }) {
+  return (
+    <Link
+      to={`/policies/${policyId}/reparse/${reviewId}`}
+      className="text-[11px] px-1.5 py-0.5 rounded border border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 shrink-0"
+      title="재파싱 묶음의 버전입니다 — 재파싱 검토 화면에서 묶음으로 검토 요청·승인·반려합니다"
+      data-testid="reparse-bundle-link"
+    >
+      재파싱 묶음
+    </Link>
   );
 }

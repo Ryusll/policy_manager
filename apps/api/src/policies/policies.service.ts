@@ -5,7 +5,10 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { parseSnapshot, positionKey, type Position } from '../common/article-structure';
+import { placeArticle, placeAsOf } from './as-of-structure';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { AuditService } from '../audit/audit.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
@@ -48,7 +51,51 @@ import {
   CreateRevisionReasonDto,
   UpdateRevisionReasonDto,
 } from './policies.dto';
-import { ARTICLE_ORDER } from '../common/article-label';
+import { ARTICLE_ORDER, formatJo } from '../common/article-label';
+
+/**
+ * 계층을 바꾸는 쓰기(장·절·조문 생성·수정·삭제, 조 순서 재정렬)는 규정 행을 잠근다 — 재파싱 묶음(T-110 ②)이 같은 잠금 아래에서
+ * 규정 계층 지문을 다시 계산하므로, 그 사이에 끼어들지 못하고 앞이나 뒤에 줄 선다.
+ */
+async function lockPolicy(tx: Prisma.TransactionClient, policyId: string) {
+  await tx.$queryRaw`SELECT id FROM policies WHERE id = ${policyId} FOR UPDATE`;
+}
+
+/**
+ * 바로잡기(재정렬·번호 직접 수정)가 다른 조문의 **얼린 자리**(지난 계층 기록, T-110 ②)와 겹치면 막는다. 바로잡기는 버전을 만들지
+ * 않아 얼리지 않은 이력까지 새 번호를 따르므로, 지난 기간의 시점 조회에서 같은 자리에 조문 둘이 나올 수 있다(기간은 따지지 않는
+ * 보수적 검사 — 사용자 지시로 코덱스 자문). 얼린 기록이 없는 규정은 지금처럼.
+ */
+async function assertNoFrozenClash(
+  tx: Prisma.TransactionClient,
+  policyId: string,
+  moves: { articleId: string; position: Position; label: string }[],
+) {
+  if (!moves.length) return;
+  const frozen = await tx.articleVersion.findMany({
+    where: { article: { chapter: { policyId } }, status: { in: ['published', 'archived'] }, structure: { not: Prisma.DbNull } },
+    select: { articleId: true, structure: true },
+  });
+  if (!frozen.length) return;
+  const holders = new Map<string, Set<string>>();
+  for (const f of frozen) {
+    const snap = parseSnapshot(f.structure);
+    if (!snap) continue;
+    const key = positionKey(snap);
+    holders.set(key, new Set([...(holders.get(key) ?? []), f.articleId]));
+  }
+  for (const m of moves) {
+    const ids = holders.get(positionKey(m.position));
+    if (ids && [...ids].some((id) => id !== m.articleId)) {
+      throw new BadRequestException(
+        `${m.label}: 이 자리는 다른 조문의 지난 계층 기록에 있습니다 — 그대로 바꾸면 그 기간의 시점 조회에서 번호가 겹칩니다. 원문을 다시 가져와(재파싱) 개정으로 옮기거나 다른 번호를 쓰세요.`,
+      );
+    }
+  }
+}
+
+const labelOf = (p: Position) =>
+  `${formatJo(p.number, p.branchNumber)}${p.clauseNumber ? `제${p.clauseNumber}항` : ''}${p.itemNumber ? `제${p.itemNumber}목` : ''}`;
 
 @Injectable()
 export class PoliciesService {
@@ -245,13 +292,15 @@ export class PoliciesService {
         const state = asOfState(article.versions[0], asOfDate);
         if (state === 'in_force') return true;
         if (state === 'repealed') {
+          // 그때의 계층으로(T-110 ② — 얼린 계층이 있으면)
+          const placed = placeArticle(article);
           repealedArticles.push({
             id: article.id,
-            number: article.number,
-            branchNumber: article.branchNumber,
-            clauseNumber: article.clauseNumber,
-            itemNumber: article.itemNumber,
-            title: article.title,
+            number: placed.number,
+            branchNumber: placed.branchNumber,
+            clauseNumber: placed.clauseNumber,
+            itemNumber: placed.itemNumber,
+            title: placed.title,
             repealedOn: toDateOnlyString(article.versions[0].repealedOn!),
           });
         } else {
@@ -264,7 +313,8 @@ export class PoliciesService {
 
     return {
       ...policy,
-      chapters,
+      // 고른 버전이 얼린 계층을 가지면 그때의 자리·제목·장으로 조립한다(T-110 ②, PAT-04)
+      chapters: placeAsOf(chapters),
       asOf: {
         date: asOf,
         omittedArticles,
@@ -478,13 +528,15 @@ export class PoliciesService {
       .filter((article) => asOfState(article.versions[0], asOfDate) === 'in_force')
       .map((article) => {
         const version = article.versions[0];
+        // 그날의 계층으로 표기한다(T-110 ② — 얼린 계층이 있으면)
+        const placed = placeArticle(article);
         return {
           id: article.id,
-          number: article.number,
-          branchNumber: article.branchNumber,
-          clauseNumber: article.clauseNumber,
-          itemNumber: article.itemNumber,
-          title: article.title ?? '',
+          number: placed.number,
+          branchNumber: placed.branchNumber,
+          clauseNumber: placed.clauseNumber,
+          itemNumber: placed.itemNumber,
+          title: placed.title ?? '',
           content: version.content ?? '',
           effectiveDate: version.effectiveDate ? toDateOnlyString(version.effectiveDate) : null,
         };
@@ -677,8 +729,9 @@ export class PoliciesService {
   async createChapter(tenantId: string, policyId: string, dto: CreateChapterDto, userId: string) {
     await this.findOne(tenantId, policyId);
     const header = this.chapterHeader(() => newChapterHeader(dto));
-    const ch = await this.prisma.chapter.create({
-      data: { policyId, number: dto.number, ...header },
+    const ch = await this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      return tx.chapter.create({ data: { policyId, number: dto.number, ...header } });
     });
     await this.audit.log({
       tenantId,
@@ -705,9 +758,9 @@ export class PoliciesService {
         dto,
       ),
     );
-    return this.prisma.chapter.update({
-      where: { id: chapterId },
-      data: { ...dto, ...header },
+    return this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      return tx.chapter.update({ where: { id: chapterId }, data: { ...dto, ...header } });
     });
   }
 
@@ -727,7 +780,10 @@ export class PoliciesService {
       where: { id: chapterId, policyId },
     });
     if (!chapter) throw new NotFoundException('Chapter not found');
-    await this.prisma.chapter.delete({ where: { id: chapterId } });
+    await this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      await tx.chapter.delete({ where: { id: chapterId } });
+    });
   }
 
   /**
@@ -766,8 +822,9 @@ export class PoliciesService {
     await this.findChapterOrThrow(tenantId, policyId, chapterId);
     const title = String(dto.title ?? '').trim();
     if (!title) throw new BadRequestException('절 제목을 입력하세요.');
-    const section = await this.prisma.section.create({
-      data: { chapterId, number: dto.number, title },
+    const section = await this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      return tx.section.create({ data: { chapterId, number: dto.number, title } });
     });
     await this.audit.log({
       tenantId,
@@ -797,7 +854,10 @@ export class PoliciesService {
       if (!title) throw new BadRequestException('절 제목을 입력하세요.');
       data.title = title;
     }
-    return this.prisma.section.update({ where: { id: sectionId }, data });
+    return this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      return tx.section.update({ where: { id: sectionId }, data });
+    });
   }
 
   async removeSection(tenantId: string, policyId: string, chapterId: string, sectionId: string) {
@@ -805,7 +865,10 @@ export class PoliciesService {
     const section = await this.prisma.section.findFirst({ where: { id: sectionId, chapterId } });
     if (!section) throw new NotFoundException('Section not found');
     // onDelete: SetNull 로 소속 조문의 sectionId만 해제된다(조문은 보존)
-    await this.prisma.section.delete({ where: { id: sectionId } });
+    await this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      await tx.section.delete({ where: { id: sectionId } });
+    });
   }
 
   async createArticle(
@@ -817,7 +880,9 @@ export class PoliciesService {
     await this.findChapterOrThrow(tenantId, policyId, chapterId);
     const sectionId = await this.resolveSectionId(chapterId, dto.sectionId);
 
-    const article = await this.prisma.article.create({
+    const article = await this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      return tx.article.create({
       data: {
         chapterId,
         sectionId,
@@ -833,6 +898,7 @@ export class PoliciesService {
         relatedLawNote: dto.relatedLawNote?.trim() || null,
         relatedRuleNote: dto.relatedRuleNote?.trim() || null,
       },
+      });
     });
 
     if (dto.content) {
@@ -867,7 +933,22 @@ export class PoliciesService {
         data[key] = t.length ? t : null;
       }
     }
-    return this.prisma.article.update({ where: { id: articleId }, data: data as any });
+    const moved = (['number', 'branchNumber', 'clauseNumber', 'itemNumber'] as const).some(
+      (k) => dto[k as keyof UpdateArticleDto] !== undefined && dto[k as keyof UpdateArticleDto] !== article[k],
+    );
+    return this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      if (moved) {
+        const position = {
+          number: (dto.number ?? article.number) as number,
+          branchNumber: (dto.branchNumber !== undefined ? dto.branchNumber : article.branchNumber) ?? null,
+          clauseNumber: (dto.clauseNumber !== undefined ? dto.clauseNumber : article.clauseNumber) ?? null,
+          itemNumber: (dto.itemNumber !== undefined ? dto.itemNumber : article.itemNumber) ?? null,
+        };
+        await assertNoFrozenClash(tx, policyId, [{ articleId, position, label: labelOf(position) }]);
+      }
+      return tx.article.update({ where: { id: articleId }, data: data as any });
+    });
   }
 
   async removeArticle(tenantId: string, policyId: string, chapterId: string, articleId: string) {
@@ -876,7 +957,10 @@ export class PoliciesService {
       where: { id: articleId, chapterId },
     });
     if (!article) throw new NotFoundException('Article not found');
-    await this.prisma.article.delete({ where: { id: articleId } });
+    await this.prisma.$transaction(async (tx) => {
+      await lockPolicy(tx, policyId);
+      await tx.article.delete({ where: { id: articleId } });
+    });
   }
 
   /**
@@ -902,7 +986,7 @@ export class PoliciesService {
     });
     const rows = await this.prisma.article.findMany({
       where: { chapter: { policyId } },
-      select: { id: true, chapterId: true, sectionId: true, number: true, branchNumber: true },
+      select: { id: true, chapterId: true, sectionId: true, number: true, branchNumber: true, clauseNumber: true, itemNumber: true },
     });
 
     let changes;
@@ -915,13 +999,32 @@ export class PoliciesService {
 
     if (changes.length === 0) return { changed: 0 };
 
+    const rowById = new Map(rows.map((r) => [r.id, r]));
     await this.prisma.$transaction(
-      changes.map((c) =>
-        this.prisma.article.update({
-          where: { id: c.id },
-          data: { number: c.number, branchNumber: c.branchNumber, chapterId: c.chapterId, sectionId: c.sectionId },
-        }),
-      ),
+      async (tx) => {
+        await lockPolicy(tx, policyId);
+        await assertNoFrozenClash(
+          tx,
+          policyId,
+          changes
+            .filter((c) => {
+              const r = rowById.get(c.id)!;
+              return r.number !== c.number || (r.branchNumber ?? null) !== (c.branchNumber ?? null);
+            })
+            .map((c) => {
+              const r = rowById.get(c.id)!;
+              const position = { number: c.number, branchNumber: c.branchNumber ?? null, clauseNumber: r.clauseNumber, itemNumber: r.itemNumber };
+              return { articleId: c.id, position, label: labelOf(position) };
+            }),
+        );
+        for (const c of changes) {
+          await tx.article.update({
+            where: { id: c.id },
+            data: { number: c.number, branchNumber: c.branchNumber, chapterId: c.chapterId, sectionId: c.sectionId },
+          });
+        }
+      },
+      { maxWait: 10_000, timeout: 60_000 },
     );
 
     await this.audit.log({

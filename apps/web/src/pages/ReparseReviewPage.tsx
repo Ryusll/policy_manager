@@ -12,7 +12,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { AlertTriangle, ArrowRight, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import {
+  outcomeLabel,
   reparseApi,
+  REPARSE_STATUS_LABEL,
   REPARSE_DECISION_LABEL,
   REPARSE_DECISIONS,
   REPARSE_KIND_LABEL,
@@ -28,6 +30,7 @@ import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { toast } from '../stores/toastStore';
 import { useAuthStore } from '../stores/authStore';
 import { apiErrorMessage } from '../lib/apiError';
+import { serviceToday } from '../lib/serviceDate';
 
 const KIND_STYLE: Record<ReparseKind, string> = {
   same: 'bg-gray-50 text-gray-600 border-gray-200',
@@ -99,6 +102,17 @@ export default function ReparseReviewPage() {
     onError: (err) => toast(apiErrorMessage(err, '다시 비교하지 못했습니다.'), 'error'),
   });
 
+  // 반영·묶음 검토 요청·승인·반려(T-110 ②) — 응답이 곧 새 검토 상태다
+  const step = useMutation({
+    mutationFn: (run: () => Promise<ReparseReview>) => run(),
+    onSuccess: (next) => {
+      qc.setQueryData(['reparse-review', reviewId], next);
+      qc.invalidateQueries({ queryKey: ['reparse-reviews', policyId] });
+      qc.invalidateQueries({ queryKey: ['policy', policyId] });
+    },
+    onError: (err) => toast(apiErrorMessage(err, '처리하지 못했습니다.'), 'error'),
+  });
+
   const grouped = useMemo(() => {
     const out: Record<string, ReparseItem[]> = { check: [], moved: [], new: [], missing: [], same: [] };
     for (const item of review?.items ?? []) out[groupOf(item)].push(item);
@@ -149,10 +163,19 @@ export default function ReparseReviewPage() {
         }
       />
 
-      {!open && (
+      {review.status === 'superseded' && (
         <p className="text-sm bg-gray-50 border border-gray-200 rounded px-3 py-2 text-gray-700" role="status">
-          {review.status === 'superseded' ? '같은 원문을 다시 비교해 지나간 검토입니다 — 결정은 최근 검토에서 합니다.' : '반영을 마친 검토입니다.'}
+          같은 원문을 다시 비교해 지나간 검토입니다 — 결정은 최근 검토에서 합니다.
         </p>
+      )}
+      {(review.status === 'applied' || review.status === 'submitted') && review.stale && (
+        <div className="flex flex-wrap items-center gap-2 text-sm bg-amber-50 border border-amber-200 rounded px-3 py-2 text-amber-900" role="alert">
+          <AlertTriangle size={15} className="shrink-0" />
+          <span className="flex-1 min-w-[12rem]">
+            {review.status === 'applied' ? '반영한 뒤' : '검토 요청한 뒤'} 이 규정이 바뀌었습니다(다른 초안·개정·순서 변경 등) — 이 묶음은 더 진행할 수 없습니다.
+            관리자가 묶음을 반려하면 같은 원문으로 다시 비교할 수 있습니다.
+          </span>
+        </div>
       )}
       {open && (review.stale || review.sourceChanged) && (
         <div className="flex flex-wrap items-center gap-2 text-sm bg-amber-50 border border-amber-200 rounded px-3 py-2 text-amber-900" role="alert">
@@ -188,6 +211,8 @@ export default function ReparseReviewPage() {
           결정은 바로 저장되고, 비교만으로는 규정 본문이 바뀌지 않습니다. 판정 규칙 {review.algorithm} · 정규화 {review.normalizer}
         </p>
       </section>
+
+      <BundlePanel review={review} isAdmin={role === 'admin'} canEdit={role === 'admin' || role === 'editor'} busy={step.isPending} run={(fn) => step.mutate(fn)} onRecompare={() => recompare.mutate()} />
 
       {chapterChanges.length > 0 && (
         <section className="bg-white border border-gray-300 shadow-sm p-4 space-y-1.5" aria-label="장 변경">
@@ -249,6 +274,8 @@ export default function ReparseReviewPage() {
                     missingById={missingById}
                     claimedBy={claimedBy}
                     onDecide={(decision, targetArticleId) => decide.mutate([{ id: item.id, decision, targetArticleId: targetArticleId ?? null }])}
+                    canResolve={(review.status === 'approved' || review.status === 'rejected') && (role === 'admin' || role === 'editor')}
+                    onResolve={(decision) => step.mutate(() => reparseApi.resolve(review.id, item.id, decision))}
                   />
                 ))}
               </ul>
@@ -295,6 +322,8 @@ function ItemRow({
   missingById,
   claimedBy,
   onDecide,
+  canResolve,
+  onResolve,
 }: {
   item: ReparseItem;
   open: boolean;
@@ -303,7 +332,11 @@ function ItemRow({
   missingById: Map<string, ReparseItem>;
   claimedBy: Map<string, ReparseItem>;
   onDecide: (decision: ReparseDecision | null, targetArticleId?: string | null) => void;
+  canResolve: boolean;
+  onResolve: (decision: 'keep' | 'repeal') => void;
 }) {
+  const result = outcomeLabel(item);
+  const resolved = item.outcome?.action === 'keep' || (item.outcome?.action === 'repeal' && item.outcome.status === 'done');
   const p = item.parsed;
   const s = item.stored;
   const ch = item.changes;
@@ -333,6 +366,11 @@ function ItemRow({
         {s?.pending && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">
             {s.pending.status === 'review' ? '검토 중 버전 있음' : '초안 있음'}
+          </span>
+        )}
+        {result && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-900" data-testid="reparse-outcome">
+            {result}
           </span>
         )}
       </div>
@@ -401,6 +439,23 @@ function ItemRow({
         </label>
       )}
 
+      {item.kind === 'missing' && canResolve && !resolved && !linkedTo && (
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={`${s?.label} 삭제 여부`}>
+          <span className="text-[11px] text-gray-600">승인 뒤 삭제 여부:</span>
+          <button type="button" className="text-xs px-2.5 py-1 rounded border bg-white border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50" disabled={busy} onClick={() => onResolve('keep')}>
+            유지로 닫기
+          </button>
+          <button
+            type="button"
+            className="text-xs px-2.5 py-1 rounded border bg-white border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+            disabled={busy || !isAdmin}
+            title={!isAdmin ? '폐지는 관리자만 할 수 있습니다.' : '오늘부터 이 조문을 시행에서 뺍니다(버전 이력은 남습니다)'}
+            onClick={() => onResolve('repeal')}
+          >
+            오늘 폐지
+          </button>
+        </div>
+      )}
       {linkedTo ? (
         <p className="text-[11px] text-sky-800">이 조문은 {linkedTo.parsed?.label}에 이어졌습니다.</p>
       ) : (
@@ -438,5 +493,159 @@ function ItemRow({
         )
       )}
     </li>
+  );
+}
+
+/**
+ * 반영·묶음 검토 요청·승인·반려 (T-110 ②) — 반영은 기존 조문의 초안만 만들고(지금 규정은 그대로), 새 조문·장은 승인 때 만든다.
+ * 묶음 승인은 같은 시행일로 전부 되거나 전부 안 된다.
+ */
+function BundlePanel({
+  review,
+  isAdmin,
+  canEdit,
+  busy,
+  run,
+  onRecompare,
+}: {
+  review: ReparseReview;
+  isAdmin: boolean;
+  canEdit: boolean;
+  busy: boolean;
+  run: (fn: () => Promise<ReparseReview>) => void;
+  onRecompare: () => void;
+}) {
+  const [effectiveDate, setEffectiveDate] = useState(serviceToday());
+  const [changeNote, setChangeNote] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
+  const drafts = review.items.filter((i) => i.version);
+  const plan = review.plan;
+  const status = review.status;
+  if (status === 'superseded') return null;
+  const parts = plan
+    ? [
+        drafts.length ? `묶음 초안 ${drafts.length}건` : null,
+        plan.newArticles.length ? `새 조문 ${plan.newArticles.length}건(승인 때 만듦)` : null,
+        plan.chapters.create.length ? `새 장 ${plan.chapters.create.length}개` : null,
+        plan.chapters.update.length ? `장 번호·제목 변경 ${plan.chapters.update.length}개` : null,
+        plan.repeals.length ? `폐지 ${plan.repeals.length}건` : null,
+      ].filter(Boolean)
+    : [];
+  const blocked = review.stale || review.sourceChanged;
+  return (
+    <section className="bg-white border border-gray-300 shadow-sm p-4 space-y-3" aria-label="반영과 묶음 승인" data-testid="bundle-panel">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-sm font-semibold text-gray-900">반영과 묶음 승인</h2>
+        <span className="text-[11px] px-1.5 py-0.5 rounded border border-gray-200 bg-gray-50 text-gray-700" data-testid="bundle-status">
+          {REPARSE_STATUS_LABEL[status]}
+        </span>
+      </div>
+      {status === 'open' && (
+        <>
+          <p className="text-xs text-gray-600 leading-relaxed">
+            결정대로 <b>기존 조문의 묶음 초안</b>(개정 본문·옮길 자리)을 만듭니다. 지금 규정의 본문·번호는 그대로이고, 새 조문·새 장은 묶음을 승인할 때
+            만듭니다. 초안은 규정 화면에서 고친 뒤 묶음으로 검토 요청·승인합니다.
+          </p>
+          <button
+            type="button"
+            className="btn-primary text-sm"
+            disabled={busy || !canEdit || review.undecided > 0 || blocked}
+            onClick={() => run(() => reparseApi.apply(review.id))}
+          >
+            반영 — 묶음 초안 만들기
+          </button>
+          {review.undecided > 0 && <span className="ml-2 text-[11px] text-amber-700">결정이 남은 항목 {review.undecided}건을 먼저 정하세요.</span>}
+        </>
+      )}
+      {(status === 'applied' || status === 'submitted' || status === 'approved') && parts.length > 0 && (
+        <p className="text-xs text-gray-700" data-testid="bundle-summary">
+          {parts.join(' · ')}
+        </p>
+      )}
+      {status === 'applied' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="basis-full text-[11px] text-gray-500">
+            묶음 초안은 규정 화면에서 고칠 수 있습니다. 검토 요청하면 더 고칠 수 없고, 본문의 변수 표식은 오늘 값으로 바뀝니다.
+          </p>
+          <button type="button" className="btn-primary text-sm" disabled={busy || !canEdit || review.stale} onClick={() => run(() => reparseApi.submit(review.id))}>
+            묶음 검토 요청
+          </button>
+          {isAdmin && (
+            <button type="button" className="btn-secondary text-sm" disabled={busy} onClick={() => setRejecting((v) => !v)}>
+              묶음 반려
+            </button>
+          )}
+        </div>
+      )}
+      {status === 'submitted' && (
+        <div className="space-y-2">
+          {isAdmin ? (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-[14rem_1fr] gap-2">
+                <label className="text-xs text-gray-700">
+                  사내 규정 시행일
+                  <input type="date" className="input mt-1" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+                </label>
+                <label className="text-xs text-gray-700">
+                  개정 사유
+                  <input className="input mt-1" value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="예: 취업규칙 개정 반영" />
+                </label>
+              </div>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                묶음의 모든 조문이 이 날부터 시행됩니다(전부 되거나 전부 안 됨). 자리가 바뀌는 조문은 그 전 날짜의 시점 조회에서 옛 번호로 남습니다.
+                시행일이 미래면 폐지로 정한 조문은 미결로 남고, 승인 뒤 그날이 지나 따로 폐지합니다.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={busy || !changeNote.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate) || review.stale}
+                  onClick={() => run(() => reparseApi.approve(review.id, { effectiveDate, changeNote: changeNote.trim() }))}
+                >
+                  묶음 승인 — 후속 버전 발행
+                </button>
+                <button type="button" className="btn-secondary text-sm" disabled={busy} onClick={() => setRejecting((v) => !v)}>
+                  묶음 반려
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-gray-600">관리자가 시행일·사유를 정해 묶음으로 승인합니다.</p>
+          )}
+        </div>
+      )}
+      {rejecting && (status === 'applied' || status === 'submitted') && isAdmin && (
+        <div className="flex flex-wrap items-end gap-2 border-t border-gray-100 pt-2">
+          <label className="text-xs text-gray-700 flex-1 min-w-[14rem]">
+            반려 사유
+            <input className="input mt-1" value={reason} onChange={(e) => setReason(e.target.value)} />
+          </label>
+          <button
+            type="button"
+            className="btn-secondary text-sm border-red-300 text-red-700"
+            disabled={busy || !reason.trim()}
+            onClick={() => run(() => reparseApi.reject(review.id, reason.trim()))}
+          >
+            반려 — 묶음 초안 거두기
+          </button>
+        </div>
+      )}
+      {status === 'approved' && (
+        <p className="text-xs text-emerald-800" data-testid="bundle-approved">
+          {review.effectiveDate?.slice(0, 10)}부터 시행 · 사유: {review.changeNote}
+        </p>
+      )}
+      {status === 'rejected' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs text-gray-700">반려함 — {review.rejectReason}. 묶음 초안은 거뒀습니다.</p>
+          {review.sessionId && canEdit && (
+            <button type="button" className="btn-secondary text-xs py-1" disabled={busy} onClick={onRecompare}>
+              같은 원문으로 다시 비교
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

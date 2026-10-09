@@ -400,6 +400,11 @@ model ArticleVersion {
   /// 폐지 시행일(T-126) — "게시본 폐지"로 내린 버전만 있다. 이 날부터 조문은 시행 중이 아니다.
   /// 새 버전에 밀려 내려간(대체) 버전은 비어 있다 — 상태(archived)만으로는 둘을 가를 수 없다
   repealedOn    DateTime?     @map("repealed_on") @db.Date
+  /// 버전별 계층(T-110 ②, PAT-04 최소안) — 발행 이력이면 그 버전이 시행된 동안의 **얼린 계층**(계층이 실제로 바뀐 승인 때 채운다,
+  /// 비어 있으면 지금 조문 행의 값), 초안·검토 중이면 재파싱이 **제안한 계층**(승인 때 조문 행으로 옮기고 비운다). 시행본은 늘 비어 있다
+  structure     Json?
+  /// 이 버전을 만든 재파싱 검토 항목(T-110 ②) — 묶음으로만 검토 요청·승인·반려한다(단건 처리·한꺼번에 시행에서 빠진다)
+  reparseItemId String?       @unique @map("reparse_item_id")
 
   article          Article           @relation(fields: [articleId], references: [id], onDelete: Cascade)
   /// 이 버전 본문의 변수 연결(T-109) — 위치는 이 버전 기준
@@ -408,6 +413,7 @@ model ArticleVersion {
   amendmentBases AmendmentCandidate[] @relation("AmendmentBase")
   changeEvent     LawChangeEvent?     @relation(fields: [changeEventId], references: [id], onDelete: SetNull)
   sourceCandidate AmendmentCandidate? @relation("AmendmentResult", fields: [sourceCandidateId], references: [id], onDelete: SetNull)
+  reparseItem     ReparseReviewItem?  @relation("ReparseItemVersion", fields: [reparseItemId], references: [id], onDelete: SetNull)
 
   /// 시점 조회: 조문별로 "기준일 이전 시행분 중 가장 최근" 버전을 찾는다
   @@index([articleId, effectiveDate])
@@ -1164,7 +1170,8 @@ model ReparseReview {
   sessionId        String?  @map("session_id")
   /// 원문 출처 이름(업로드 파일명·법제처 법령명)
   sourceName       String   @map("source_name")
-  /// open(결정 중) | superseded(같은 원문을 다시 비교함) | applied(반영함)
+  /// open(결정 중) | superseded(같은 원문을 다시 비교함) | applied(반영함 — 묶음 초안·계획) | submitted(묶음 검토 요청)
+  /// | approved(묶음 승인 — 후속 버전 발행) | rejected(묶음 반려)
   status           String   @default("open")
   /// 판정 규칙(reparse/1)·정규화 규칙(norm/1) 버전
   algorithm        String
@@ -1174,6 +1181,22 @@ model ReparseReview {
   /// 종류별 개수·장 대응·부칙 개수
   summary          Json
   createdBy        String?  @map("created_by")
+  /// 반영 계획(T-110 ②) — 승인 때 만들 장·절, 기존 장의 번호·제목 변경
+  plan             Json?
+  /// 묶음 지문 — 반영·검토 요청 때의 규정 상태(계층·발행 이력·작업본, 검토 요청 뒤엔 묶음 본문까지). 다음 단계에서 다시 계산해 다르면 409
+  bundleFingerprint String?  @map("bundle_fingerprint")
+  appliedAt        DateTime? @map("applied_at")
+  appliedBy        String?   @map("applied_by")
+  submittedAt      DateTime? @map("submitted_at")
+  submittedBy      String?   @map("submitted_by")
+  /// 묶음 승인 — 사내 규정 시행일·개정 사유
+  effectiveDate    DateTime? @map("effective_date") @db.Date
+  changeNote       String?   @map("change_note")
+  approvedAt       DateTime? @map("approved_at")
+  approvedBy       String?   @map("approved_by")
+  rejectedAt       DateTime? @map("rejected_at")
+  rejectedBy       String?   @map("rejected_by")
+  rejectReason     String?   @map("reject_reason")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -1215,10 +1238,13 @@ model ReparseReviewItem {
   targetArticleId String?   @map("target_article_id")
   decidedBy       String?   @map("decided_by")
   decidedAt       DateTime? @map("decided_at")
+  /// 반영·승인의 결과(T-110 ②) — 만든 초안·새 조문·폐지·유지 등
+  outcome         Json?
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   review        ReparseReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  version       ArticleVersion? @relation("ReparseItemVersion")
   article       Article?      @relation("ReparseItemArticle", fields: [articleId], references: [id], onDelete: SetNull)
   targetArticle Article?      @relation("ReparseItemTarget", fields: [targetArticleId], references: [id], onDelete: SetNull)
 

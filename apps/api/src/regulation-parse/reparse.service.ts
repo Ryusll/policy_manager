@@ -22,6 +22,7 @@ import {
   type StoredRow,
 } from './reparse-match';
 import { undecidedCount, validateDecisions, type DecisionItem } from './reparse-decisions';
+import { bundleState } from './reparse-state';
 
 type Db = PrismaService | Prisma.TransactionClient;
 
@@ -183,7 +184,16 @@ export class ReparseService {
       if (previous.length) {
         await tx.reparseReview.updateMany({ where: { id: { in: previous.map((p) => p.id) } }, data: { status: 'superseded' } });
       }
-      carryDecisions(items, previous.flatMap((p) => p.items));
+      // 묶음을 반려한 뒤 같은 원문으로 다시 비교하면 그 검토의 결정도 옮겨 온다(열린 검토가 먼저)
+      const rejected = await tx.reparseReview.findFirst({
+        where: { tenantId, policyId, sessionId, status: 'rejected' },
+        orderBy: { rejectedAt: 'desc' },
+        include: { items: true },
+      });
+      const earlier = [...previous.flatMap((p) => p.items), ...(rejected?.items ?? [])];
+      carryDecisions(items, earlier);
+      addCompanions(items, earlier);
+      summary.counts = countBuilt(items);
       return tx.reparseReview.create({
         data: {
           tenantId,
@@ -221,7 +231,7 @@ export class ReparseService {
       action: 'reparse.compare',
       entityType: 'Policy',
       entityId: policyId,
-      details: { reviewId: review.id, sessionId, sourceName: session.fileName, counts, algorithm: REPARSE_ALGORITHM, normalizer: NORMALIZE_VERSION },
+      details: { reviewId: review.id, sessionId, sourceName: session.fileName, counts: summary.counts, algorithm: REPARSE_ALGORITHM, normalizer: NORMALIZE_VERSION },
     });
     return this.get(tenantId, review.id);
   }
@@ -229,19 +239,34 @@ export class ReparseService {
   async get(tenantId: string, id: string) {
     const review = await this.prisma.reparseReview.findFirst({
       where: { id, tenantId },
-      include: { items: { orderBy: { seq: 'asc' } }, policy: { select: { id: true, code: true, title: true } } },
+      include: {
+        items: {
+          orderBy: { seq: 'asc' },
+          // 이 항목이 만든 묶음 버전(T-110 ②)
+          include: { version: { select: { id: true, articleId: true, versionNum: true, status: true, content: true, structure: true, reviewNote: true } } },
+        },
+        policy: { select: { id: true, code: true, title: true } },
+      },
     });
     if (!review) throw new NotFoundException('Reparse review not found');
-    // 비교한 뒤 규정이 바뀌었거나(다른 개정·재정렬) 원문 트리를 고쳤으면 다시 비교해야 한다
-    const current = await this.loadStored(this.prisma, review.policyId);
-    const session = review.sessionId
-      ? await this.prisma.regulationParseSession.findUnique({ where: { id: review.sessionId }, select: { parseTree: true } })
-      : null;
-    const summary = review.summary as { treeFingerprint?: string };
-    const sourceChanged = !!session && treeFingerprint((session.parseTree as { roots?: unknown } | null)?.roots) !== summary.treeFingerprint;
+    // 결정 중이면: 비교한 뒤 규정이 바뀌었거나(다른 개정·재정렬) 원문 트리를 고쳤으면 다시 비교해야 한다.
+    // 반영·검토 요청 뒤면: 그때의 묶음 지문과 지금이 다르면 그 단계로 넘어갈 수 없다(반려하고 다시 비교)
+    let stale = false;
+    let sourceChanged = false;
+    if (review.status === 'open') {
+      const current = await this.loadStored(this.prisma, review.policyId);
+      stale = current.state !== review.stateFingerprint;
+      const session = review.sessionId
+        ? await this.prisma.regulationParseSession.findUnique({ where: { id: review.sessionId }, select: { parseTree: true } })
+        : null;
+      const summary = review.summary as { treeFingerprint?: string };
+      sourceChanged = !!session && treeFingerprint((session.parseTree as { roots?: unknown } | null)?.roots) !== summary.treeFingerprint;
+    } else if (review.status === 'applied' || review.status === 'submitted') {
+      stale = (await bundleState(this.prisma, review.policyId, review.plan, review.status === 'submitted')) !== review.bundleFingerprint;
+    }
     return {
       ...review,
-      stale: current.state !== review.stateFingerprint,
+      stale,
       sourceChanged,
       undecided: undecidedCount(review.items),
       items: review.items.map((i) => {
@@ -322,8 +347,66 @@ export class ReparseService {
           data: { decision: d.decision, targetArticleId: d.targetArticleId, decidedBy: userId, decidedAt: now },
         });
       }
+      // 옮김·본문 바뀜을 새 조문으로 돌리면 그 기존 조문은 원문에 없음(삭제 여부 확인) 항목이 된다 — 반영 전에 유지·폐지를
+      // 정할 수 있게 지금 만든다. 다시 돌려놓으면 그 항목을 거둔다(그 조문을 다른 항목이 잇고 있으면 위 검사에서 이미 막힌다)
+      let seq = review.items.reduce((m, i) => Math.max(m, i.seq), -1) + 1;
+      for (const [itemId, d] of next) {
+        const cur = byId.get(itemId)!;
+        if ((cur.kind !== 'moved' && cur.kind !== 'changed') || !cur.articleId) continue;
+        const companion = review.items.find((i) => isCompanion(i) && i.articleId === cur.articleId);
+        if (d.decision === 'new' && !companion) {
+          await tx.reparseReviewItem.create({
+            data: {
+              reviewId: id,
+              seq: seq++,
+              kind: 'missing',
+              articleId: cur.articleId,
+              stored: (cur.stored ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+              reasons: ['released'] as unknown as Prisma.InputJsonValue,
+            },
+          });
+        } else if (d.decision !== 'new' && companion) {
+          await tx.reparseReviewItem.delete({ where: { id: companion.id } });
+        }
+      }
     });
     return this.get(tenantId, id);
+  }
+}
+
+/** 새 조문으로 돌린 짝의 기존 조문을 맡은 원문에 없음 항목 */
+const isCompanion = (i: { kind: string; reasons: unknown }) =>
+  i.kind === 'missing' && Array.isArray(i.reasons) && (i.reasons as string[]).includes('released');
+
+function countBuilt(items: { kind: string }[]) {
+  const counts: Record<string, number> = { same: 0, moved: 0, changed: 0, ambiguous: 0, new: 0, missing: 0 };
+  for (const i of items) counts[i.kind] += 1;
+  return counts;
+}
+
+/**
+ * 다시 비교한 뒤에도 새 조문으로 돌린 짝이 있으면 그 기존 조문의 원문에 없음 항목을 다시 둔다 — 앞 검토에서 정한 유지·폐지도 옮긴다.
+ */
+function addCompanions(items: BuiltItem[], previous: { kind: string; reasons: unknown; articleId: string | null; decision: string | null; decidedBy: string | null; decidedAt: Date | null }[]) {
+  const before = new Map(previous.filter((i) => isCompanion(i) && i.decidedBy).map((i) => [i.articleId, i]));
+  for (const item of [...items]) {
+    if ((item.kind !== 'moved' && item.kind !== 'changed') || item.decision !== 'new' || !item.articleId) continue;
+    if (items.some((x) => x.kind === 'missing' && x.articleId === item.articleId)) continue;
+    const prev = before.get(item.articleId);
+    items.push({
+      kind: 'missing',
+      articleId: item.articleId,
+      parsed: null,
+      stored: item.stored,
+      candidates: [],
+      reasons: ['released'],
+      changes: null,
+      recommended: false,
+      decision: prev?.decision === 'keep' || prev?.decision === 'repeal' ? prev.decision : null,
+      targetArticleId: null,
+      decidedBy: prev?.decidedBy ?? null,
+      decidedAt: prev?.decidedAt ?? null,
+    });
   }
 }
 
