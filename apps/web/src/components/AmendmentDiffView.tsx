@@ -5,7 +5,7 @@ import type { CandidateChange } from '../api/amendments';
  * 제1 조문 대비 개정 후보 — 바뀐 부분을 눌러 근거를 보는 비교 표시 (T-107, 특허 도 11).
  *
  * 서버가 준 문자 구간(`diff.changes`)으로 그린다. 변경 하나(삭제+추가)가 한 단위라서, 누르면 그 변경의
- * 근거가 옆에 뜬다. 삭제는 취소선, 추가는 밑줄. 근거가 연결되지 않은 변경은 점선 테두리로 표시한다 —
+ * 근거가 옆에 뜬다. 삭제는 취소선, 추가는 밑줄. 근거(법령·변수, T-109 ②)가 연결되지 않은 변경은 점선 테두리로 표시한다 —
  * 사람이 고쳤거나 규칙 밖에서 바뀐 곳이라 검토해야 한다. outline 이 아니라 border 로 그리는 것은, 누르면
  * 포커스 스타일이 outline 을 덮어 표시가 사라지기 때문이다.
  */
@@ -24,7 +24,7 @@ export default function AmendmentDiffView({
   let pos = 0;
   for (const ch of changes) {
     if (ch.base.start > pos) pieces.push(<span key={`e${pos}`}>{base.slice(pos, ch.base.start)}</span>);
-    const unexplained = ch.rationaleRefs.length === 0;
+    const unexplained = ch.rationaleRefs.length === 0 && (ch.variableRefs ?? []).length === 0;
     pieces.push(
       <button
         key={`c${ch.index}`}

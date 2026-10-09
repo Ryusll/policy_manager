@@ -6,6 +6,7 @@ import {
   REVIEW_STATE_LABEL,
   RULE_LABEL,
   UNMAPPED_REASON_LABEL,
+  VARIABLE_HOLD_LABEL,
   type AmendmentCandidate,
 } from '../api/amendments';
 
@@ -93,6 +94,29 @@ export default function AmendmentCandidatePreview({
               <span className="text-rose-800">{a.base.text}</span> → <span className="text-emerald-800">{a.candidate.text}</span>
             </li>
           ))}
+        </ul>
+      )}
+
+      {/* 변수 값(T-109 ②) — 법령 근거와 따로. 이미 그 날 값인 자리는 빼고 보인다 */}
+      {(rationale.variables ?? []).some((v) => v.status !== 'unchanged') && (
+        <ul className="text-[11px] space-y-0.5" data-testid="candidate-variables">
+          {(rationale.variables ?? [])
+            .filter((v) => v.status !== 'unchanged')
+            .map((v) => (
+              <li key={v.index} className={v.status === 'applied' ? 'text-gray-600' : 'text-amber-900'}>
+                <span className="text-violet-700">변수 · {v.label}</span>{' '}
+                {v.status === 'applied' ? (
+                  <>
+                    <span className="text-rose-800">{v.base.text}</span> → <span className="text-emerald-800">{v.value}</span>{' '}
+                    <span className="text-gray-500">(예정 사내 시행일 {candidate.plannedEffectiveDate} 값)</span>
+                  </>
+                ) : (
+                  <>
+                    "{v.base.text}" — {VARIABLE_HOLD_LABEL[v.reason ?? ''] ?? v.reason}
+                  </>
+                )}
+              </li>
+            ))}
         </ul>
       )}
 

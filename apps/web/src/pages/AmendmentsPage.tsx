@@ -196,7 +196,9 @@ function AmendmentRow({ row }: { row: AmendmentListItem }) {
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-500">비활성 규정</span>
           )}
           {!row.isCurrentBase && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">기준 본문 바뀜</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">
+              {row.staleReason === 'variable_changed' ? '변수 값 바뀜' : row.staleReason === 'repealed' ? '조문 폐지됨' : '기준 본문 바뀜'}
+            </span>
           )}
           {!row.current.hasChanges && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">직접 작성 필요</span>

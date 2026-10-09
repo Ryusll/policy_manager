@@ -206,7 +206,8 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `AmendmentCandidate` · `LawChangeEvent.amendmentsProcessedAt` · `UserNotification.link` | ✅ **스키마에 있다** (T-106, 마이그레이션 `20261008120000_amendment_candidates`) |
 | `AmendmentRevision` · `AmendmentStateChange` · `AmendmentCandidate.revision`·`lockVersion` | ✅ **스키마에 있다** (T-107, 마이그레이션 `20261008180000_amendment_review`) |
 | `ArticleVersion.publishedAt`·`changeEventId`·`sourceCandidateId` · `AmendmentCandidate.baseFingerprint` | ✅ **스키마에 있다** (T-108, 마이그레이션 `20261009090000_amendment_approval`) |
-| `VariableValue` · `VariableBinding`(옛 `VariableUsage` 대체) | ✅ **스키마에 있다** (T-109 ①, 마이그레이션 `20261009150000_variable_values_bindings`) — 후보 생성 때 값 반영은 2단계 |
+| `VariableValue` · `VariableBinding`(옛 `VariableUsage` 대체) | ✅ **스키마에 있다** (T-109 ①, 마이그레이션 `20261009150000_variable_values_bindings`) |
+| `AmendmentCandidate.plannedEffectiveDate`·`variableFingerprint` | ✅ **스키마에 있다** (T-109 ②, 마이그레이션 `20261009180000_amendment_variables`) |
 
 ### 3.1 관계 개요
 
@@ -339,10 +340,10 @@ amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. n
 | changeEventId | uuid FK → LawChangeEvent (**restrict**) | 개정의 원인. 지워지면 원천이 사라지므로 법령 추적 해제를 막는다 |
 | lawLinkId | uuid FK? → LawLink (SetNull) | 영향을 찾은 연결. 지워져도 후보는 남는다(근거는 rationale 스냅샷) |
 | candidateContent | text | **제2 조문** — 개정 후보 본문. 반영한 것이 없으면 제1 조문 그대로 |
-| rationale | json | 변경 근거 정보 — 법령 변경 부분·연결 스냅샷(유형·근거 문구·확정 상태)·경로·적용 규칙·반영하지 못한 변경·충돌·기준 발행본 |
-| diff | json | 변경 전후 비교 정보 — 제1 조문 대 후보의 실제 차이(문자 구간, 구간별 근거 연결, 근거 없는 구간 수) |
+| rationale | json | 변경 근거 정보 — 법령 변경 부분·연결 스냅샷(유형·근거 문구·확정 상태)·경로·적용 규칙·반영하지 못한 변경·충돌·기준 발행본·**변수 근거** `variables[]`(T-109 ②, `rationale/2` — 연결·고른 값(id·문구)·유효기간·범위·기준/후보 위치·상태(넣음·그대로·보류·충돌)·까닭) |
+| diff | json | 변경 전후 비교 정보 — 제1 조문 대 후보의 실제 차이(문자 구간, 구간별 근거 연결 — 법령 `rationaleRefs` 와 변수 `variableRefs` 를 따로(T-109 ②), 근거 없는 구간 수) |
 | generationMethod | enum AmendmentMethod | rule(규칙+템플릿) / llm(언어모델, T-112) |
-| variant | string | 같은 방식 안의 개정안 구분 — 규칙 기반은 규칙 세트 버전(`rule/1`) |
+| variant | string | 같은 방식 안의 개정안 구분 — 규칙 기반은 규칙 세트 버전(`rule/1`, 변수 값 넣기를 더한 `rule/2` — T-109 ②) |
 | generationMeta | json? | 규칙·템플릿 id·버전, 신뢰도 판정(단계·이유·반영률), 입력 원천(이벤트·전후 판 키·조문·발행본·연결·기준일), 생성 주체(user/system) |
 | confidence | enum AmendmentConfidence | high / medium / low — 후보 신뢰도. 관계 신뢰도(`LawLink.confidence`)와 별개 |
 | reviewFlags | string[] | 사람이 봐야 하는 이유(`manual_draft_required`·`ambiguous_match`·`rule_conflict` 등) |
@@ -350,10 +351,12 @@ amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. n
 | revision | int | 지금 본문의 판 번호 — 생성본 1, 사람이 고칠 때마다 1씩(T-107). 판마다의 본문은 `AmendmentRevision` |
 | lockVersion | int | 낙관적 잠금 — 손질·검토 요청 등 후보가 바뀔 때마다 1씩. 화면이 본 값과 다르면 409(T-107) |
 | asOfDate | date | 영향 분석 기준일 — 제1 조문을 고른 날 |
+| plannedEffectiveDate | date | **예정 사내 시행일**(T-109 ②) — 변수 값을 고른 날. 법령 시행일·영향 분석 기준일과 다르다. 승인 때 확정하는 시행일은 따로 받고, 그 날 다시 고른 변수 값이 이 후보와 다르면 승인하지 않는다. 기존 후보는 만들 때의 기준일로 채웠다 |
+| variableFingerprint | string | 변수 입력 지문(`vf1:` 접두어, 연결이 없으면 빈 값) — 연결·고른 값·결과. 같은 기준 본문이라도 값만 달라진 후보를 가른다 |
 | createdBy | string? | 만든 사람. 동기화가 자동으로 만들었으면 null |
 | createdAt / updatedAt | datetime | |
 
-유니크 `[tenantId, changeEventId, articleId, baseVersionId, baseFingerprint, generationMethod, variant]` — 자동 생성과 버튼이 겹치거나 다시 눌러도 같은 후보는 하나다(`INSERT … ON CONFLICT DO NOTHING`). 발행 이력 지문이 들어 있어, 기준 본문은 같아도 그 사이 다른 발행이 있었으면 "다시 만들기"가 새 후보를 만든다(T-108).
+유니크 `[tenantId, changeEventId, articleId, baseVersionId, baseFingerprint, generationMethod, variant, plannedEffectiveDate, variableFingerprint]`(뒤의 둘은 T-109 ②) — 자동 생성과 버튼이 겹치거나 다시 눌러도 같은 후보는 하나다(`INSERT … ON CONFLICT DO NOTHING`). 발행 이력 지문이 들어 있어, 기준 본문은 같아도 그 사이 다른 발행이 있었으면 "다시 만들기"가 새 후보를 만든다(T-108).
 인덱스 `[tenantId, reviewState, createdAt]`, `[tenantId, articleId]`, `[changeEventId]`.
 승인·반려(T-108)는 컬럼을 더하지 않았다 — 결정(누가·언제·어느 판·사유)은 `AmendmentStateChange` 에, 승인으로 발행된 버전은 `ArticleVersion.sourceCandidateId` 역관계로 찾는다.
 

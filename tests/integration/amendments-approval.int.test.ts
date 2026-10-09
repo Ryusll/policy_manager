@@ -229,7 +229,7 @@ describe('T-108 개정 후보 승인·반려', () => {
         candidate: { id: cand.x, revision: 1, revisionHash: sha(TEXT_20), baseVersionId: ver.x },
         comparison: { changes: 1, unexplained: 0 },
         changeNote: '근로기준법 제60조 개정 반영',
-        evidence: { link: { relationType: 'delegation', evidenceText: '연차휴가 일수' }, engine: 'rule/1' },
+        evidence: { link: { relationType: 'delegation', evidenceText: '연차휴가 일수' }, engine: 'rule/2' },
       });
       expect(row.details.comparison.revisionId).toBeTruthy();
     });

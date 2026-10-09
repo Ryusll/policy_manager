@@ -7,6 +7,14 @@ import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notif
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { impactReferenceDate } from '../law-changes/law-impact';
 import { VariablesService } from '../variables/variables.service';
+import {
+  compareVariableEffects,
+  planVariables,
+  variableFingerprint,
+  type BindingInput,
+  type ValueInput,
+  type VariableEntry,
+} from './amendment-variables';
 import { labelFromNodeKey } from '../laws/law-rows';
 import {
   LawChangesService,
@@ -59,6 +67,7 @@ const OWNED_SELECT = {
   candidateContent: true,
   rationale: true,
   generationMeta: true,
+  plannedEffectiveDate: true,
   revision: true,
   lockVersion: true,
   reviewState: true,
@@ -89,7 +98,7 @@ const OWNED_SELECT = {
 type OwnedCandidate = Prisma.AmendmentCandidateGetPayload<{ select: typeof OWNED_SELECT }>;
 
 /** 승인을 막는 이유 — 화면이 원인별로 안내한다(코덱스 자문 결정 3) */
-type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed';
+type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed' | 'variable_changed';
 /** 지금 다시 만들면 고를 기준 본문 — 기준일에 조문이 폐지돼 있으면 id 없이 repealed(T-126) */
 type CurrentBase = { id: string | null; repealed: boolean };
 const blocked = (reason: ApproveBlock, message: string) => new ConflictException({ message, reason });
@@ -114,6 +123,8 @@ export type CandidateBrief = {
 export type GenerateResult = {
   changeEventId: string;
   asOf: string;
+  /** 예정 사내 시행일 — 변수 값을 고른 날(T-109 ②) */
+  plannedEffectiveDate: string;
   /** 이번에 새로 만든 후보 */
   created: CandidateBrief[];
   /** 같은 이벤트·조문·기준 발행본으로 이미 있던 후보 — 다시 만들지 않는다(사람이 손댄 것을 덮지 않는다) */
@@ -151,15 +162,19 @@ export class AmendmentsService {
   async generateForEvent(
     tenantId: string,
     eventId: string,
-    opts: { asOf?: string; userId: string | null; notify?: boolean; articleId?: string },
+    opts: { asOf?: string; plannedEffectiveDate?: string; userId: string | null; notify?: boolean; articleId?: string },
   ): Promise<GenerateResult> {
     const event = await this.prisma.lawChangeEvent.findUnique({ where: { id: eventId }, select: SOURCE_SELECT });
     if (!event) throw new NotFoundException('변경 이벤트를 찾을 수 없습니다.');
 
     const asOfDate = this.lawChanges.referenceDate(event.lawEffectiveDate, opts.asOf);
+    // 예정 사내 시행일 — 변수 값을 고르는 날(T-109 ②). 따로 주지 않으면 기준일(시행 전 개정이면 법령 시행일)
+    const planned = opts.plannedEffectiveDate !== undefined ? parseDateOnly(opts.plannedEffectiveDate) : asOfDate;
+    if (!planned) throw new BadRequestException('예정 사내 시행일(plannedEffectiveDate)은 실제로 있는 날짜여야 합니다.');
     const result: GenerateResult = {
       changeEventId: event.id,
       asOf: toDateOnlyString(asOfDate),
+      plannedEffectiveDate: toDateOnlyString(planned),
       created: [],
       existing: [],
       skipped: [],
@@ -178,6 +193,8 @@ export class AmendmentsService {
     const rows: Prisma.AmendmentCandidateCreateManyInput[] = [];
     // 기준 본문과 함께 그 조문의 발행 이력 지문을 고정한다(T-108) — 승인 때 다시 계산해 그 사이 다른 발행을 잡는다
     const fps = await this.fingerprints(impacted.filter((i) => i.baseVersion).map((i) => i.article.id));
+    // 기준 본문 버전의 변수 연결과 그 변수들의 값(T-109 ②) — 영향 조문이면서 연결된 조문에만 값을 넣는다
+    const vars = await this.variableInputs(this.prisma, tenantId, impacted.flatMap((i) => (i.baseVersion ? [i.baseVersion.id] : [])));
     for (const item of impacted) {
       if (!item.baseVersion) {
         result.skipped.push({
@@ -188,7 +205,13 @@ export class AmendmentsService {
         });
         continue;
       }
-      rows.push(this.buildRow(tenantId, event, item, asOfDate, opts.userId, fps.get(item.article.id)!));
+      rows.push(
+        this.buildRow(tenantId, event, item, asOfDate, opts.userId, fps.get(item.article.id)!, {
+          planned,
+          bindings: vars.bindings.get(item.baseVersion.id) ?? [],
+          values: vars.values,
+        }),
+      );
     }
     if (!rows.length) return result;
 
@@ -228,6 +251,7 @@ export class AmendmentsService {
             law: event.law.lawName,
             label: event.lawArticle?.label ?? labelFromNodeKey(event.nodeKey),
             asOf: result.asOf,
+            plannedEffectiveDate: result.plannedEffectiveDate,
             beforeVersionKey: event.beforeVersionKey,
             afterVersionKey: event.afterVersionKey,
             ruleset: RULESET_VERSION,
@@ -237,6 +261,8 @@ export class AmendmentsService {
               baseVersionId: m.baseVersionId,
               confidence: m.confidence,
               reviewFlags: m.reviewFlags,
+              // 변수 선택(T-109 ②) — 어느 연결에 어떤 값을 넣었는지·왜 넣지 않았는지
+              variables: variableSummary(rowOf(m).rationale),
             })),
           },
         },
@@ -255,7 +281,13 @@ export class AmendmentsService {
           changeEventId: event.id,
           generationMethod: 'rule',
           variant: RULESET_VERSION,
-          OR: notCreated.map((r) => ({ articleId: r.articleId, baseVersionId: r.baseVersionId, baseFingerprint: r.baseFingerprint })),
+          OR: notCreated.map((r) => ({
+            articleId: r.articleId,
+            baseVersionId: r.baseVersionId,
+            baseFingerprint: r.baseFingerprint,
+            plannedEffectiveDate: r.plannedEffectiveDate,
+            variableFingerprint: r.variableFingerprint,
+          })),
         },
         select: { id: true, articleId: true, baseVersionId: true, confidence: true, reviewFlags: true },
       });
@@ -352,6 +384,8 @@ export class AmendmentsService {
           confidence: true,
           reviewFlags: true,
           asOfDate: true,
+          plannedEffectiveDate: true,
+          rationale: true,
           createdBy: true,
           createdAt: true,
           updatedAt: true,
@@ -386,6 +420,10 @@ export class AmendmentsService {
       rows.map((r) => ({ articleId: r.articleId, lawEffectiveDate: r.changeEvent.lawEffectiveDate })),
     );
     const fps = await this.fingerprints([...new Set(rows.map((r) => r.articleId))]);
+    const drifted = await this.variableDrift(
+      tenantId,
+      rows.map((r) => ({ id: r.id, baseVersionId: r.baseVersionId, baseContent: r.baseVersion.content, planned: r.plannedEffectiveDate, rationale: r.rationale })),
+    );
     const creatorIds = [...new Set(rows.map((r) => r.createdBy).filter((v): v is string => !!v))];
     const creators = creatorIds.length
       ? await this.prisma.user.findMany({ where: { tenantId, id: { in: creatorIds } }, select: { id: true, name: true } })
@@ -423,7 +461,9 @@ export class AmendmentsService {
             r,
             current.get(this.baseKey(r.articleId, e.lawEffectiveDate)) ?? null,
             fps.get(r.articleId) ?? null,
+            drifted.has(r.id),
           ),
+          plannedEffectiveDate: toDateOnlyString(r.plannedEffectiveDate),
           event: {
             id: e.id,
             lawId: e.lawId,
@@ -459,8 +499,13 @@ export class AmendmentsService {
     const content = dto.candidateContent;
     if (content === cand.candidateContent) throw new BadRequestException('바뀐 내용이 없습니다.');
 
-    const applied = ((cand.rationale as { applications?: AppliedRule[] } | null)?.applications ?? []) as AppliedRule[];
-    const diff = relinkDiff(cand.baseVersion.content, content, applied);
+    const rationaleIn = cand.rationale as { applications?: AppliedRule[]; variables?: VariableEntry[] } | null;
+    const applied = (rationaleIn?.applications ?? []) as AppliedRule[];
+    // 변수 값을 넣은 자리도 다시 잇는다(T-109 ②) — 사람이 그 자리를 고쳤으면 변수 근거가 끊긴다
+    const appliedVariables = (rationaleIn?.variables ?? []).flatMap((v) =>
+      v.status === 'applied' && v.candidate ? [{ id: v.index, base: v.base, candidate: { text: v.candidate.text } }] : [],
+    );
+    const diff = relinkDiff(cand.baseVersion.content, content, applied, appliedVariables);
     const nextRevision = cand.revision + 1;
     const fromState = cand.reviewState;
 
@@ -550,10 +595,14 @@ export class AmendmentsService {
     }
     const current = await this.currentBases([{ articleId: cand.articleId, lawEffectiveDate: cand.changeEvent.lawEffectiveDate }]);
     const fps = await this.fingerprints([cand.articleId]);
+    const drifted = await this.variableDrift(tenantId, [
+      { id: cand.id, baseVersionId: cand.baseVersionId, baseContent: cand.baseVersion.content, planned: cand.plannedEffectiveDate, rationale: cand.rationale },
+    ]);
     const baseChanged = !this.staleness(
       cand,
       current.get(this.baseKey(cand.articleId, cand.changeEvent.lawEffectiveDate)) ?? null,
       fps.get(cand.articleId) ?? null,
+      drifted.has(cand.id),
     ).isCurrentBase;
 
     await this.prisma.$transaction(async (tx) => {
@@ -591,10 +640,16 @@ export class AmendmentsService {
    * 옛 후보는 그대로 두고(사람이 고친 것을 옮기지 않는다) 둘은 같은 변경·조문의 후보로 이어진다.
    * 지금 기준 본문의 후보가 이미 있으면 그것을 돌려준다.
    */
-  async regenerate(tenantId: string, id: string, userId: string, asOf?: string) {
+  async regenerate(tenantId: string, id: string, userId: string, asOf?: string, plannedEffectiveDate?: string) {
     const cand = await this.findOwned(tenantId, id);
-    // asOf — 승인하려던 시행일로 다시 만들 때(T-108). 그 날 시행 중인 본문이 새 후보의 기준 본문이 된다
-    const r = await this.generateForEvent(tenantId, cand.changeEventId, { userId, articleId: cand.articleId, asOf });
+    // asOf — 승인하려던 시행일로 다시 만들 때(T-108). 그 날 시행 중인 본문이 새 후보의 기준 본문이 된다.
+    // 예정 사내 시행일(T-109 ②)은 따로 주지 않으면 asOf 와 같은 날 — 승인하려던 시행일의 변수 값으로 다시 만든다
+    const r = await this.generateForEvent(tenantId, cand.changeEventId, {
+      userId,
+      articleId: cand.articleId,
+      asOf,
+      plannedEffectiveDate: plannedEffectiveDate ?? asOf,
+    });
     const hit = [...r.created, ...r.existing].find((c) => c.articleId === cand.articleId) ?? null;
     return {
       candidateId: hit?.id ?? null,
@@ -715,6 +770,19 @@ export class AmendmentsService {
           '후보를 만든 뒤 이 조문에 다른 발행·폐지·시행일 보정이 있었습니다 — 다시 만들어 검토하세요.',
         );
       }
+      // 변수 값(T-109 ②) — 승인하는 시행일에 다시 골라도 후보가 넣은 값과 같아야 한다. 변수를 잠그고 읽는다(값 고치기와 줄 세움)
+      const vin = await this.variableInputs(tx, tenantId, [cand.baseVersionId], true);
+      const expectedVars = planVariables(cand.baseVersion.content, vin.bindings.get(cand.baseVersionId) ?? [], vin.values, effective).entries;
+      const storedVars = (cand.rationale as { variables?: VariableEntry[] } | null)?.variables;
+      const mismatches = compareVariableEffects(storedVars, expectedVars);
+      if (mismatches.length) {
+        const what = mismatches.map((m) =>
+          m.released
+            ? `${m.label} "${m.candidate}"(연결이 풀림)`
+            : `${m.label} "${m.candidate}" → ${m.expected === null ? '값을 정할 수 없음' : `"${m.expected}"`}`,
+        );
+        throw blocked('variable_changed', `${E}에 쓸 변수 값이 이 후보와 다릅니다 — ${what.join(', ')}. 이 시행일 기준으로 다시 만들어 검토하세요.`);
+      }
 
       const updated = await tx.amendmentCandidate.updateMany({
         where: { id, tenantId, reviewState: 'review', revision: cand.revision, lockVersion: cand.lockVersion },
@@ -746,13 +814,19 @@ export class AmendmentsService {
         },
         select: { id: true, versionNum: true },
       });
-      // 기준 본문의 변수 연결을 새 버전으로 옮긴다(T-109) — 후보가 바꾼 구간에 걸린 연결은 "다시 이어야 함"
+      // 기준 본문의 변수 연결을 새 버전으로 옮긴다(T-109) — 후보가 값을 넣은 자리는 그 값으로 잇고, 그 밖에 후보가
+      // 바꾼 구간에 걸린 연결은 "다시 이어야 함"
       await this.variables.inheritBindings(
         tx,
         tenantId,
         { id: cand.baseVersionId, content: cand.baseVersion.content },
         { id: version.id, articleId: cand.articleId, content: rev.content },
         userId,
+        new Map(
+          (storedVars ?? [])
+            .filter((v) => v.status === 'applied' && v.value !== null)
+            .map((v) => [v.bindingId, { text: v.value!, valueId: v.valueId }] as const),
+        ),
       );
       const decision = await tx.amendmentStateChange.create({
         data: {
@@ -811,6 +885,9 @@ export class AmendmentsService {
             changeNote,
             earlyReason,
             evidence: { link: rationale.link ?? null, engine: meta.engine ?? null, rules: meta.rules ?? null, templates: meta.templates ?? null },
+            // 변수 선택(T-109 ②, 특허 도 12) — 어느 연결에 어떤 값(유효기간·범위)을 넣었는지
+            plannedEffectiveDate: dateOnly(cand.plannedEffectiveDate),
+            variables: variableSummary(cand.rationale),
           } as Prisma.InputJsonValue,
         },
       });
@@ -1021,6 +1098,41 @@ export class AmendmentsService {
     return `${articleId}|${toDateOnlyString(impactReferenceDate(lawEffectiveDate, todayDateOnly()))}`;
   }
 
+  /**
+   * 기준 본문 버전들의 변수 연결과 그 변수들의 값(T-109 ②). 승인 때는 변수를 잠근 뒤 값을 읽는다(값 고치기와 줄 세움).
+   */
+  private async variableInputs(db: Prisma.TransactionClient, tenantId: string, versionIds: string[], lock = false) {
+    const bindings = new Map<string, BindingInput[]>();
+    if (!versionIds.length) return { bindings, values: [] as ValueInput[] };
+    const rows = await db.variableBinding.findMany({
+      where: { tenantId, versionId: { in: [...new Set(versionIds)] }, state: 'active' },
+      select: {
+        id: true,
+        versionId: true,
+        variableId: true,
+        origin: true,
+        start: true,
+        end: true,
+        text: true,
+        variable: { select: { key: true, label: true } },
+      },
+    });
+    const variableIds = [...new Set(rows.map((r) => r.variableId))];
+    if (lock && variableIds.length) await db.$queryRaw`SELECT id FROM variables WHERE id = ANY(${variableIds}::text[]) FOR SHARE`;
+    const values = variableIds.length
+      ? await db.variableValue.findMany({
+          where: { tenantId, variableId: { in: variableIds } },
+          select: { id: true, variableId: true, value: true, validFrom: true, validTo: true, periodConfirmed: true },
+        })
+      : [];
+    for (const r of rows) {
+      const list = bindings.get(r.versionId) ?? [];
+      list.push({ id: r.id, variableId: r.variableId, key: r.variable.key, label: r.variable.label, origin: r.origin, start: r.start, end: r.end, text: r.text });
+      bindings.set(r.versionId, list);
+    }
+    return { bindings, values };
+  }
+
   /** 조문별 발행 이력 지문(T-108) */
   private async fingerprints(articleIds: string[], db: Prisma.TransactionClient = this.prisma) {
     if (!articleIds.length) return new Map<string, string>();
@@ -1040,13 +1152,34 @@ export class AmendmentsService {
     c: { baseVersionId: string; baseFingerprint: string | null },
     current: CurrentBase | null,
     currentFingerprint: string | null,
-  ): { isCurrentBase: boolean; staleReason: 'repealed' | 'base_changed' | 'history_changed' | null } {
+    variableChanged = false,
+  ): { isCurrentBase: boolean; staleReason: 'repealed' | 'base_changed' | 'history_changed' | 'variable_changed' | null } {
     if (current?.repealed) return { isCurrentBase: false, staleReason: 'repealed' };
     if ((current?.id ?? null) !== c.baseVersionId) return { isCurrentBase: false, staleReason: 'base_changed' };
     if (c.baseFingerprint && currentFingerprint && currentFingerprint !== c.baseFingerprint) {
       return { isCurrentBase: false, staleReason: 'history_changed' };
     }
+    // 기준 본문은 그대로여도 예정 시행일의 변수 값(값·유효기간·연결)이 바뀌었으면 낡은 후보다(T-109 ②)
+    if (variableChanged) return { isCurrentBase: false, staleReason: 'variable_changed' };
     return { isCurrentBase: true, staleReason: null };
+  }
+
+  /**
+   * 후보가 넣은 변수 값이 지금 예정 시행일 기준으로 다시 골라도 같은가 — 다른 후보 id 들(T-109 ②). 값을 고치거나
+   * 연결을 새로 잇거나 풀면 후보는 그대로라, 화면이 그 사실을 알려야 한다(승인은 어차피 다시 확인한다).
+   */
+  private async variableDrift(
+    tenantId: string,
+    rows: Array<{ id: string; baseVersionId: string; baseContent: string; planned: Date; rationale: unknown }>,
+  ): Promise<Set<string>> {
+    const vin = await this.variableInputs(this.prisma, tenantId, rows.map((r) => r.baseVersionId));
+    const drifted = new Set<string>();
+    for (const r of rows) {
+      const expected = planVariables(r.baseContent, vin.bindings.get(r.baseVersionId) ?? [], vin.values, r.planned).entries;
+      const stored = (r.rationale as { variables?: VariableEntry[] } | null)?.variables;
+      if (compareVariableEffects(stored, expected).length) drifted.add(r.id);
+    }
+    return drifted;
   }
 
   /**
@@ -1119,7 +1252,10 @@ export class AmendmentsService {
     const currentNow = current.get(this.baseKey(row.articleId, e.lawEffectiveDate)) ?? null;
     const currentBaseId = currentNow?.id ?? null;
     const fps = await this.fingerprints([row.articleId]);
-    const stale = this.staleness(row, currentNow, fps.get(row.articleId) ?? null);
+    const drifted = await this.variableDrift(tenantId, [
+      { id: row.id, baseVersionId: row.baseVersionId, baseContent: row.baseVersion.content, planned: row.plannedEffectiveDate, rationale: row.rationale },
+    ]);
+    const stale = this.staleness(row, currentNow, fps.get(row.articleId) ?? null, drifted.has(row.id));
     const decision = await this.prisma.amendmentStateChange.findFirst({
       where: { candidateId: id, tenantId, toState: { in: ['approved', 'rejected'] } },
       orderBy: { createdAt: 'desc' },
@@ -1219,8 +1355,11 @@ export class AmendmentsService {
     asOfDate: Date,
     userId: string | null,
     baseFingerprint: string,
+    variables: { planned: Date; bindings: BindingInput[]; values: ValueInput[] },
   ): Prisma.AmendmentCandidateCreateManyInput {
     const base = item.baseVersion!;
+    // 변수 값(T-109 ②) — 예정 사내 시행일에 맞는 값을 연결된 자리에. 법령 고침과 같은 자리면 엔진이 원문을 둔다
+    const plan = planVariables(base.content, variables.bindings, variables.values, variables.planned);
     const r = generateRuleCandidate({
       lawBefore: event.beforeContent,
       lawAfter: event.afterContent,
@@ -1228,7 +1367,16 @@ export class AmendmentsService {
       relationType: item.relationType,
       scope: item.scope,
       evidenceText: item.evidenceText,
+      variables: plan.proposals,
     });
+    const variableEntries: VariableEntry[] = plan.entries.map((e) => {
+      const applied = r.variableApplications.find((a) => a.ref === e.index);
+      if (applied) return { ...e, candidate: applied.candidate };
+      if (r.variableConflicts.includes(e.index)) return { ...e, status: 'conflict', reason: 'law_conflict' };
+      return e;
+    });
+    const flags = new Set<string>(r.flags);
+    if (variableEntries.some((e) => e.status === 'held')) flags.add('variable_unresolved');
     const lawLabel = event.lawArticle?.label ?? labelFromNodeKey(event.nodeKey);
     const asOf = toDateOnlyString(asOfDate);
     const usedRules = [...new Set(r.applications.map((a) => a.ruleId))];
@@ -1236,7 +1384,7 @@ export class AmendmentsService {
 
     // 근거는 만들 때의 스냅샷이다 — 연결·법령 본문이 나중에 바뀌어도 "그때 왜"가 남아야 한다(특허 도 12)
     const rationale = {
-      version: 'rationale/1',
+      version: 'rationale/2',
       law: {
         lawId: event.lawId,
         lawName: event.law.lawName,
@@ -1267,6 +1415,8 @@ export class AmendmentsService {
       applications: r.applications,
       unmapped: r.unmapped,
       conflicts: r.conflicts,
+      // 변수 근거 — 법령 근거와 따로(특허 도 9·11): 연결·고른 값·유효기간·범위·위치 전후·넣었는지와 까닭
+      variables: variableEntries,
     };
     const generationMeta = {
       engine: RULESET_VERSION,
@@ -1284,6 +1434,14 @@ export class AmendmentsService {
         baseFingerprint,
         lawLinkId: item.linkId,
         asOf,
+        plannedEffectiveDate: toDateOnlyString(variables.planned),
+      },
+      variables: {
+        version: 'var/1',
+        plannedEffectiveDate: toDateOnlyString(variables.planned),
+        applied: variableEntries.filter((e) => e.status === 'applied').length,
+        held: variableEntries.filter((e) => e.status === 'held').length,
+        conflict: variableEntries.filter((e) => e.status === 'conflict').length,
       },
     };
 
@@ -1301,8 +1459,10 @@ export class AmendmentsService {
       variant: RULESET_VERSION,
       generationMeta: generationMeta as unknown as Prisma.InputJsonValue,
       confidence: r.confidence.level,
-      reviewFlags: r.flags,
+      reviewFlags: [...flags],
       asOfDate,
+      plannedEffectiveDate: variables.planned,
+      variableFingerprint: variableFingerprint(variableEntries),
       createdBy: userId,
     };
   }
@@ -1340,4 +1500,19 @@ export class AmendmentsService {
       })),
     });
   }
+}
+
+/** 감사 기록용 변수 선택 요약(T-109 ②) */
+function variableSummary(rationale: unknown) {
+  return ((rationale as { variables?: VariableEntry[] } | null)?.variables ?? []).map((v) => ({
+    bindingId: v.bindingId,
+    key: v.key,
+    status: v.status,
+    reason: v.reason,
+    valueId: v.valueId,
+    value: v.value,
+    validFrom: v.validFrom,
+    validTo: v.validTo,
+    scope: v.scope,
+  }));
 }

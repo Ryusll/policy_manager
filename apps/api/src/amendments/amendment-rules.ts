@@ -1,3 +1,4 @@
+import type { VariableProposal } from './amendment-variables';
 import * as Diff from 'diff';
 import { diffCandidate, type CandidateDiff } from './amendment-diff';
 import {
@@ -30,7 +31,8 @@ import {
  * - 여러 규칙이 같은 자리에 다른 문구를 내면 그 자리는 고치지 않고 경쟁한 제안을 모두 남긴다.
  */
 
-export const RULESET_VERSION = 'rule/1';
+/** rule/2 — 변수 값 넣기(T-109 ②)를 더했다. 법령 규칙의 판정은 rule/1 과 같다 */
+export const RULESET_VERSION = 'rule/2';
 export const CONFIDENCE_VERSION = 'conf/1';
 
 export const RULES = {
@@ -74,6 +76,10 @@ export type ReviewFlag =
   | 'scope_review'
   /** 법령 조항이 삭제됐다 */
   | 'law_provision_repealed'
+  /** 변수 값을 넣을 자리가 법령 개정과 겹쳐 원문을 두었다(T-109 ②) */
+  | 'variable_conflict'
+  /** 변수 값을 정하지 못해 넣지 않은 자리가 있다 — 값 없음·기간 겹침·기간 미확정·문구 불일치(T-109 ②) */
+  | 'variable_unresolved'
   /** 근거가 연결되지 않은 변경이 있다 (도 10 단계 1050) */
   | 'unexplained_change';
 
@@ -108,7 +114,15 @@ export interface UnmappedLawChange {
 
 export interface RuleConflict {
   base: { start: number; end: number; text: string };
-  proposals: Array<{ ruleId: string; lawChangeIndexes: number[]; replacement: string }>;
+  /** 변수 값 넣기 제안이면 `ruleId: 'variable_value'` 와 `variableRef`(T-109 ②) */
+  proposals: Array<{ ruleId: string; lawChangeIndexes: number[]; replacement: string; variableRef?: number }>;
+}
+
+/** 변수 값을 넣은 자리(T-109 ②) — `ref` 는 `rationale.variables[].index` */
+export interface VariableApplication {
+  ref: number;
+  base: { start: number; end: number; text: string };
+  candidate: { start: number; end: number; text: string };
 }
 
 export type ConfidenceLevel = 'high' | 'medium' | 'low';
@@ -129,6 +143,8 @@ export interface RuleEngineInput {
   relationType: LawRelation;
   scope: string | null;
   evidenceText: string | null;
+  /** 변수 값 넣기 제안(T-109 ②) — 기준 본문 위치 */
+  variables?: VariableProposal[];
 }
 
 export interface RuleEngineResult {
@@ -138,6 +154,10 @@ export interface RuleEngineResult {
   /** 제2 조문(후보 본문). 반영한 것이 없으면 제1 조문 그대로 */
   content: string;
   applications: RuleApplication[];
+  /** 변수 값을 넣은 자리(T-109 ②) */
+  variableApplications: VariableApplication[];
+  /** 법령 개정과 겹쳐 넣지 않은 변수 제안(`ref`) */
+  variableConflicts: number[];
   unmapped: UnmappedLawChange[];
   conflicts: RuleConflict[];
   flags: ReviewFlag[];
@@ -392,29 +412,82 @@ function resolveConflicts(edits: Edit[], base: string): { accepted: Edit[]; conf
   return { accepted, conflicts, conflicted: uniq(conflicted) };
 }
 
-function applyEdits(base: string, edits: Edit[]): { content: string; applications: RuleApplication[] } {
-  const sorted = [...edits].sort((x, y) => x.start - y.start);
+/** 법령 규칙의 고침과 변수 값 넣기를 한 번에, 앞에서부터 이어 붙인다(서로 겹치지 않는 것만 들어온다) */
+function applyEdits(
+  base: string,
+  edits: Edit[],
+  variables: VariableProposal[] = [],
+): { content: string; applications: RuleApplication[]; variableApplications: VariableApplication[] } {
+  const all = [
+    ...edits.map((e) => ({ start: e.start, end: e.end, replacement: e.replacement, law: e, ref: -1 })),
+    ...variables.map((v) => ({ start: v.start, end: v.end, replacement: v.replacement, law: null as Edit | null, ref: v.ref })),
+  ].sort((x, y) => x.start - y.start);
   let out = '';
   let pos = 0;
   const applications: RuleApplication[] = [];
-  for (const e of sorted) {
+  const variableApplications: VariableApplication[] = [];
+  for (const e of all) {
     out += base.slice(pos, e.start);
     const cStart = out.length;
     out += e.replacement;
-    applications.push({
-      id: applications.length,
-      ruleId: RULES[e.rule].id,
-      ruleVersion: RULES[e.rule].version,
-      templateId: TEMPLATES[e.template].id,
-      templateVersion: TEMPLATES[e.template].version,
-      lawChangeIndexes: e.lawChangeIndexes,
-      base: { start: e.start, end: e.end, text: base.slice(e.start, e.end) },
-      candidate: { start: cStart, end: out.length, text: e.replacement },
-    });
+    const span = { base: { start: e.start, end: e.end, text: base.slice(e.start, e.end) }, candidate: { start: cStart, end: out.length, text: e.replacement } };
+    if (e.law) {
+      applications.push({
+        id: applications.length,
+        ruleId: RULES[e.law.rule].id,
+        ruleVersion: RULES[e.law.rule].version,
+        templateId: TEMPLATES[e.law.template].id,
+        templateVersion: TEMPLATES[e.law.template].version,
+        lawChangeIndexes: e.law.lawChangeIndexes,
+        ...span,
+      });
+    } else {
+      variableApplications.push({ ref: e.ref, ...span });
+    }
     pos = e.end;
   }
   out += base.slice(pos);
-  return { content: out, applications };
+  return { content: out, applications, variableApplications };
+}
+
+/**
+ * 변수 값 넣기 제안을 법령 고침과 맞춘다(T-109 ②, 코덱스 자문 결정 6). 법령 고침이나 법령 규칙끼리의 충돌 자리와 겹치면
+ * 그 자리는 원문을 두고 양쪽 제안을 남긴다 — 겹친 법령 고침도 빼서 반영하지 못한 변경(충돌)으로 돌린다.
+ */
+function mergeVariables(base: string, lawEdits: Edit[], conflicts: RuleConflict[], variables: VariableProposal[]) {
+  const hits = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
+  const kept = [...lawEdits];
+  const accepted: VariableProposal[] = [];
+  const held: number[] = [];
+  const dropped: number[] = [];
+  const outConflicts = conflicts.map((c) => ({ ...c, proposals: [...c.proposals] }));
+  for (const v of [...variables].sort((x, y) => x.start - y.start)) {
+    const proposal = { ruleId: 'variable_value', lawChangeIndexes: [] as number[], replacement: v.replacement, variableRef: v.ref };
+    const lawHit = kept.filter((e) => hits(e, v));
+    const conflictHit = outConflicts.find((c) => hits(c.base, v));
+    if (!lawHit.length && !conflictHit && !accepted.some((a) => hits(a, v))) {
+      accepted.push(v);
+      continue;
+    }
+    held.push(v.ref);
+    if (conflictHit) {
+      conflictHit.proposals.push(proposal);
+      continue;
+    }
+    if (!lawHit.length) continue; // 변수끼리 겹침 — 앞의 것을 넣고 뒤의 것은 둔다
+    for (const e of lawHit) kept.splice(kept.indexOf(e), 1);
+    dropped.push(...lawHit.flatMap((e) => e.lawChangeIndexes));
+    const start = Math.min(v.start, ...lawHit.map((e) => e.start));
+    const end = Math.max(v.end, ...lawHit.map((e) => e.end));
+    outConflicts.push({
+      base: { start, end, text: base.slice(start, end) },
+      proposals: [
+        ...lawHit.map((e) => ({ ruleId: RULES[e.rule].id, lawChangeIndexes: e.lawChangeIndexes, replacement: e.replacement })),
+        proposal,
+      ],
+    });
+  }
+  return { lawEdits: kept, variables: accepted, held, dropped: uniq(dropped), conflicts: outConflicts };
 }
 
 function judgeConfidence(
@@ -428,6 +501,7 @@ function judgeConfidence(
   const negatives: Array<[ReviewFlag, string]> = [
     ['ambiguous_match', 'ambiguous'],
     ['rule_conflict', 'conflict'],
+    ['variable_conflict', 'variable_conflict'],
     ['context_unclear', 'context_unclear'],
     ['unexplained_change', 'unexplained'],
   ];
@@ -459,9 +533,20 @@ export function generateRuleCandidate(input: RuleEngineInput): RuleEngineResult 
   const unmapped: UnmappedLawChange[] = [];
   const all = lawChanges.map((c) => c.index);
 
-  const finish = (edits: Edit[], conflicts: RuleConflict[], targetUnclear: boolean): RuleEngineResult => {
-    const { content, applications } = applyEdits(base, edits);
-    const diff = diffCandidate(base, content, applications);
+  const finish = (lawEdits: Edit[], lawConflicts: RuleConflict[], targetUnclear: boolean): RuleEngineResult => {
+    const merged = mergeVariables(base, lawEdits, lawConflicts, input.variables ?? []);
+    if (merged.held.length) flags.add('variable_conflict');
+    for (const i of merged.dropped) {
+      unmapped.push({ lawChangeIndex: i, reason: 'conflict', detail: '변수 값을 넣을 자리와 겹쳐 원문을 두었습니다' });
+    }
+    const conflicts = merged.conflicts;
+    const { content, applications, variableApplications } = applyEdits(base, merged.lawEdits, merged.variables);
+    const diff = diffCandidate(
+      base,
+      content,
+      applications,
+      variableApplications.map((v) => ({ id: v.ref, base: v.base, candidate: v.candidate })),
+    );
     if (diff.unexplained > 0) flags.add('unexplained_change');
     const appliedIdx = new Set(applications.flatMap((a) => a.lawChangeIndexes));
     if (unmapped.length) flags.add('unmapped_law_change');
@@ -471,6 +556,8 @@ export function generateRuleCandidate(input: RuleEngineInput): RuleEngineResult 
       lawChanges,
       content,
       applications,
+      variableApplications,
+      variableConflicts: merged.held,
       unmapped: unmapped.sort((x, y) => x.lawChangeIndex - y.lawChangeIndex),
       conflicts,
       flags: [...flags],

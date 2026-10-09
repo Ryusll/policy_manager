@@ -99,3 +99,22 @@ describe('relinkDiff — 손질한 본문의 근거 다시 잇기 (T-107)', () =
     expect(d.changes).toEqual([]);
   });
 });
+
+describe('relinkDiff — 변수 근거도 다시 잇는다 (T-109 ②)', () => {
+  const base = '직원에게는 매년 15일의 연차휴가를 주고, 운영팀이 관리한다.';
+  const at = base.indexOf('운영팀');
+  const appliedVariables = [{ id: 0, base: { start: at, end: at + 3 }, candidate: { text: '관리팀' } }];
+
+  it('사람이 다른 곳을 고쳐도 변수가 넣은 자리는 변수 근거로 남는다', () => {
+    const edited = '직원에게는 매년 15일의 연차휴가를 반드시 주고, 관리팀이 관리한다.';
+    const d = relinkDiff(base, edited, [], appliedVariables);
+    expect(d.changes.find((c) => c.candidate.text === '관리팀')).toMatchObject({ variableRefs: [0], rationaleRefs: [] });
+    expect(d.unexplained).toBe(1); // "반드시"는 근거 없음
+  });
+
+  it('사람이 그 자리를 다시 고치면 변수 근거가 끊긴다', () => {
+    const d = relinkDiff(base, '직원에게는 매년 15일의 연차휴가를 주고, 총무팀이 관리한다.', [], appliedVariables);
+    expect(d.changes).toEqual([expect.objectContaining({ variableRefs: [], rationaleRefs: [] })]);
+    expect(d.unexplained).toBe(1);
+  });
+});

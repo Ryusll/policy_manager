@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
@@ -10,9 +10,11 @@ import {
   REVIEW_STATE_LABEL,
   RULE_LABEL,
   UNMAPPED_REASON_LABEL,
+  VARIABLE_HOLD_LABEL,
   type AmendmentDetail,
   type AmendmentHistory,
   type CandidateChange,
+  type VariableEntry,
 } from '../api/amendments';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
@@ -34,6 +36,8 @@ export default function AmendmentDetailPage() {
   const user = useAuthStore((s) => s.user);
   const canReview = user?.role === 'admin' || user?.role === 'editor';
   const [selected, setSelected] = useState<number | null>(null);
+  // 다른 후보로 옮기면(다시 만들기 등) 고른 변경을 푼다 — 번호가 그 후보의 다른 변경을 가리킨다
+  useEffect(() => setSelected(null), [id]);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['amendment', id],
@@ -170,7 +174,8 @@ function Header({ data }: { data: AmendmentDetail }) {
         <Link to={`/laws/${data.event.lawId}?change=${data.event.id}`} className="text-navy-700 hover:underline">
           {data.event.lawName} {data.event.label}
         </Link>
-        {data.event.lawEffectiveDate && ` · 법령 시행 ${data.event.lawEffectiveDate}`} · 기준일 {data.asOf} ·{' '}
+        {data.event.lawEffectiveDate && ` · 법령 시행 ${data.event.lawEffectiveDate}`} · 기준일 {data.asOf} · 예정 사내 시행일{' '}
+        {data.plannedEffectiveDate} ·{' '}
         {data.createdBy ? `만든 사람 ${data.createdByName ?? '알 수 없음'}` : '자동 생성'} ·{' '}
         {new Date(data.createdAt).toLocaleString('ko-KR')}
       </p>
@@ -221,7 +226,12 @@ function Alerts({ data }: { data: AmendmentDetail }) {
       {!data.isCurrentBase && data.reviewState !== 'approved' && (
         <div role="alert" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 space-y-1.5">
           <p>
-            {data.staleReason === 'repealed' ? (
+            {data.staleReason === 'variable_changed' ? (
+              <>
+                후보를 만든 뒤 예정 사내 시행일({data.plannedEffectiveDate})의 변수 값이 바뀌었습니다(값·유효기간·연결) — 그대로
+                승인할 수 없습니다. 다시 만들어 검토하세요.
+              </>
+            ) : data.staleReason === 'repealed' ? (
               <>후보를 만든 뒤 이 조문이 폐지됐습니다 — 기준일에 시행 중인 본문이 없어 이 후보는 승인할 수 없습니다. 검토에서 반려로 닫으세요.</>
             ) : data.staleReason === 'history_changed' ? (
               <>
@@ -269,15 +279,31 @@ function Alerts({ data }: { data: AmendmentDetail }) {
   );
 }
 
+/** 변수 값의 유효기간 표기 */
+const periodText = (v: VariableEntry) => `${v.validFrom ?? '처음부터'} ~ ${v.validTo ? `${v.validTo} 전날` : '끝 없음'}`;
+
 function ChangeRationale({ data, change }: { data: AmendmentDetail; change: CandidateChange }) {
   const apps = data.rationale.applications.filter((a) => change.rationaleRefs.includes(a.id));
+  // 변수 근거는 법령 근거와 따로 보인다(T-109 ②, 특허 도 11)
+  const vars = (data.rationale.variables ?? []).filter((v) => (change.variableRefs ?? []).includes(v.index));
   return (
     <div className="space-y-2 text-xs">
       <p className="text-gray-700">
         <span className="text-rose-800">{change.base.text ? `"${change.base.text}"` : '(없음)'}</span> →{' '}
         <span className="text-emerald-800">{change.candidate.text ? `"${change.candidate.text}"` : '(삭제)'}</span>
       </p>
-      {apps.length === 0 ? (
+      {vars.map((v) => (
+        <div key={`v${v.index}`} className="rounded border border-violet-200 bg-violet-50/60 px-2 py-1.5 space-y-0.5" data-testid="variable-rationale">
+          <p className="font-medium text-violet-900">
+            변수 · {v.label} <span className="font-mono font-normal text-violet-700">{`{{${v.key}}}`}</span>
+          </p>
+          <p className="text-gray-700">
+            "{v.base.text}" → "{v.value}" — 예정 사내 시행일 {data.plannedEffectiveDate}에 맞는 값
+          </p>
+          <p className="text-gray-600">값의 유효기간 {periodText(v)} · 범위: 이 회사</p>
+        </div>
+      ))}
+      {apps.length === 0 && vars.length > 0 ? null : apps.length === 0 ? (
         <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-900">
           근거 없음 —{' '}
           {data.current.edited
@@ -309,6 +335,7 @@ function ChangeRationale({ data, change }: { data: AmendmentDetail; change: Cand
 
 function RationaleOverview({ data }: { data: AmendmentDetail }) {
   const { lawChanges, applications, unmapped } = data.rationale;
+  const variables = data.rationale.variables ?? [];
   const appliedBy = (i: number) => applications.find((a) => a.lawChangeIndexes.includes(i));
   return (
     <div className="space-y-2 text-xs">
@@ -329,6 +356,25 @@ function RationaleOverview({ data }: { data: AmendmentDetail }) {
           );
         })}
       </ul>
+      {variables.length > 0 && (
+        <>
+          <p className="text-gray-500">변수 값(예정 사내 시행일 {data.plannedEffectiveDate} 기준):</p>
+          <ul className="space-y-1" data-testid="variable-overview">
+            {variables.map((v) => (
+              <li key={v.index} className="rounded border border-violet-200 px-2 py-1">
+                {v.label} "{v.base.text}"{' '}
+                {v.status === 'applied' ? (
+                  <span className="text-emerald-800">→ "{v.value}" 넣음</span>
+                ) : v.status === 'unchanged' ? (
+                  <span className="text-gray-600">— 이미 그 날 값</span>
+                ) : (
+                  <span className="text-amber-800">— {VARIABLE_HOLD_LABEL[v.reason ?? ''] ?? v.reason}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <LinkSnapshot data={data} />
     </div>
   );
@@ -470,6 +516,8 @@ function DecisionPanel({ data }: { data: AmendmentDetail }) {
           />
           <p className="text-[11px] text-gray-500 mt-1">
             {lawDate ? `참고: 법령 시행일 ${lawDate}. ` : ''}오늘이나 그 뒤 — 소급 개정은 하지 않습니다.
+            {(data.rationale.variables ?? []).length > 0 &&
+              ` 이 후보의 변수 값은 예정 사내 시행일 ${data.plannedEffectiveDate} 기준입니다 — 다른 날로 승인하면 그 날 값과 다를 때 다시 만들어야 합니다.`}
           </p>
         </div>
         <div>

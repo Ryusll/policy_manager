@@ -26,6 +26,8 @@ export const CANDIDATE_SELECT = {
   revision: true,
   lockVersion: true,
   asOfDate: true,
+  plannedEffectiveDate: true,
+  variableFingerprint: true,
   createdBy: true,
   createdAt: true,
   baseVersion: { select: { id: true, versionNum: true, effectiveDate: true, content: true } },
@@ -70,6 +72,8 @@ export function presentCandidate(row: CandidateRow) {
     generationMethod: row.generationMethod,
     variant: row.variant,
     asOf: toDateOnlyString(row.asOfDate),
+    /** 예정 사내 시행일 — 변수 값을 고른 날(T-109 ②) */
+    plannedEffectiveDate: toDateOnlyString(row.plannedEffectiveDate),
     createdBy: row.createdBy,
     createdAt: row.createdAt,
     baseVersion: {

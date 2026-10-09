@@ -17,6 +17,7 @@ import {
   occurrenceOf,
   overlappingValueIds,
   reanchor,
+  reanchorReplaced,
   replaceSpans,
   selectValue,
   type ValuePick,
@@ -550,6 +551,7 @@ export class VariablesService {
    * 발행 때 앞 버전의 연결을 새 버전으로 옮긴다(결정 8) — 옛 행은 그 버전의 이력으로 두고, 새 버전에 위치를 옮긴
    * 행을 만들어 parentId 로 잇는다. 위치를 확정하지 못하면 "다시 이어야 함"으로 옮긴다. 옮긴 연결은 옛 문구가 그대로인
    * 자리에만 놓이고, 검토 요청 때 표식을 바꿔 넣은 연결은 새로 들어간 문구에만 있어 둘은 겹치지 않는다.
+   * `replaced` — 개정 후보가 값을 넣은 연결(T-109 ②): 그 자리는 새 값으로 바뀌었으니 앞뒤가 그대로인 자리를 찾아 새 값으로 잇는다.
    */
   async inheritBindings(
     db: Db,
@@ -557,6 +559,7 @@ export class VariablesService {
     from: { id: string; content: string } | null,
     to: { id: string; articleId: string; content: string },
     userId: string | null,
+    replaced?: Map<string, { text: string; valueId: string | null }>,
   ) {
     if (!from || from.id === to.id) return;
     const olds = await db.variableBinding.findMany({
@@ -577,14 +580,18 @@ export class VariablesService {
         parentId: b.id,
         createdBy: userId,
       };
-      const r = b.state === 'active' ? reanchor(from.content, to.content, b) : null;
+      const rep = replaced?.get(b.id);
+      const r = b.state !== 'active' ? null : rep ? reanchorReplaced(from.content, to.content, b, rep.text) : reanchor(from.content, to.content, b);
       if (r && 'start' in r) {
+        const text = rep ? rep.text : b.text;
         rows.push({
           ...base,
+          text,
+          valueId: rep ? rep.valueId : b.valueId,
           start: r.start,
           end: r.end,
           ...contextOf(to.content, r.start, r.end),
-          occurrence: occurrenceOf(to.content, b.text, r.start),
+          occurrence: occurrenceOf(to.content, text, r.start),
         });
       } else {
         rows.push({

@@ -27,15 +27,17 @@ export interface CandidateChange {
   base: Span;
   /** 후보 쪽 구간 (delete 면 길이 0) */
   candidate: Span;
-  /** 이 변경을 설명하는 근거(규칙 적용) 번호. 비어 있으면 근거 없는 변경 */
+  /** 이 변경을 설명하는 법령 근거(규칙 적용) 번호 */
   rationaleRefs: number[];
+  /** 이 변경을 설명하는 변수 근거(`rationale.variables[].index`, T-109 ②) — 법령 근거와 따로. 둘 다 비면 근거 없는 변경 */
+  variableRefs: number[];
 }
 
 export interface CandidateDiff {
   /** 화면 표시용 — 삭제는 취소선, 추가는 밑줄 */
   parts: CandidateDiffPart[];
   changes: CandidateChange[];
-  /** 근거가 연결되지 않은 변경 수 */
+  /** 근거(법령·변수)가 연결되지 않은 변경 수 */
   unexplained: number;
 }
 
@@ -77,7 +79,12 @@ function narrow(base: string, cand: string, b: [number, number], c: [number, num
   return { bs, be, cs, ce };
 }
 
-export function diffCandidate(base: string, candidate: string, edits: ExplainedEdit[] = []): CandidateDiff {
+export function diffCandidate(
+  base: string,
+  candidate: string,
+  edits: ExplainedEdit[] = [],
+  variableEdits: ExplainedEdit[] = [],
+): CandidateDiff {
   const ops = diffTokens(tokenize(base), tokenize(candidate));
 
   const raw: Array<{ bs: number; be: number; cs: number; ce: number }> = [];
@@ -109,15 +116,14 @@ export function diffCandidate(base: string, candidate: string, edits: ExplainedE
     const kind: CandidateChange['kind'] = r.be === r.bs ? 'insert' : r.ce === r.cs ? 'delete' : 'replace';
     const b = { start: r.bs, end: r.be };
     const c = { start: r.cs, end: r.ce };
-    const rationaleRefs = edits
-      .filter((e) => overlaps(c, e.candidate) || overlaps(b, e.base))
-      .map((e) => e.id);
+    const refs = (list: ExplainedEdit[]) => list.filter((e) => overlaps(c, e.candidate) || overlaps(b, e.base)).map((e) => e.id);
     return {
       index,
       kind,
       base: { ...b, text: base.slice(r.bs, r.be) },
       candidate: { ...c, text: candidate.slice(r.cs, r.ce) },
-      rationaleRefs,
+      rationaleRefs: refs(edits),
+      variableRefs: refs(variableEdits),
     };
   });
 
@@ -137,8 +143,10 @@ export function diffCandidate(base: string, candidate: string, edits: ExplainedE
   }
   push('equal', base.slice(pos));
 
-  return { parts, changes, unexplained: changes.filter((c) => c.rationaleRefs.length === 0).length };
+  return { parts, changes, unexplained: changes.filter(unexplainedChange).length };
 }
+
+const unexplainedChange = (c: CandidateChange) => c.rationaleRefs.length === 0 && c.variableRefs.length === 0;
 
 /** 근거 재연결에 쓰는 규칙 적용 — 제1 조문 쪽 구간과 규칙이 낸 문구만 있으면 된다 */
 export interface AppliedRule {
@@ -155,7 +163,12 @@ export interface AppliedRule {
  * 남아 있으면** 겹치는 변경 구간에 그 규칙을 근거로 잇는다. 사람이 그 자리를 다시 고쳤으면 규칙 근거는
  * 끊기고, 근거 없는 변경(검토 대상)으로 남는다.
  */
-export function relinkDiff(base: string, content: string, applied: AppliedRule[]): CandidateDiff {
+export function relinkDiff(
+  base: string,
+  content: string,
+  applied: AppliedRule[],
+  appliedVariables: AppliedRule[] = [],
+): CandidateDiff {
   const d = diffCandidate(base, content, []);
 
   // 같은 부분은 두 본문에서 1:1 로 대응한다 — 그 대응으로 제1 조문 위치를 새 본문 위치로 옮긴다
@@ -183,15 +196,20 @@ export function relinkDiff(base: string, content: string, applied: AppliedRule[]
     return inChange(x)?.candidate.end ?? content.length;
   };
 
-  for (const a of applied) {
-    const cs = mapStart(a.base.start);
-    const ce = mapEnd(a.base.end);
-    if (content.slice(cs, ce) !== a.candidate.text) continue; // 사람이 그 자리를 다시 고쳤다
-    for (const ch of d.changes) {
-      if (overlaps(ch.base, a.base) || overlaps(ch.candidate, { start: cs, end: ce })) {
-        if (!ch.rationaleRefs.includes(a.id)) ch.rationaleRefs.push(a.id);
+  // 변수 값을 넣은 자리도 같은 방식으로 — 사람이 그 자리를 다시 고쳤으면 변수 근거도 끊긴다(T-109 ②)
+  const link = (list: AppliedRule[], key: 'rationaleRefs' | 'variableRefs') => {
+    for (const a of list) {
+      const cs = mapStart(a.base.start);
+      const ce = mapEnd(a.base.end);
+      if (content.slice(cs, ce) !== a.candidate.text) continue; // 사람이 그 자리를 다시 고쳤다
+      for (const ch of d.changes) {
+        if (overlaps(ch.base, a.base) || overlaps(ch.candidate, { start: cs, end: ce })) {
+          if (!ch[key].includes(a.id)) ch[key].push(a.id);
+        }
       }
     }
-  }
-  return { ...d, unexplained: d.changes.filter((ch) => ch.rationaleRefs.length === 0).length };
+  };
+  link(applied, 'rationaleRefs');
+  link(appliedVariables, 'variableRefs');
+  return { ...d, unexplained: d.changes.filter(unexplainedChange).length };
 }

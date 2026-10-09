@@ -257,6 +257,55 @@ describe('generateRuleCandidate — 사람에게 넘기는 경우', () => {
   });
 
   it('규칙 세트 버전이 정해져 있다', () => {
-    expect(RULESET_VERSION).toBe('rule/1');
+    expect(RULESET_VERSION).toBe('rule/2');
+  });
+});
+
+describe('generateRuleCandidate — 변수 값 넣기 (T-109 ②, 특허 도 9)', () => {
+  const BASE = '직원에게는 매년 15일의 연차휴가를 주고, 운영팀이 관리한다.';
+  const at = BASE.indexOf('운영팀');
+
+  it('법령 고침과 떨어진 자리는 함께 넣고, 변수 근거는 법령 근거와 따로 잇는다', () => {
+    const r = run({ baseContent: BASE, variables: [{ ref: 0, start: at, end: at + 3, replacement: '관리팀' }] });
+    expect(r.content).toBe('직원에게는 매년 20일의 연차휴가를 주고, 관리팀이 관리한다.');
+    expect(r.applications).toHaveLength(1);
+    expect(r.variableApplications).toEqual([
+      { ref: 0, base: { start: at, end: at + 3, text: '운영팀' }, candidate: { start: at, end: at + 3, text: '관리팀' } },
+    ]);
+    expect(r.variableConflicts).toEqual([]);
+    const varChange = r.diff.changes.find((c) => c.candidate.text === '관리팀')!;
+    expect(varChange).toMatchObject({ rationaleRefs: [], variableRefs: [0] });
+    const lawChange = r.diff.changes.find((c) => c.candidate.text === '20')!;
+    expect(lawChange).toMatchObject({ rationaleRefs: [0], variableRefs: [] });
+    expect(r.diff.unexplained).toBe(0);
+    expect(r.flags).toEqual([]);
+  });
+
+  it('법령 고침과 같은 자리면 원문을 두고 양쪽 제안을 남긴다 — 법령 변경은 반영하지 못한 변경(충돌)', () => {
+    const base = '직원에게는 매년 15일의 연차휴가를 준다.';
+    const s = base.indexOf('15일');
+    const r = run({ baseContent: base, variables: [{ ref: 0, start: s, end: s + 3, replacement: '18일' }] });
+    expect(r.content).toBe(base);
+    expect(r.variableApplications).toEqual([]);
+    expect(r.variableConflicts).toEqual([0]);
+    expect(r.flags).toEqual(expect.arrayContaining(['variable_conflict', 'unmapped_law_change', 'manual_draft_required']));
+    expect(r.unmapped).toEqual([expect.objectContaining({ reason: 'conflict' })]);
+    expect(r.conflicts).toEqual([
+      expect.objectContaining({
+        base: expect.objectContaining({ text: '15일' }),
+        proposals: expect.arrayContaining([
+          expect.objectContaining({ ruleId: 'VALUE_CHANGE' }),
+          expect.objectContaining({ ruleId: 'variable_value', replacement: '18일', variableRef: 0 }),
+        ]),
+      }),
+    ]);
+    expect(r.confidence.level).toBe('low');
+  });
+
+  it('법령을 자동으로 고치지 않는 연결(참고)이어도 변수 값은 넣는다', () => {
+    const r = run({ baseContent: BASE, relationType: 'reference', variables: [{ ref: 0, start: at, end: at + 3, replacement: '관리팀' }] });
+    expect(r.content).toBe('직원에게는 매년 15일의 연차휴가를 주고, 관리팀이 관리한다.');
+    expect(r.flags).toEqual(expect.arrayContaining(['relation_review_only']));
+    expect(r.diff.unexplained).toBe(0);
   });
 });

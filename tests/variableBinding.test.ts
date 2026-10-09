@@ -6,6 +6,7 @@ import {
   occurrenceOf,
   overlappingValueIds,
   reanchor,
+  reanchorReplaced,
   replaceSpans,
   selectValue,
   type ValueRow,
@@ -144,5 +145,25 @@ describe('위치 옮기기 (reanchor) — 차이와 문맥으로 유일한 자�
     const old = '😀 운영팀이 맡는다.';
     const neu = '😀😀 운영팀이 맡는다.';
     expect(reanchor(old, neu, span(old, '운영팀'))).toEqual({ ok: true, start: neu.indexOf('운영팀'), end: neu.indexOf('운영팀') + 3 });
+  });
+});
+
+describe('값을 바꿔 넣은 구간 옮기기 (reanchorReplaced, T-109 ②)', () => {
+  it('구간 앞뒤가 그대로면 바뀐 값의 자리를 찾는다 — 앞쪽 다른 개정이 있어도', () => {
+    const old = '직원에게는 매년 15일의 휴가를 주고, 운영팀이 관리한다.';
+    const neu = '직원에게는 매년 20일의 휴가를 주고, 관리팀이 관리한다.';
+    const s = old.indexOf('운영팀');
+    expect(reanchorReplaced(old, neu, { start: s, end: s + 3 }, '관리팀')).toEqual({ ok: true, start: neu.indexOf('관리팀'), end: neu.indexOf('관리팀') + 3 });
+  });
+
+  it('맨 앞·맨 끝 구간도', () => {
+    expect(reanchorReplaced('운영팀', '관리지원팀', { start: 0, end: 3 }, '관리지원팀')).toEqual({ ok: true, start: 0, end: 5 });
+    expect(reanchorReplaced('담당: 운영팀', '담당: 관리팀', { start: 4, end: 7 }, '관리팀')).toEqual({ ok: true, start: 4, end: 7 });
+  });
+
+  it('바로 옆까지 고쳐졌거나 넣은 값이 그 자리에 없으면 확정하지 않는다', () => {
+    const old = '운영팀이 관리한다.';
+    expect(reanchorReplaced(old, '관리팀은 관리한다.', { start: 0, end: 3 }, '관리팀')).toEqual({ ok: false, reason: 'span_changed' });
+    expect(reanchorReplaced(old, '총무팀이 관리한다.', { start: 0, end: 3 }, '관리팀')).toEqual({ ok: false, reason: 'span_changed' });
   });
 });

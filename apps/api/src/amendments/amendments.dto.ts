@@ -13,6 +13,11 @@ export class GenerateAmendmentsDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '기준일(asOf)은 YYYY-MM-DD 형식이어야 합니다.' })
   asOf?: string;
+
+  @ApiPropertyOptional({ description: '예정 사내 시행일(YYYY-MM-DD) — 변수 값을 고르는 날(T-109 ②). 생략하면 기준일', example: '2027-01-01' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '예정 사내 시행일은 YYYY-MM-DD 형식이어야 합니다.' })
+  plannedEffectiveDate?: string;
 }
 
 /** 목록 상태 필터 — `open` 은 처리할 것(작성·검토), `all` 은 전부 */
@@ -117,4 +122,9 @@ export class RegenerateAmendmentDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '기준일(asOf)은 YYYY-MM-DD 형식이어야 합니다.' })
   asOf?: string;
+
+  @ApiPropertyOptional({ description: '예정 사내 시행일 — 변수 값을 고르는 날(T-109 ②). 생략하면 asOf(주지 않았으면 기준일)' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '예정 사내 시행일은 YYYY-MM-DD 형식이어야 합니다.' })
+  plannedEffectiveDate?: string;
 }

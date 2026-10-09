@@ -9,13 +9,41 @@ export type AmendmentState = 'draft' | 'review' | 'approved' | 'rejected';
 
 export type CandidateDiffPart = { op: 'equal' | 'insert' | 'delete'; text: string };
 
-/** 제1 조문 대비 바뀐 문자 구간 하나. rationaleRefs 가 비면 근거 없는 변경(검토 대상) */
+/** 제1 조문 대비 바뀐 문자 구간 하나. 법령 근거(rationaleRefs)·변수 근거(variableRefs)가 둘 다 비면 근거 없는 변경(검토 대상) */
 export type CandidateChange = {
   index: number;
   kind: 'replace' | 'insert' | 'delete';
   base: { start: number; end: number; text: string };
   candidate: { start: number; end: number; text: string };
   rationaleRefs: number[];
+  /** 변수 근거(`rationale.variables[].index`, T-109 ②) — 예전 후보에는 없다 */
+  variableRefs?: number[];
+};
+
+/** 변수 값 넣기 근거 하나(T-109 ②) — 연결된 자리·고른 값·유효기간·범위·넣었는지와 까닭 */
+export type VariableEntry = {
+  index: number;
+  bindingId: string;
+  variableId: string;
+  key: string;
+  label: string;
+  valueId: string | null;
+  value: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  scope: 'tenant';
+  base: { start: number; end: number; text: string };
+  candidate: { start: number; end: number; text: string } | null;
+  status: 'applied' | 'unchanged' | 'held' | 'conflict';
+  reason: 'none' | 'ambiguous' | 'unconfirmed' | 'span_mismatch' | 'law_conflict' | null;
+};
+
+export const VARIABLE_HOLD_LABEL: Record<string, string> = {
+  none: '그 날 맞는 값이 없어 넣지 않음',
+  ambiguous: '값의 기간이 겹쳐 넣지 않음',
+  unconfirmed: '값의 기간이 정해지지 않아 넣지 않음',
+  span_mismatch: '연결된 문구가 기준 본문과 달라 넣지 않음',
+  law_conflict: '법령 개정과 같은 자리라 원문을 둠',
 };
 
 /** 지금 판 기준의 표시 — 생성 때의 신뢰도·검토 표시와 따로 계산한다 */
@@ -50,6 +78,8 @@ export type AmendmentCandidate = {
   confidence: AmendmentConfidence;
   reviewFlags: string[];
   asOf: string;
+  /** 예정 사내 시행일 — 변수 값을 고른 날(T-109 ②) */
+  plannedEffectiveDate: string;
   createdBy: string | null;
   createdAt: string;
   baseVersion: { id: string; versionNum: number; effectiveDate: string | null; content: string };
@@ -66,12 +96,14 @@ export type AmendmentCandidate = {
       confidence: number | null;
     };
     path?: { type: string; id: string | null; label: string }[];
+    /** 변수 근거(T-109 ②) — 예전 후보(rule/1)에는 없다 */
+    variables?: VariableEntry[];
   };
   diff: { parts: CandidateDiffPart[]; changes: CandidateChange[]; unexplained: number };
 };
 
-/** 낡은 까닭 — 기준일에 조문이 폐지됨(T-126) / 그 사이 개정됨 / 기준 본문은 같아도 발행 이력이 바뀜 */
-export type StaleReason = 'repealed' | 'base_changed' | 'history_changed' | null;
+/** 낡은 까닭 — 기준일에 조문이 폐지됨(T-126) / 그 사이 개정됨 / 기준 본문은 같아도 발행 이력이 바뀜 / 예정 시행일의 변수 값이 바뀜(T-109 ②) */
+export type StaleReason = 'repealed' | 'base_changed' | 'history_changed' | 'variable_changed' | null;
 
 export type AmendmentDetail = AmendmentCandidate & {
   createdByName: string | null;
@@ -183,6 +215,8 @@ export const REVIEW_FLAG_LABEL: Record<string, string> = {
   scope_review: '적용 범위 확인',
   law_provision_repealed: '법령 조항 삭제',
   unexplained_change: '근거 없는 변경',
+  variable_conflict: '변수 값과 법령 개정이 같은 자리',
+  variable_unresolved: '변수 값 미정',
 };
 
 export const RULE_LABEL: Record<string, string> = {
@@ -228,6 +262,7 @@ export type AmendmentListItem = {
   /** false 면 후보를 만든 뒤 조문이 개정돼 기준 본문이 바뀌었다 */
   isCurrentBase: boolean;
   staleReason: StaleReason;
+  plannedEffectiveDate: string;
   event: { id: string; lawId: string; lawName: string; label: string; changeType: string; lawEffectiveDate: string | null };
 };
 
@@ -272,4 +307,4 @@ export const amendmentsApi = {
 };
 
 /** 승인을 막은 이유(409 의 reason) — 화면 안내용 */
-export type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed';
+export type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed' | 'variable_changed';

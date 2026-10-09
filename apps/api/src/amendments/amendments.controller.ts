@@ -31,6 +31,7 @@ export class AmendmentsController {
   generate(@Request() req: any, @Body() dto: GenerateAmendmentsDto) {
     return this.service.generateForEvent(req.user.tenantId, dto.changeEventId, {
       asOf: dto.asOf,
+      plannedEffectiveDate: dto.plannedEffectiveDate,
       userId: req.user.id,
     });
   }
@@ -72,7 +73,7 @@ export class AmendmentsController {
   @HttpCode(200)
   @ApiOperation({ summary: '다시 만들기 — 같은 변경·조문으로 지금 기준 본문의 후보(옛 후보는 그대로)' })
   regenerate(@Request() req: any, @Param('id') id: string, @Body() dto: RegenerateAmendmentDto) {
-    return this.service.regenerate(req.user.tenantId, id, req.user.id, dto.asOf);
+    return this.service.regenerate(req.user.tenantId, id, req.user.id, dto.asOf, dto.plannedEffectiveDate);
   }
 
   @Post(':id/approve')

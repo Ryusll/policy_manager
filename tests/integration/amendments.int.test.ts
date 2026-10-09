@@ -176,7 +176,7 @@ describe('T-106 개정 후보 생성', () => {
       expect(body.rationale.path.map((p: any) => p.label)).toEqual(['개정후보시험법 제60조제1항', 'delegation', '취업규칙 제1조']);
       expect(body.rationale.applications[0]).toMatchObject({ ruleId: 'VALUE_CHANGE', templateId: 'INLINE_REPLACE' });
       expect(body.generationMeta).toMatchObject({
-        engine: 'rule/1',
+        engine: 'rule/2',
         trigger: 'user',
         rules: [{ id: 'VALUE_CHANGE', version: 1 }],
         templates: [{ id: 'INLINE_REPLACE', version: 1 }],
@@ -213,7 +213,7 @@ describe('T-106 개정 후보 생성', () => {
       const logs = await api('/audit-logs?action=amendment.generate', { token: t1.token });
       expect(logs.body.total).toBe(1);
       const detail = await api(`/audit-logs/${logs.body.rows[0].id}`, { token: t1.token });
-      expect(detail.body.details).toMatchObject({ trigger: 'user', ruleset: 'rule/1', beforeVersionKey: 'v1:a1', afterVersionKey: 'v1:a2' });
+      expect(detail.body.details).toMatchObject({ trigger: 'user', ruleset: 'rule/2', beforeVersionKey: 'v1:a1', afterVersionKey: 'v1:a2' });
       expect(detail.body.details.candidates).toHaveLength(3);
     });
 

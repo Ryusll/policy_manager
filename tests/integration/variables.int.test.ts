@@ -312,7 +312,7 @@ describe('T-109 변수 값·유효기간과 본문 위치 연결', () => {
       expect(listed).toEqual([expect.objectContaining({ state: 'needs_review', text: '운영팀' })]);
     });
 
-    it('개정 후보 승인 — 후보가 고친 곳과 떨어진 연결은 그대로 옮긴다', async () => {
+    it('개정 후보 승인 — 후보가 그 시행일 값을 넣은 연결은 새 값으로 잇는다(T-109 ②)', async () => {
       const at = D_TEXT.indexOf('운영팀');
       expect((await post(`/versions/${ver.d1}/variable-bindings`, { variableId: vars.dept, start: at, end: at + 3, text: '운영팀' })).status).toBe(201);
       const g = await post('/amendments/generate', { changeEventId: ev });
@@ -327,8 +327,9 @@ describe('T-109 변수 값·유효기간과 본문 위치 연결', () => {
       const ok = await post(`/amendments/${cand}/approve`, { effectiveDate: E, changeNote: '법령 개정 반영', ...(await lock()) });
       expect(ok.status, JSON.stringify(ok.body)).toBe(200);
       const v2 = ok.body.resultVersion.id;
-      expect(content(v2)).toBe('직원에게는 매년 20일의 연차휴가를 주고, 운영팀이 관리한다.');
-      expect(bindingsOf(v2)).toBe(`inherited:active:${at}-${at + 3}:운영팀:true`);
+      // 예정 시행일(법령 시행일)의 담당 부서 값은 지원팀 — 후보가 넣었고, 연결은 새 값으로 이어진다
+      expect(content(v2)).toBe('직원에게는 매년 20일의 연차휴가를 주고, 지원팀이 관리한다.');
+      expect(bindingsOf(v2)).toBe(`inherited:active:${at}-${at + 3}:지원팀:true`);
     });
 
     it('개정 후보 승인 — 기준 본문에 표식이 남아 있던 조문은 발행하지 않는다', async () => {

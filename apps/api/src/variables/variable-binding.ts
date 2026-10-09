@@ -159,3 +159,32 @@ export function reanchor(oldContent: string, newContent: string, span: AnchoredS
   if (ns !== null && ne !== null && newContent.slice(ns, ne) === span.text) return { ok: true, start: ns, end: ne };
   return { ok: false, reason: 'span_changed' };
 }
+
+/**
+ * 값을 바꿔 넣은 구간을 새 본문으로 옮긴다(T-109 ②) — 구간 문구 자체는 바뀌었으니 그 안은 대응시키지 않고, 구간
+ * **바로 앞 글자와 바로 뒤 글자**가 바뀌지 않은 채 새 본문에 있으면 그 사이를 새 자리로 본다. 그 사이 문구가
+ * 넣은 값과 같을 때만 확정한다(바로 옆이 함께 고쳐졌으면 확정하지 않는다).
+ */
+export function reanchorReplaced(oldContent: string, newContent: string, span: { start: number; end: number }, newText: string): Reanchor {
+  const map = new Map<number, number>();
+  let o = 0;
+  let n = 0;
+  for (const p of diffChars(oldContent, newContent)) {
+    const len = p.value.length;
+    if (p.added) {
+      n += len;
+      continue;
+    }
+    if (p.removed) {
+      o += len;
+      continue;
+    }
+    for (const x of [span.start - 1, span.end]) if (x >= o && x < o + len) map.set(x, n + (x - o));
+    o += len;
+    n += len;
+  }
+  const start = span.start === 0 ? 0 : map.has(span.start - 1) ? map.get(span.start - 1)! + 1 : null;
+  const end = span.end === oldContent.length ? newContent.length : map.get(span.end) ?? null;
+  if (start !== null && end !== null && newContent.slice(start, end) === newText) return { ok: true, start, end };
+  return { ok: false, reason: 'span_changed' };
+}
