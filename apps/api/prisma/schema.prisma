@@ -416,6 +416,7 @@ model ArticleVersion {
   reparseItem     ReparseReviewItem?  @relation("ReparseItemVersion", fields: [reparseItemId], references: [id], onDelete: SetNull)
 
   /// 시점 조회: 조문별로 "기준일 이전 시행분 중 가장 최근" 버전을 찾는다
+  @@unique([articleId, versionNum])
   @@index([articleId, effectiveDate])
   @@map("article_versions")
 }

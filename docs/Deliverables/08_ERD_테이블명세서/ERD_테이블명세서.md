@@ -124,7 +124,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | structure | json? | **버전별 계층**(T-110 ②, 특허 도 5·13) — 발행 이력이면 그 버전이 시행된 동안의 **얼린 계층**(장 id·번호·제목, 절, 조·가지·항·목, 조 제목 — 계층이 실제로 바뀌는 승인 때 그 조문의 얼리지 않은 발행 이력 모두에 넣는다), 초안·검토 중이면 재파싱의 **제안 계층**(승인 때 조문 행으로 옮기고 비운다). 시행본은 늘 비어 있다(지금 계층 = 조문 행). 옛 기록은 비어 있어 지금 계층을 따른다 |
 | reparseItemId | uuid? (unique) | 이 버전을 만든 재파싱 검토 항목(T-110 ②) — 묶음으로만 검토 요청·승인·반려한다(단건 처리·한꺼번에 시행에서 빠진다) |
 
-인덱스: `[articleId, effectiveDate]` — 시점 조회에서 조문별 "기준일 이전 시행분 중 가장 최근"을 찾는 경로.
+인덱스: `[articleId, effectiveDate]` — 시점 조회에서 조문별 "기준일 이전 시행분 중 가장 최근"을 찾는 경로. 유니크: `[articleId, versionNum]`(T-128, 마이그레이션 `20261010020000_article_version_unique` — 이미 번호가 겹친 조문은 지금 순서대로 1부터 다시 매긴 뒤 건다).
 
 ### ArticleComment (`article_comments`)
 tenantId, articleId FK, userId FK, content, isResolved. 인덱스: `[tenantId, articleId]`.
