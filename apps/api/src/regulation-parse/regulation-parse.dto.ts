@@ -1,6 +1,17 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsDateString, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsDateString,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
 
 export class UpdateRegulationParseTreeDto {
   @ApiProperty({ description: '수정된 조항 트리 (루트 노드 배열)' })
@@ -48,4 +59,40 @@ export class CreateFromLawGoKrDto {
   @MinLength(1)
   @MaxLength(40)
   mst: string;
+}
+
+/** 재파싱 비교(T-110) — 다시 가져온 원문을 맞춰 볼 기존 규정 */
+export class CompareReparseDto {
+  @ApiProperty({ description: '대상 규정 id(규정 식별 정보) — 파일명이 아니라 사람이 고른 규정' })
+  @IsUUID()
+  policyId: string;
+}
+
+export class ReparseDecisionDto {
+  @ApiProperty()
+  @IsUUID()
+  id: string;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description: 'accept | amend | new | hold | pick | link | keep | repeal, 비우면 미결',
+  })
+  @IsOptional()
+  @IsIn(['accept', 'amend', 'new', 'hold', 'pick', 'link', 'keep', 'repeal'])
+  decision?: string | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'pick·link 가 가리키는 기존 조문 id' })
+  @IsOptional()
+  @IsUUID()
+  targetArticleId?: string | null;
+}
+
+export class ReparseDecisionsDto {
+  @ApiProperty({ type: [ReparseDecisionDto] })
+  @IsArray()
+  @ArrayMaxSize(5000)
+  @ValidateNested({ each: true })
+  @Type(() => ReparseDecisionDto)
+  items: ReparseDecisionDto[];
 }

@@ -187,6 +187,14 @@
 | GET | :id | admin, editor, viewer | 파싱 세션 조회 |
 | PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14) |
 | POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120). Body 의 **`effectiveDate`(YYYY-MM-DD)는 필수**(T-123) — 가져오는 본문이 실제로 시행된 날이며 첫 버전과 규정 단위 시행일에 들어간다. 없거나 없는 날짜면 아무것도 만들지 않고 400 본문에 등록된 변수의 표식이 있으면 400(바로 시행하는 본문이라, T-109) |
+| POST | :id/reparse | admin, editor | **기존 규정과 비교(T-110 ①, 재파싱)** `{ policyId }` — 이 원문을 고른 규정의 조문과 계층·내용 지문 두 축으로 맞춘 **재파싱 검토**를 만든다(201, 응답은 `GET /reparse-reviews/:id` 와 같다). 규정 데이터는 바꾸지 않는다. 같은 원문·같은 규정의 열린 검토는 지나간 것(`superseded`)이 되고 사람이 정한 결정은 같은 항목(종류·재파싱 행·기존 조문·후보가 같고 결정 규칙에 맞을 때)으로 옮겨 온다. 미리보기가 준비되지 않았거나 이미 새 규정으로 등록한 원문이면 400, 다른 회사의 원문·규정이면 404. 감사 `reparse.compare` |
+
+## reparse-reviews — 재파싱 검토 (T-110 ①) — 화면: `/policies/:id/reparse/:reviewId`
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | /reparse-reviews/:id | admin, editor | 검토 1건 — `status`(open·superseded·applied), `algorithm`(`reparse/1`)·`normalizer`(`norm/1`), `summary`(종류별 개수 `counts`·장 단위 변경 `chapters`·부칙·별표 수(이번 비교에서 뺌)·작업본이 있는 조문 수), `undecided`(결정이 남은 항목 — 옮김·본문 바뀜·판정 보류·새 조문 후보), `stale`(비교한 뒤 규정이 바뀜 — 장·절·조문 계층·제목, 비교 대상 버전, 작업본), `sourceChanged`(비교한 뒤 원문 트리를 고침), `items[]` — `kind`(same 그대로·moved 옮김·changed 같은 자리 본문 바뀜·ambiguous 판정 보류·new 새 조문 후보·missing 원문에 없음), `articleId`, `parsed`(재파싱 행: 계층·장·절·제목·본문·지문·번호 다시 매김), `stored`(비교 대상: 최근 발행본(시행 예정 포함), 발행 이력이 없으면 최신 작업본 — 버전 id·번호·상태·시행/폐지일·본문·지문, 계층·장·절·제목, 작업본), `candidates`(판정 보류 후보), `reasons`(번호·본문·띄어쓰기만·상위 조·하위 항·앞뒤 조·빈 본문·번호 다시 매김·폐지·중복), `changes`(본문·띄어쓰기만·번호·장·절·제목), `recommended`, `decision`·`targetArticleId`·`decidedBy`·`decidedAt`, 본문 바뀜이면 낱말 단위 `diff`. 다른 회사 검토면 404 |
+| PATCH | /reparse-reviews/:id/decisions | admin, editor | `{ items: [{ id, decision, targetArticleId? }] }` — 옮김: `accept`·`new`·`hold` / 본문 바뀜: `amend`·`new`·`hold` / 판정 보류: `pick`(후보 중, `targetArticleId`)·`new`·`hold` / 새 조문 후보: `new`·`link`(원문에 없는 기존 조문에 잇기)·`hold` / 원문에 없음: `keep`·`repeal`(관리자) 또는 `null`(미결). **한 기존 조문은 한 항목만** 가리킨다(400), 이어진 원문에 없는 조문은 유지·폐지를 정하지 않는다(400), 다른 검토의 항목 id 는 400, 지나간 검토면 409. 검토 행을 잠가 결정끼리 줄 세운다 |
+| GET | /policies/:policyId/reparse-reviews | admin, editor | 이 규정의 재파싱 검토 최근 20건 — `status`·`sourceName`·`counts`·`undecided`·`deletionUndecided`(원문에 없는데 유지·폐지를 정하지 않았고 다른 항목에 이어지지도 않은 조문) |
 
 ## admin (`/api/admin`)
 
@@ -423,6 +431,8 @@
 ## regulation-parse
 **UpdateRegulationParseTreeDto** — `roots`(배열)
 **CommitRegulationParseDto** — `code`(1~80), `title`(1~500), `description?`(≤4000)
+**CompareReparseDto**(T-110) — `policyId`(uuid)
+**ReparseDecisionsDto**(T-110) — `items`(≤5000)[`id`(uuid), `decision?`(accept|amend|new|hold|pick|link|keep|repeal, 비우면 미결), `targetArticleId?`(uuid)]
 (upload는 multipart 파일 업로드)
 
 ## billing

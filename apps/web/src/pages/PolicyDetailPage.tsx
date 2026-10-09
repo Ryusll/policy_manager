@@ -93,6 +93,7 @@ import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
 import { FavoriteButton } from '../components/FavoriteButton';
 import { LawLinksPanel } from '../components/LawLinksPanel';
 import { EffectiveDateFillNotice } from '../components/EffectiveDateFillNotice';
+import { ReparseReviewNotice } from '../components/ReparseReviewNotice';
 import VariableBindingDialog from '../components/VariableBindingDialog';
 import { serviceToday } from '../lib/serviceDate';
 import { SpeechControls } from '../components/SpeechControls';
@@ -2705,6 +2706,7 @@ export default function PolicyDetailPage() {
           {canEdit && policy && (
             <EffectiveDateFillNotice policyId={id!} chapters={policy.chapters ?? []} isAdmin={user?.role === 'admin'} />
           )}
+          {canEdit && policy && <ReparseReviewNotice policyId={id!} />}
 
           <div className="flex flex-col sm:flex-row gap-3 pt-3 border-t border-navy-700/80">
             <div
@@ -3068,6 +3070,15 @@ export default function PolicyDetailPage() {
           >
             규정 간 비교
           </button>
+          {canEdit && (
+            // 재파싱(T-110) — 원문을 다시 가져와 이 규정의 조문과 맞춘다. 같은 조문은 기존 조문을 그대로 이어 쓴다
+            <Link
+              to={`/policies/import?target=${policy.id}`}
+              className="text-[11px] px-2 py-1 rounded border border-navy-300 bg-white text-navy-800 hover:bg-navy-50"
+            >
+              원문 다시 가져오기
+            </Link>
+          )}
         </div>
         {showA11y && (
           <div className="px-4 py-3 border-t border-gray-200 bg-gray-50/70 space-y-2 print:hidden">

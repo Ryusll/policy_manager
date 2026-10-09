@@ -208,6 +208,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `ArticleVersion.publishedAt`·`changeEventId`·`sourceCandidateId` · `AmendmentCandidate.baseFingerprint` | ✅ **스키마에 있다** (T-108, 마이그레이션 `20261009090000_amendment_approval`) |
 | `VariableValue` · `VariableBinding`(옛 `VariableUsage` 대체) | ✅ **스키마에 있다** (T-109 ①, 마이그레이션 `20261009150000_variable_values_bindings`) |
 | `AmendmentCandidate.plannedEffectiveDate`·`variableFingerprint` | ✅ **스키마에 있다** (T-109 ②, 마이그레이션 `20261009180000_amendment_variables`) |
+| `ReparseReview` · `ReparseReviewItem` | ✅ **스키마에 있다** (T-110 ①, 마이그레이션 `20261009210000_reparse_reviews`) |
 
 ### 3.1 관계 개요
 
@@ -378,11 +379,31 @@ tenantId FK(cascade), candidateId FK → AmendmentCandidate(cascade), revision(i
 기간 겹침은 DB 로 막을 수 없어 **저장은 받되 "검토 필요"로 보이고, 그 날짜에 맞는 값이 정확히 하나일 때만 쓴다** — 설계 때의 "나중에
 시작한 값이 이긴다"는 버렸다(어느 값이 들어갔는지 조용히 정하면 개정 초안을 믿을 수 없다). 사용자 지시로 코덱스 자문(T-109 결정 4).
 
+#### ReparseReview / ReparseReviewItem (`reparse_reviews` / `reparse_review_items`) — 재파싱 검토 ⚠️ 테넌트별 ✅ 구현됨 (T-110 ①)
+다시 가져온 원문을 고른 규정의 조문과 계층·내용 지문 두 축으로 맞춘 결과와 사람의 결정(청구항 2, 도 6). 규정 데이터는 바꾸지 않는다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| ReparseReview.tenantId · policyId · sessionId? | uuid | 회사·대상 규정(사람이 고른 규정 식별 정보, 규정을 지우면 함께)·원문 세션(세션을 지우면 비움) |
+| ReparseReview.sourceName | string | 원문 출처 이름(업로드 파일명·법제처 법령명) — 규정 식별 정보와 따로 둔다 |
+| ReparseReview.status | string | `open`(결정 중) · `superseded`(같은 원문을 다시 비교함) · `applied`(반영함, 2단계) |
+| ReparseReview.algorithm · normalizer | string | 판정 규칙 `reparse/1` · 정규화 규칙 `norm/1` — 바뀌면 지문끼리 비교할 수 없어 함께 남긴다 |
+| ReparseReview.stateFingerprint | string | 비교할 때의 규정 상태 지문(`st1:` — 장·절·조문 계층·제목, 비교 대상 버전 id·상태·본문 지문, 작업본). 다시 계산해 다르면 "다시 비교" |
+| ReparseReview.summary | json | 종류별 개수·장 단위 변경·부칙·별표 수·작업본이 있는 조문 수·원문 트리 지문(`tr1:`) |
+| ReparseReviewItem.seq · kind | int · string | 순번(검토 안에서 유니크) · `same`·`moved`·`changed`·`ambiguous`·`new`·`missing` |
+| ReparseReviewItem.articleId? | uuid | 대응한 기존 조문(같음·옮김·본문 바뀜·원문에 없음). 조문을 지우면 비움 |
+| ReparseReviewItem.parsed · stored · candidates | json | 재파싱 행(계층·장·절·제목·본문·지문·번호 다시 매김) · 비교 대상(버전 id·번호·상태·시행/폐지일·본문·지문, 계층·장·절·제목, 작업본) — 반영·승인 때 다시 확인할 기준 · 판정 보류 후보 |
+| ReparseReviewItem.reasons · changes · recommended | json · json · bool | 판정 근거 · 바뀐 것(본문·띄어쓰기만·번호·장·절·제목) · 결정을 미리 골라 둘 만큼 근거가 있다 |
+| ReparseReviewItem.decision? · targetArticleId? · decidedBy? · decidedAt? | string · uuid · uuid · timestamp | 결정(accept·amend·new·hold·pick·link·keep·repeal, 비우면 미결)과 고르기·잇기 대상, 정한 사람·시각 |
+
+인덱스 `[tenantId, policyId, createdAt]`·`[sessionId]`·항목 `[articleId]`, 유니크 `[reviewId, seq]`. **내용 지문은 저장하지 않는다**(아래 3.4) —
+비교할 때 비교 대상 버전 본문으로 계산해 항목에 남긴다.
+
 ### 3.4 기존 테이블 변경
 
 | 테이블 | 추가 필드 | 근거 |
 |---|---|---|
-| `Article` | `fingerprint String?` | 청구항 2 — 재파싱 시 조문 동일성 판정. 정규화 본문의 SHA-256 |
+| `Article` | ~~`fingerprint String?`~~ **두지 않았다**(T-110, 사용자 지시로 코덱스 자문) | 청구항 2 — 지문은 조문의 정체가 아니라 특정 버전 본문에서 나온 값이다. 비교할 때 비교 대상 버전 본문으로 계산하고(특허도 "저장된 지문이 없으면 같은 방식으로 생성") 재파싱 검토 항목에 남긴다 — 쓰기 경로마다 저장값을 맞출 필요가 없다 |
 | `ArticleVersion` | `publishedAt DateTime?` | 청구항 7 — **발행일**. 현재는 `approvedAt`(승인 시각)·`effectiveDate`(시행일) 둘뿐 |
 | `ArticleVersion` | `changeEventId String?` | 청구항 7 — 후속 버전을 변경 이벤트와 연결 |
 | `ArticleVersion` | `sourceCandidateId String?` | 청구항 6 — 이 버전이 어느 후보에서 왔는지 (감사 추적) |

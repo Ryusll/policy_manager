@@ -8,6 +8,7 @@ import DashboardPage from './pages/DashboardPage';
 import PoliciesPage from './pages/PoliciesPage';
 import PolicyImportPage from './pages/PolicyImportPage';
 import PolicyDetailPage from './pages/PolicyDetailPage';
+import ReparseReviewPage from './pages/ReparseReviewPage';
 import SearchPage from './pages/SearchPage';
 import VariablesPage from './pages/VariablesPage';
 import SettingsPage from './pages/SettingsPage';
@@ -31,9 +32,11 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   if (user?.mustChangePassword) return <ForcePasswordChangePage />;
 
   if (user?.role === 'viewer') {
+    // 규정 상세는 열람할 수 있지만 가져오기·재파싱 검토(T-110)는 쓰기 화면이라 막는다
+    const writeOnly = /^\/policies\/(import|[^/]+\/reparse)(\/|$)/.test(location.pathname);
     const allowed =
       location.pathname.startsWith('/search') ||
-      location.pathname.startsWith('/policies/') ||
+      (location.pathname.startsWith('/policies/') && !writeOnly) ||
       location.pathname.startsWith('/about');
     if (!allowed) return <Navigate to="/search" replace />;
   }
@@ -67,6 +70,7 @@ export default function App() {
           {/* :id보다 먼저 둬야 "import"가 규정 ID로 잡히지 않는다 */}
           <Route path="policies/import" element={<PolicyImportPage />} />
           <Route path="policies/:id" element={<PolicyDetailPage />} />
+          <Route path="policies/:id/reparse/:reviewId" element={<ReparseReviewPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="variables" element={<VariablesPage />} />
           <Route path="settings" element={<SettingsPage />} />

@@ -5,15 +5,19 @@
  * (`RegulationParseSession`)을 만들기 때문에, 2·3단계(미리보기·수정·커밋)는 완전히 같은
  * 코드를 탄다. 소스가 늘어도 갈라지는 곳은 1단계뿐이다.
  *
+ * 3단계는 둘 중 하나다: 새 규정으로 등록하거나, **기존 규정에 다시 가져오기**(T-110 재파싱) — 대상 규정을 고르면
+ * 저장된 조문과 계층·내용 지문으로 맞춘 비교 결과(재파싱 검토)로 간다. 규정 상세의 "원문 다시 가져오기"는
+ * `?target=규정id` 로 이 화면을 열어 대상을 미리 골라 둔다.
+ *
  * 규정 목록의 "기존 규정 가져오기"는 브라우저에서 텍스트를 뽑아 클라이언트가 파싱하는 경로다
  * (TXT·DOCX·붙여넣기에 적합). 이 화면은 서버의 `regulation-parse` 모듈을 쓴다.
  * pdfplumber/PyMuPDF가 글꼴 크기·굵기까지 보고 조항 계층을 잡아주므로 PDF는 이쪽이 정확하다.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Upload, FileText, Trash2, ChevronRight, RotateCcw, Check, Scale, ExternalLink, FileJson } from 'lucide-react';
+import { Upload, FileText, Trash2, ChevronRight, RotateCcw, Check, Scale, ExternalLink, FileJson, GitCompare } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
   regulationParseApi,
@@ -31,11 +35,16 @@ import { LawGoKrSearchPanel } from '../components/LawGoKrSearchPanel';
 import BulkImportPanel from '../components/BulkImportPanel';
 import { useAuthStore } from '../stores/authStore';
 import type { LawGoKrSessionMeta } from '../api/lawgokr';
+import { policiesApi } from '../api/policies';
+import { reparseApi } from '../api/reparse';
+import { apiErrorMessage } from '../lib/apiError';
 
 const MAX_PDF_BYTES = 30 * 1024 * 1024; // 서버 FileInterceptor 제한과 동일
 
 type Step = 'upload' | 'review' | 'done';
 type Source = 'pdf' | 'lawgokr' | 'json';
+/** 3단계 — 새 규정으로 등록 / 기존 규정에 다시 가져오기(재파싱 비교) */
+type Mode = 'create' | 'reparse';
 
 export default function PolicyImportPage() {
   const navigate = useNavigate();
@@ -50,6 +59,15 @@ export default function PolicyImportPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ code: '', title: '', description: '', effectiveDate: '' });
   const [createdPolicyId, setCreatedPolicyId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const targetParam = searchParams.get('target');
+  const [mode, setMode] = useState<Mode>(targetParam ? 'reparse' : 'create');
+  const [targetPolicyId, setTargetPolicyId] = useState(targetParam ?? '');
+  const { data: policies = [] } = useQuery<{ id: string; code: string; title: string }[]>({
+    queryKey: ['policies'],
+    queryFn: policiesApi.list,
+    enabled: mode === 'reparse',
+  });
 
   // 서버 추출이 오래 걸릴 수 있어 status가 processing인 동안만 폴링한다
   const { data: session, isLoading: isSessionLoading } = useQuery<ParseSession>({
@@ -122,6 +140,26 @@ export default function PolicyImportPage() {
     },
   });
 
+  // 기존 규정과 비교 — 고친 트리가 있으면 먼저 저장한다(서버는 저장된 트리로 비교한다)
+  const compareMutation = useMutation({
+    mutationFn: async () => {
+      if (dirty) await regulationParseApi.updateTree(sessionId!, roots);
+      return reparseApi.compare(sessionId!, targetPolicyId);
+    },
+    onSuccess: (review) => {
+      setDirty(false);
+      navigate(`/policies/${review.policyId}/reparse/${review.id}`);
+    },
+    onError: (err) => toast(apiErrorMessage(err, '기존 규정과 비교하지 못했습니다.'), 'error'),
+  });
+
+  // 대상 규정을 아직 고르지 않았으면 문서 제목과 같은 규정을 골라 둔다(파일 이름이 아니라 규정을 고르는 것이다)
+  useEffect(() => {
+    if (mode !== 'reparse' || targetPolicyId || !form.title) return;
+    const same = policies.find((p) => p.title.trim() === form.title.trim());
+    if (same) setTargetPolicyId(same.id);
+  }, [mode, policies, form.title, targetPolicyId]);
+
   const flat = useMemo(() => flattenParseTree(roots), [roots]);
   // 조문이 되는 노드만 센다. 머리말·장·절과 부칙·별표는 조문이 아니다.
   const articleCount = useMemo(
@@ -170,7 +208,7 @@ export default function PolicyImportPage() {
     <div className="page-shell space-y-4">
       <PageHeader
         title="규정 가져오기"
-        description="PDF를 올리거나 법제처에서 법령을 찾아오면, 서버가 조항 계층을 추출합니다. 미리보기에서 고친 뒤 규정으로 등록하세요."
+        description="PDF를 올리거나 법제처에서 법령을 찾아오면, 서버가 조항 계층을 추출합니다. 미리보기에서 고친 뒤 새 규정으로 등록하거나, 기존 규정의 조문과 비교하세요."
         actions={
           sessionId ? (
             <button type="button" className="btn-secondary text-sm" onClick={resetAll}>
@@ -185,7 +223,7 @@ export default function PolicyImportPage() {
           [
             ['upload', '1. 원문 가져오기'],
             ['review', '2. 조항 미리보기·수정'],
-            ['done', '3. 규정 등록'],
+            ['done', mode === 'reparse' ? '3. 기존 조문과 비교' : '3. 규정 등록'],
           ] as const
         ).map(([key, label], idx) => (
           <li key={key} className="flex items-center gap-2">
@@ -387,6 +425,66 @@ export default function PolicyImportPage() {
           )}
 
           <section className="bg-white border border-gray-300 shadow-sm p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="가져온 원문을 어디에 쓸지">
+              {(
+                [
+                  ['create', '새 규정으로 등록'],
+                  ['reparse', '기존 규정에 다시 가져오기'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === key}
+                  onClick={() => setMode(key)}
+                  className={clsx(
+                    'text-sm px-3 py-1.5 rounded border',
+                    mode === key ? 'bg-navy-700 border-navy-700 text-white font-medium' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mode === 'reparse' ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5" htmlFor="reparse-target">
+                    대상 규정 <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    id="reparse-target"
+                    className="input md:w-[28rem] max-w-full"
+                    value={targetPolicyId}
+                    onChange={(e) => setTargetPolicyId(e.target.value)}
+                  >
+                    <option value="">규정을 고르세요</option>
+                    {[...policies]
+                      .sort((a, b) => a.title.localeCompare(b.title, 'ko'))
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.title} ({p.code})
+                        </option>
+                      ))}
+                  </select>
+                  <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                    파일 이름이 아니라 <b>어느 규정의 원문인지</b>를 직접 고릅니다. 저장된 조문과 번호·본문 지문으로 맞춰, 같은 조문은
+                    기존 조문을 그대로 이어 씁니다(법령 연결·버전 이력 유지). 비교만으로는 규정이 바뀌지 않습니다.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={!targetPolicyId || articleCount === 0 || status !== 'ready' || compareMutation.isPending}
+                  onClick={() => compareMutation.mutate()}
+                >
+                  <GitCompare size={15} />
+                  {compareMutation.isPending ? '비교 중…' : `조항 ${articleCount}건을 기존 조문과 비교`}
+                </button>
+              </div>
+            ) : (
+            <>
             <h2 className="text-sm font-semibold text-gray-900">규정으로 등록</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -461,6 +559,8 @@ export default function PolicyImportPage() {
                 <span className="text-[11px] text-gray-500">코드·제목·시행일을 입력하세요.</span>
               )}
             </div>
+            </>
+            )}
           </section>
         </>
       )}

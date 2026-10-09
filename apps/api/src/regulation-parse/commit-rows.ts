@@ -144,7 +144,16 @@ function appendTo(row: CommitRow, node: RegulationArticleNode): void {
   row.content = row.content ? `${row.content}\n${line}` : line;
 }
 
-export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
+/**
+ * 행마다 원문 노드와 번호를 그대로 썼는지 알린다(T-110 재파싱). 번호를 다시 매긴 행은 재파싱 대응에서 번호를 믿지 않는다
+ * — `buildCommitPlan` 은 거꾸로 가거나 겹친 번호를 다음 번호로 고쳐 주기 때문이다.
+ */
+export type RowTrace = { nodeId: string; renumbered: boolean };
+
+export function buildCommitPlan(
+  roots: RegulationArticleNode[],
+  opts: { onRow?: (row: CommitRow, trace: RowTrace) => void } = {},
+): CommitPlan {
   const chapters: CommitPlan['chapters'] = [];
   const rows: CommitRow[] = [];
   const preamble: string[] = [];
@@ -247,6 +256,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
           sectionIndex,
         };
         rows.push(row);
+        opts.onRow?.(row, { nodeId: node.id, renumbered: !src || src.n !== joNumber || (src.branch || 0) !== (branch ?? 0) });
         visit(children, {
           jo: joNumber,
           branch,
@@ -283,6 +293,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
           sectionIndex,
         };
         rows.push(row);
+        opts.onRow?.(row, { nodeId: node.id, renumbered: true });
         visit(children, { jo: joNumber, branch: null, hang: null, inMok: false, hangCount: { n: 0 }, mokCount: { n: 0 }, owner: row });
         continue;
       }
@@ -301,6 +312,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
           sectionIndex,
         };
         rows.push(row);
+        opts.onRow?.(row, { nodeId: node.id, renumbered: sourceIndex(node.articleNumber) !== ctx.hangCount.n });
         visit(children, { ...ctx, hang: ctx.hangCount.n, inMok: false, mokCount: { n: 0 }, owner: row });
         continue;
       }
@@ -325,6 +337,7 @@ export function buildCommitPlan(roots: RegulationArticleNode[]): CommitPlan {
         sectionIndex,
       };
       rows.push(row);
+      opts.onRow?.(row, { nodeId: node.id, renumbered: sourceIndex(node.articleNumber) !== ctx.mokCount.n });
       visit(children, { ...ctx, inMok: true, owner: row });
     }
   };
