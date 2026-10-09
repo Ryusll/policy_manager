@@ -60,7 +60,7 @@ export type ImpactedArticle = Awaited<ReturnType<LawChangesService['impactedArti
  * 법령 추적 해제로 조항이 지워진 경우. 지금은 사라진 조항을 지우지 않고 표시만 해서 연결이 이어진다.
  */
 export const UNRESOLVABLE_REMOVED =
-  '이 조문이 법령에서 사라질 때 연결 정보도 함께 지워졌습니다(예전 동기화). 영향받던 사내 조문을 자동으로 찾을 수 없습니다.';
+  '이 조문이 법령에서 사라져 연결 정보도 함께 지워졌습니다(예전 동기화에서 생긴 기록). 영향받던 사내 조문을 자동으로 찾을 수 없습니다.';
 
 /**
  * 법령 변경 이벤트와 그 영향 (T-105, 청구항 1 ④·3).
