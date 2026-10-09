@@ -1282,11 +1282,14 @@ model AiQaLog {
   inputTokens      Int      @default(0) @map("input_tokens")
   outputTokens     Int      @default(0) @map("output_tokens")
   cacheReadTokens  Int      @default(0) @map("cache_read_tokens")
+  /// 끝까지 가지 못한 질문의 사유(AI 호출 실패·거절·끊긴 응답). 그래도 AI 를 불렀으면 한도에 센다
+  failure          String?  @db.Text
   createdAt        DateTime @default(now()) @map("created_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, createdAt])
+  @@index([tenantId, userId, createdAt])
   @@map("ai_qa_logs")
 }

@@ -17,9 +17,11 @@ export class AskController {
   constructor(private readonly askService: AskService) {}
 
   @Get('status')
-  @ApiOperation({ summary: '규정 질문 설정 상태 — 서버 설정 여부·회사 켜짐·이번 달 사용량/한도 (키 노출 없음)' })
-  status(@Request() req: { user: { tenantId: string } }) {
-    return this.askService.status(req.user.tenantId);
+  @ApiOperation({
+    summary: '규정 질문 설정 상태 — 서버 설정 여부·회사 켜짐·이번 달 회사/내 사용량과 한도 (키 노출 없음)',
+  })
+  status(@Request() req: { user: { tenantId: string; id: string } }) {
+    return this.askService.status(req.user.tenantId, req.user.id);
   }
 
   @Post()
@@ -28,7 +30,9 @@ export class AskController {
     summary: '규정에 대해 묻기 — 시행 중 조문만 근거로 답과 근거 조문을 돌려준다',
     description:
       '근거가 없으면 answerable=false(reason: no_regulations·no_candidates·no_basis·refused). ' +
-      '꺼져 있으면 403 AI_QA_DISABLED, 이번 달 한도를 넘으면 429 AI_QA_MONTHLY_LIMIT, 서버 미설정이면 503.',
+      '꺼져 있으면 403 AI_QA_DISABLED, 이번 달 회사 한도를 넘으면 429 AI_QA_MONTHLY_LIMIT, ' +
+      '내 한도를 넘으면 429 AI_QA_USER_MONTHLY_LIMIT, 서버 미설정이면 503. ' +
+      'AI 를 부르기 전에 한도에 세고, AI 를 부르지 않고 끝난 질문만 돌려준다(실패·거절도 센다).',
   })
   ask(@Request() req: { user: { tenantId: string; id: string } }, @Body() dto: AskDto) {
     return this.askService.ask(req.user.tenantId, req.user.id, dto.question);

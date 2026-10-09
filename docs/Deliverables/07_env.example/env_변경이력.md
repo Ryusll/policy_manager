@@ -20,3 +20,4 @@
 | 2026-07-20 | 최초 기록 (루트 `.env.example` 현황 스냅샷) | - |
 | 2026-09-07 | **백업 설정 6종 추가** — `BACKUP_S3_ENDPOINT`·`BACKUP_S3_BUCKET`·`BACKUP_S3_ACCESS_KEY`·`BACKUP_S3_SECRET_KEY`(필수), `BACKUP_S3_PREFIX`·`BACKUP_KEEP_DAYS`(선택). 규정 본문(DB)과 첨부파일이 둘 다 서버 안에만 있어 서버가 사라지면 같이 사라지던 문제. `scripts/backup-offsite.sh` 가 쓴다 | - |
 | 2026-10-09 | **규정 질문(AI, T-130) 4종 추가** — `ANTHROPIC_API_KEY`(비우면 이 기능만 "설정 안 됨"), `AI_QA_MODEL`(기본 `claude-opus-5-5`), `AI_QA_MONTHLY_LIMIT`(회사별 월 한도, 기본 300 — 빈 값은 기본값으로 읽는다), `AI_QA_PROVIDER`(`mock` 이면 모의 AI, 통합 테스트용). docker-compose 도 넘긴다 | - |
+| 2026-10-10 | **`AI_QA_USER_MONTHLY_LIMIT` 추가**(T-130 후속, 직원 한 명의 월 질문 한도, 기본 60) — 한 사람이 회사 한도를 다 쓰지 못하게. 회사 한도는 이제 AI 를 부르기 전에 센다(실패·거절도 셈) | - |

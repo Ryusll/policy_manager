@@ -59,7 +59,7 @@ describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
   it('상태: 서버 설정·회사 켜짐·이번 달 사용량을 알려 준다(키는 내보내지 않는다)', async () => {
     const { status, body } = await api('/ask/status', { token: t.token });
     expect(status).toBe(200);
-    expect(Object.keys(body).sort()).toEqual(['configured', 'enabled', 'limit', 'provider', 'used']);
+    expect(Object.keys(body).sort()).toEqual(['configured', 'enabled', 'limit', 'provider', 'used', 'userLimit', 'userUsed']);
     if (!mock) {
       expect((await ask('경조금은 얼마인가요')).status).toBe(503);
       return;
@@ -112,6 +112,19 @@ describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
     }
   });
 
+  it('AI 호출이 실패해도, 거절돼도 한도에 센다 — 비용은 나간다', async (ctx) => {
+    if (!mock) ctx.skip();
+    const before = (await api('/ask/status', { token: t.token })).body;
+    const failed = await ask('경조금 [실패]');
+    expect(failed.status).toBe(502);
+    const refused = await ask('경조금 [거절]');
+    expect(refused.status).toBe(200);
+    expect(refused.body).toMatchObject({ answerable: false, reason: 'refused' });
+    const after = (await api('/ask/status', { token: t.token })).body;
+    expect(after.used).toBe(before.used + 2);
+    expect(after.userUsed).toBe(before.userUsed + 2);
+  });
+
   it('열람자도 물을 수 있다', async (ctx) => {
     if (!mock) ctx.skip();
     const { status, body } = await ask('경조금 결혼', await userToken('viewer'));
@@ -157,20 +170,52 @@ describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
     expect(body.usage.used).toBe(0);
   });
 
-  it('이번 달 한도를 넘으면 429', async (ctx) => {
-    if (!mock) ctx.skip();
-    const other = await createTenant('ask-limit');
-    const st = (await api('/ask/status', { token: other.token })).body;
-    if (st.limit > 20) ctx.skip(); // 한도를 작게 띄운 API(AI_QA_MONTHLY_LIMIT)에서만 끝까지 채워 본다
+  /** 한도 시험용 회사 — 시행 중인 조문 하나와 직원 몇 명 */
+  const limitTenant = async (tag: string, extraUsers: number) => {
+    const other = await createTenant(tag);
     const set = await createPolicyWithArticle(other.token, `ASKL-${Date.now().toString(36)}`, '한도시험규정');
     await api(`/policies/${set.policy.id}/publish-drafts`, {
       method: 'POST',
       token: other.token,
       json: { changeNote: '제정', effectiveDate: '2024-01-01' },
     });
-    for (let i = 0; i < st.limit; i++) await ask('목적 통합테스트', other.token);
-    const over = await ask('목적 통합테스트', other.token);
+    const tokens = [other.token];
+    for (let i = 0; i < extraUsers; i++) {
+      const email = `u${i}-${other.slug}@example.test`;
+      await api('/users', { method: 'POST', token: other.token, json: { email, password: other.password, name: `u${i}`, role: 'viewer' } });
+      tokens.push((await login(email, other.password, other.slug)).body.accessToken);
+    }
+    return { other, tokens };
+  };
+
+  it('동시에 물어도 회사의 월 한도를 넘지 못한다', async (ctx) => {
+    if (!mock) ctx.skip();
+    const probe = await createTenant('ask-limit-probe');
+    const st = (await api('/ask/status', { token: probe.token })).body;
+    const perUser = Math.ceil((st.limit + 5) / 3);
+    // 한도를 작게 띄운 API(AI_QA_MONTHLY_LIMIT·AI_QA_USER_MONTHLY_LIMIT)에서만 끝까지 채워 본다
+    if (st.limit > 20 || st.userLimit < perUser) ctx.skip();
+    const { tokens } = await limitTenant('ask-limit', 2);
+    const results = await Promise.all(
+      tokens.flatMap((token) => Array.from({ length: perUser }, () => ask('목적 통합테스트', token))),
+    );
+    const ok = results.filter((r) => r.status === 200).length;
+    const over = results.filter((r) => r.status === 429);
+    expect(ok).toBe(st.limit);
+    expect(over.length).toBe(results.length - st.limit);
+    expect(over.every((r) => r.body.code === 'AI_QA_MONTHLY_LIMIT')).toBe(true);
+  });
+
+  it('직원 한 명은 내 월 한도를 넘지 못한다 — 회사 한도가 남아 있어도', async (ctx) => {
+    if (!mock) ctx.skip();
+    const { tokens } = await limitTenant('ask-user-limit', 0);
+    const st = (await api('/ask/status', { token: tokens[0] })).body;
+    if (st.userLimit > 20 || st.userLimit >= st.limit) ctx.skip();
+    for (let i = 0; i < st.userLimit; i++) expect((await ask('목적 통합테스트', tokens[0])).status).toBe(200);
+    const over = await ask('목적 통합테스트', tokens[0]);
     expect(over.status).toBe(429);
-    expect(over.body.code).toBe('AI_QA_MONTHLY_LIMIT');
+    expect(over.body.code).toBe('AI_QA_USER_MONTHLY_LIMIT');
+    const after = (await api('/ask/status', { token: tokens[0] })).body;
+    expect(after).toMatchObject({ userUsed: st.userLimit, used: st.userLimit });
   });
 });

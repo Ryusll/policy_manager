@@ -28,7 +28,7 @@ export interface AskResult {
   blocks: AskBlock[];
   citations: AskCitation[];
   consulted: { policyId: string; policyTitle: string; number: number; branchNumber: number | null; label: string }[];
-  usage: { used: number; limit: number };
+  usage: { used: number; limit: number; userUsed: number; userLimit: number };
 }
 
 export interface AskStatus {
@@ -37,8 +37,12 @@ export interface AskStatus {
   provider: 'anthropic' | 'mock' | null;
   /** 회사 관리자가 켜 두었는가 */
   enabled: boolean;
+  /** 이번 달 회사 전체 사용량·한도 */
   used: number;
   limit: number;
+  /** 이번 달 내 사용량·한도(한 사람이 회사 한도를 다 쓰지 못하게) */
+  userUsed: number;
+  userLimit: number;
 }
 
 export const askApi = {

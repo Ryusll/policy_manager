@@ -169,7 +169,7 @@ tenantId FK, userId FK, kind(기본 "policy_revision", 법령 개정 후보 알�
 tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json).
 
 ### AiQaLog (`ai_qa_logs`) — T-130 규정 질문 기록
-tenantId FK(cascade), userId FK?(SetNull), question(text), answerable(근거가 남아 답을 내보냈는가), answer(json? — 화면에 낸 답 블록, 답하지 않았으면 null), citedArticleIds(text[] — 근거로 보여 준 조문 행), contextRowCount(AI 에 본문을 준 행 수), aiCalled(AI 를 불렀는가 — 월 한도는 이것만 센다), model?, inputTokens·outputTokens·cacheReadTokens(사용량·비용 집계). 인덱스: `[tenantId, createdAt]`. 마이그레이션 `20261009230000_ai_qa`.
+tenantId FK(cascade), userId FK?(SetNull), question(text), answerable(근거가 남아 답을 내보냈는가), answer(json? — 화면에 낸 답 블록, 답하지 않았으면 null), citedArticleIds(text[] — 근거로 보여 준 조문 행), contextRowCount(AI 에 본문을 준 행 수), aiCalled(한도에 세는가 — AI 를 부르기 전에 true 로 만들고, AI 를 부르지 않고 끝난 질문만 false 로 돌려준다), model?, inputTokens·outputTokens·cacheReadTokens(사용량·비용 집계), failure?(끝까지 가지 못한 사유 — AI 호출 실패·거절·끊긴 응답, 그래도 셈). 인덱스: `[tenantId, createdAt]`, `[tenantId, userId, createdAt]`(직원별 월 한도). 마이그레이션 `20261009230000_ai_qa`, `20261010040000_ai_qa_failure`.
 
 ### PolicyImportLog (`policy_import_logs`)
 tenantId FK, userId FK?, policyId FK?, sourceName, parseProfile, chapterCount, articleCount, cleanupOptions(json), status, message. 인덱스: `[tenantId, createdAt]`.

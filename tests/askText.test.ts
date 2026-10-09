@@ -155,5 +155,7 @@ describe('월 한도 설정값', () => {
     expect(monthlyLimitFrom('-1')).toBe(300);
     expect(monthlyLimitFrom('15')).toBe(15);
     expect(monthlyLimitFrom('0')).toBe(0); // 일부러 0 을 주면 막는다
+    expect(monthlyLimitFrom('', 60)).toBe(60); // 직원별 한도는 기본값이 다르다
+    expect(monthlyLimitFrom('12', 60)).toBe(12);
   });
 });

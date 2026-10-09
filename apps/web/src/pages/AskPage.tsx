@@ -158,6 +158,7 @@ function TurnView({ turn }: { turn: Turn }) {
 export default function AskPage() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
+  const isPlatformAdmin = (user as { platformRole?: string } | null)?.platformRole === 'global_admin';
   const qc = useQueryClient();
   const [question, setQuestion] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -169,7 +170,9 @@ export default function AskPage() {
     onSuccess: (result, q) => {
       setTurns((prev) => [{ question: q, result }, ...prev].slice(0, 10));
       setQuestion('');
-      qc.setQueryData(['ask-status'], (s: typeof status) => (s ? { ...s, used: result.usage.used } : s));
+      qc.setQueryData(['ask-status'], (s: typeof status) =>
+        s ? { ...s, used: result.usage.used, userUsed: result.usage.userUsed } : s,
+      );
     },
   });
 
@@ -177,6 +180,7 @@ export default function AskPage() {
     mutationFn: (enabled: boolean) => askApi.setEnabled(enabled),
     onSuccess: (s) => {
       qc.setQueryData(['ask-status'], s);
+      qc.invalidateQueries({ queryKey: ['ask-status'] });
       toast(s.enabled ? '규정 질문을 켰습니다.' : '규정 질문을 껐습니다.', 'success');
     },
     onError: (e) => toast(errorMessage(e), 'error'),
@@ -200,7 +204,7 @@ export default function AskPage() {
           status?.configured ? (
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <span data-testid="ask-usage">
-                이번 달 {status.used}/{status.limit}회
+                이번 달 회사 {status.used}/{status.limit}회 · 나 {status.userUsed}/{status.userLimit}회
               </span>
               {isAdmin && (
                 <button
@@ -223,15 +227,16 @@ export default function AskPage() {
         <div className="card p-4 border-amber-200 bg-amber-50 text-sm text-amber-900 flex gap-2">
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
           <div>
-            <p className="font-medium">규정 질문(AI)이 아직 설정되지 않았습니다.</p>
+            <p className="font-medium">규정 질문(AI)은 아직 준비 중입니다.</p>
             <p className="text-xs mt-1">
-              {isAdmin ? (
+              {/* 서버 키는 고객사가 넣을 수 없다 — 운영자(플랫폼 관리자)에게만 설정 방법을 보인다 */}
+              {isPlatformAdmin ? (
                 <>
                   서버 환경변수 <code className="font-mono">ANTHROPIC_API_KEY</code>에 AI 키를 넣고 API를 다시 띄우면
                   쓸 수 있습니다.
                 </>
               ) : (
-                '회사 관리자에게 문의하세요.'
+                '쓰려면 아스트룸에 문의하세요.'
               )}
             </p>
           </div>

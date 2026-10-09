@@ -23,8 +23,25 @@ export interface AskProvider {
   answer(input: { context: string; question: string }): Promise<{ raw: unknown; usage: AiUsage }>;
 }
 
-/** AI 가 정책상 답을 거절했다 — 사용자에게는 "답할 수 없는 질문"으로 보인다 */
-export class AskRefusedError extends Error {}
+/** AI 가 정책상 답을 거절했다 — 사용자에게는 "답할 수 없는 질문"으로 보인다. 거절도 비용이 들어 사용량을 함께 넘긴다 */
+export class AskRefusedError extends Error {
+  constructor(
+    category: string,
+    readonly usage?: AiUsage,
+  ) {
+    super(category);
+  }
+}
+
+/** 호출은 됐지만 쓸 수 없는 응답(길이 제한에서 끊김 등) — 사용량은 기록해야 한다 */
+export class AskBadResponseError extends BadGatewayException {
+  constructor(
+    message: string,
+    readonly usage: AiUsage,
+  ) {
+    super(message);
+  }
+}
 
 const SELECT_SYSTEM = `너는 회사 사내 규정 검색을 돕는다. 아래 <목차>는 이 회사에서 지금 시행 중인 규정의 조 목록이고, 각 줄은 "키 | 규정명 | 조 번호(조 제목)" 형식이다.
 직원의 질문에 답하려면 본문을 읽어야 할 조의 키를 관련성이 높은 순서로 최대 10개 고른다. 제목만으로 애매하면 넉넉히 고른다. 관련 있어 보이는 조가 없으면 빈 목록을 낸다.
@@ -149,17 +166,17 @@ export class AnthropicAskProvider implements AskProvider {
       outputTokens: res.usage.output_tokens ?? 0,
       cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
     };
-    if (res.stop_reason === 'refusal') throw new AskRefusedError(res.stop_details?.category ?? 'refusal');
+    if (res.stop_reason === 'refusal') throw new AskRefusedError(res.stop_details?.category ?? 'refusal', usage);
     if (res.stop_reason === 'max_tokens') {
       this.log.warn(`AI 답이 길이 제한에서 끊김 (${usage.outputTokens} tokens)`);
-      throw new BadGatewayException('AI 답이 너무 길어 끊겼습니다. 질문을 좁혀 다시 물어 주세요.');
+      throw new AskBadResponseError('AI 답이 너무 길어 끊겼습니다. 질문을 좁혀 다시 물어 주세요.', usage);
     }
     const text = res.content.find((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')?.text ?? '';
     try {
       return { raw: JSON.parse(text), usage };
     } catch {
       this.log.warn(`AI 응답을 JSON 으로 읽지 못함 (앞부분: ${text.slice(0, 80)})`);
-      throw new BadGatewayException('AI 답을 읽지 못했습니다. 잠시 후 다시 물어 주세요.');
+      throw new AskBadResponseError('AI 답을 읽지 못했습니다. 잠시 후 다시 물어 주세요.', usage);
     }
   }
 }
@@ -170,12 +187,15 @@ export class AnthropicAskProvider implements AskProvider {
  * - 답하기: 첫 참조 번호를 근거로 "모의 답변 — <첫 행 앞부분>". 질문에 "[근거밖]"이 있으면 준 적 없는
  *   번호만 근거로 대고(걸러지는지 시험), "[모름]"이 있으면 답할 수 없다고 한다. 근거 거르기를 시험하려고
  *   늘 준 적 없는 번호(R999)를 하나 섞는다.
+ * - 실패 시험: "[실패]"면 호출 실패(502), "[거절]"이면 고르기 단계에서 AI 가 거절한 것으로 한다 — 둘 다 월 한도에 세야 한다.
  */
 export class MockAskProvider implements AskProvider {
   readonly name = 'mock' as const;
   private readonly usage: AiUsage = { model: 'mock', inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
 
   select(input: { toc: string; question: string }) {
+    if (input.question.includes('[실패]')) return Promise.reject(new BadGatewayException('모의 AI 호출 실패'));
+    if (input.question.includes('[거절]')) return Promise.reject(new AskRefusedError('mock', { ...this.usage, inputTokens: 10 }));
     const words = input.question.split(/\s+/).filter((w) => w.length >= 2);
     const keys = input.toc
       .split('\n')

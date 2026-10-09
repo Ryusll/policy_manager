@@ -81,6 +81,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_QA_MODEL: ${AI_QA_MODEL:-}
       AI_QA_MONTHLY_LIMIT: ${AI_QA_MONTHLY_LIMIT:-}
+      AI_QA_USER_MONTHLY_LIMIT: ${AI_QA_USER_MONTHLY_LIMIT:-}
       AI_QA_PROVIDER: ${AI_QA_PROVIDER:-}
     depends_on:
       postgres:

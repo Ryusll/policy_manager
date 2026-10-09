@@ -3,6 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
 import { policiesApi } from '../api/policies';
+import { askApi } from '../api/ask';
 import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText, Scale, FileDiff, MessageCircleQuestion } from 'lucide-react';
 import UserMenu from './UserMenu';
 import { useState, useEffect, useMemo } from 'react';
@@ -48,6 +49,16 @@ export default function Layout() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showTour, setShowTour] = useState(false);
 
+  // 규정 질문(T-130) 메뉴는 서버에 AI 가 설정돼 있고 회사가 켜 둔 때만 — 꺼 두었으면 다시 켤 수 있는 관리자에게만
+  const { data: askStatus } = useQuery({
+    queryKey: ['ask-status'],
+    queryFn: askApi.status,
+    enabled: !!user,
+    staleTime: 5 * 60_000,
+  });
+  const askConfigured = !!askStatus?.configured;
+  const askEnabled = !!askStatus?.enabled;
+
   const navItems = useMemo(() => {
     const isEnterprise = canUseApiIntegration(user?.plan);
     const isViewer = user?.role === 'viewer';
@@ -57,12 +68,14 @@ export default function Layout() {
       .filter((item) => (item.path === '/admin' ? user?.platformRole === 'global_admin' : true))
       // 감사 로그에는 다른 구성원의 활동이 담긴다 — 회사 관리자만 본다
       .filter((item) => (item.path === '/audit-logs' ? isAdmin : true))
+      .filter((item) => (item.path === '/ask' ? askConfigured && (askEnabled || isAdmin) : true))
       .filter((item) => {
         if (!isViewer) return true;
-        return item.path === '/search';
+        // 열람자(직원)는 찾아보기만 — 통합검색과 규정 질문
+        return item.path === '/search' || item.path === '/ask';
       })
       .map((item) => ({ ...item, label: t(item.labelKey) }));
-  }, [t, locale, user?.plan, user?.role]);
+  }, [t, locale, user?.plan, user?.role, user?.platformRole, askConfigured, askEnabled]);
 
   const planLabel = useMemo(
     () => ({

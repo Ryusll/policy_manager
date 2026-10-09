@@ -24,6 +24,8 @@ const CONTEXT_MAX_CHARS = 60_000;
 /** 본문을 읽을 조 수 상한(AI 가 고른 것 + 낱말이 든 것) */
 const MAX_GROUPS = 12;
 const DEFAULT_MONTHLY_LIMIT = 300;
+/** 직원 한 명의 월 질문 한도 — 한 사람이 회사 한도를 다 쓰지 못하게 */
+const DEFAULT_USER_MONTHLY_LIMIT = 60;
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 export type AskReason = 'no_regulations' | 'no_candidates' | 'no_basis' | 'refused';
@@ -51,17 +53,23 @@ export interface AskResult {
   citations: AskCitation[];
   /** AI 에 본문을 준 조 — 답하지 못했을 때 직원이 직접 확인할 수 있게 */
   consulted: { policyId: string; policyTitle: string; number: number; branchNumber: number | null; label: string }[];
-  usage: { used: number; limit: number };
+  usage: { used: number; limit: number; userUsed: number; userLimit: number };
 }
 
 /**
  * 회사별 월 질문 한도. 비었거나 숫자가 아니면 기본값 — compose 는 값이 없어도 빈 문자열로 넘기는데
  * `Number('')` 가 0 이라 그대로 읽으면 한도 0(모든 질문이 막힘)이 된다.
  */
-export function monthlyLimitFrom(raw: string | undefined): number {
+export function monthlyLimitFrom(raw: string | undefined, fallback = DEFAULT_MONTHLY_LIMIT): number {
   const v = raw?.trim();
   const n = v ? Number(v) : NaN;
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_MONTHLY_LIMIT;
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+/** 오류에 함께 실려 온 AI 사용량(거절·끊긴 응답) — 기록해야 비용이 빠지지 않는다 */
+function usageOf(e: unknown): AiUsage | undefined {
+  const u = (e as { usage?: AiUsage } | null)?.usage;
+  return u && typeof u.inputTokens === 'number' ? u : undefined;
 }
 
 /** 이번 달 1일 0시(한국 시간)의 순간 */
@@ -82,6 +90,7 @@ export class AskService {
   private readonly log = new Logger(AskService.name);
   private readonly provider: AskProvider | null;
   private readonly monthlyLimit: number;
+  private readonly userMonthlyLimit: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -91,21 +100,31 @@ export class AskService {
     this.provider =
       process.env.AI_QA_PROVIDER?.trim() === 'mock' ? new MockAskProvider() : key ? new AnthropicAskProvider(key) : null;
     this.monthlyLimit = monthlyLimitFrom(process.env.AI_QA_MONTHLY_LIMIT);
+    this.userMonthlyLimit = monthlyLimitFrom(process.env.AI_QA_USER_MONTHLY_LIMIT, DEFAULT_USER_MONTHLY_LIMIT);
   }
 
-  private async usedThisMonth(tenantId: string): Promise<number> {
-    return this.prisma.aiQaLog.count({ where: { tenantId, aiCalled: true, createdAt: { gte: kstMonthStart() } } });
+  /** 이번 달(한국 시간) 한도에 센 질문 수 — 회사 전체, 그리고 그중 이 직원 */
+  private async usedThisMonth(db: Prisma.TransactionClient | PrismaService, tenantId: string, userId: string | null) {
+    const since = kstMonthStart();
+    const [used, userUsed] = await Promise.all([
+      db.aiQaLog.count({ where: { tenantId, aiCalled: true, createdAt: { gte: since } } }),
+      userId ? db.aiQaLog.count({ where: { tenantId, userId, aiCalled: true, createdAt: { gte: since } } }) : 0,
+    ]);
+    return { used, userUsed };
   }
 
-  async status(tenantId: string) {
+  async status(tenantId: string, userId: string | null = null) {
     const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { aiQaEnabled: true } });
     if (!tenant) throw new NotFoundException('Tenant not found');
+    const { used, userUsed } = await this.usedThisMonth(this.prisma, tenantId, userId);
     return {
       configured: this.provider !== null,
       provider: this.provider?.name ?? null,
       enabled: tenant.aiQaEnabled,
-      used: await this.usedThisMonth(tenantId),
+      used,
       limit: this.monthlyLimit,
+      userUsed,
+      userLimit: this.userMonthlyLimit,
     };
   }
 
@@ -123,7 +142,7 @@ export class AskService {
         details: { enabled },
       });
     }
-    return this.status(tenantId);
+    return this.status(tenantId, userId);
   }
 
   /**
@@ -202,33 +221,73 @@ export class AskService {
     return [...score.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
   }
 
-  private async record(
-    tenantId: string,
-    userId: string | null,
-    question: string,
+  /**
+   * 한도 확인과 자리 잡기를 한 번에 한다 — **AI 를 부르기 전에 먼저 센다.**
+   *
+   * 예전에는 끝까지 간 질문만 기록해, AI 호출이 실패했거나(502) 고르기 단계에서 거절됐거나 답이 길이 제한에서
+   * 끊긴 질문은 한도에 세지 않았다(비용은 나간다). 또 확인과 기록 사이가 떨어져 있어 동시에 들어온 질문이
+   * 함께 한도를 넘을 수 있었다. 이제 회사 단위 잠금 아래에서 세고 "예약" 행을 먼저 남긴다 — AI 를 부르지
+   * 않고 끝난 질문(시행 중인 규정이 없을 때)만 나중에 돌려준다.
+   */
+  private async reserve(tenantId: string, userId: string | null, question: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai_qa:${tenantId}`}))`;
+      const { used, userUsed } = await this.usedThisMonth(tx, tenantId, userId);
+      if (used >= this.monthlyLimit) {
+        throw new HttpException(
+          {
+            statusCode: 429,
+            code: 'AI_QA_MONTHLY_LIMIT',
+            message: `이번 달 회사의 규정 질문 한도(${this.monthlyLimit}회)를 모두 썼습니다. 다음 달 1일에 다시 열립니다.`,
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      if (userId && userUsed >= this.userMonthlyLimit) {
+        throw new HttpException(
+          {
+            statusCode: 429,
+            code: 'AI_QA_USER_MONTHLY_LIMIT',
+            message: `이번 달 내 규정 질문 한도(${this.userMonthlyLimit}회)를 모두 썼습니다. 다음 달 1일에 다시 열립니다.`,
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      const row = await tx.aiQaLog.create({
+        data: { tenantId, userId, question, answerable: false, aiCalled: true, citedArticleIds: [] },
+        select: { id: true },
+      });
+      return { id: row.id, used: used + 1, userUsed: userUsed + (userId ? 1 : 0) };
+    });
+  }
+
+  /** 예약 행을 결과로 채운다. AI 를 한 번도 부르지 않았으면 한도에서 돌려준다(`aiCalled: false`) */
+  private async finish(
+    logId: string,
     data: {
-      answerable: boolean;
+      aiCalled: boolean;
+      answerable?: boolean;
       blocks?: AnswerBlock[];
       citedArticleIds?: string[];
       contextRowCount?: number;
       usages: AiUsage[];
+      failure?: string;
     },
   ) {
     const sum = (k: keyof Omit<AiUsage, 'model'>) => data.usages.reduce((n, u) => n + u[k], 0);
-    await this.prisma.aiQaLog.create({
+    await this.prisma.aiQaLog.update({
+      where: { id: logId },
       data: {
-        tenantId,
-        userId,
-        question,
-        answerable: data.answerable,
+        answerable: data.answerable ?? false,
         answer: data.answerable && data.blocks ? (data.blocks as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
         citedArticleIds: data.citedArticleIds ?? [],
         contextRowCount: data.contextRowCount ?? 0,
-        aiCalled: data.usages.length > 0,
+        aiCalled: data.aiCalled,
         model: data.usages.at(-1)?.model ?? null,
         inputTokens: sum('inputTokens'),
         outputTokens: sum('outputTokens'),
         cacheReadTokens: sum('cacheReadTokens'),
+        failure: data.failure ?? null,
       },
     });
   }
@@ -237,7 +296,7 @@ export class AskService {
     const question = rawQuestion.trim();
     const provider = this.provider;
     if (!provider) {
-      throw new ServiceUnavailableException('AI 질의응답이 설정되지 않았습니다(서버 환경변수 ANTHROPIC_API_KEY).');
+      throw new ServiceUnavailableException('규정 질문은 아직 준비 중입니다. 쓰려면 아스트룸에 문의하세요.');
     }
     const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { aiQaEnabled: true } });
     if (!tenant) throw new NotFoundException('Tenant not found');
@@ -247,47 +306,53 @@ export class AskService {
         HttpStatus.FORBIDDEN,
       );
     }
-    const used = await this.usedThisMonth(tenantId);
-    if (used >= this.monthlyLimit) {
-      throw new HttpException(
-        {
-          statusCode: 429,
-          code: 'AI_QA_MONTHLY_LIMIT',
-          message: `이번 달 규정 질문 한도(${this.monthlyLimit}회)를 모두 썼습니다. 다음 달 1일에 다시 열립니다.`,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
 
-    const done = (r: Omit<AskResult, 'usage'>, calls: number): AskResult => ({
-      ...r,
-      usage: { used: used + (calls > 0 ? 1 : 0), limit: this.monthlyLimit },
+    const slot = await this.reserve(tenantId, userId, question);
+    const usages: AiUsage[] = [];
+    const usage = (aiCalled: boolean) => ({
+      used: slot.used - (aiCalled ? 0 : 1),
+      limit: this.monthlyLimit,
+      userUsed: slot.userUsed - (aiCalled || !userId ? 0 : 1),
+      userLimit: this.userMonthlyLimit,
     });
+    try {
+      return await this.answerQuestion(provider, tenantId, slot.id, question, usages, usage);
+    } catch (e) {
+      const extra = usageOf(e);
+      if (extra) usages.push(extra);
+      if (e instanceof AskRefusedError) {
+        await this.finish(slot.id, { aiCalled: true, usages, failure: `refused:${e.message}` });
+        return { answerable: false, reason: 'refused', blocks: [], citations: [], consulted: [], usage: usage(true) };
+      }
+      // 실패해도 AI 를 불렀을 수 있다 — 예약을 그대로 두어 한도에 센다
+      await this.finish(slot.id, { aiCalled: true, usages, failure: String((e as Error)?.message ?? e).slice(0, 500) });
+      throw e;
+    }
+  }
 
+  private async answerQuestion(
+    provider: AskProvider,
+    tenantId: string,
+    logId: string,
+    question: string,
+    usages: AiUsage[],
+    usage: (aiCalled: boolean) => AskResult['usage'],
+  ): Promise<AskResult> {
     // ① 근거 후보 — 목차에서 AI 가 고른 조 + 질문 낱말이 든 조
     const rows = await this.inForceRows(tenantId);
     const groups = groupRows(rows);
     if (!groups.length) {
-      await this.record(tenantId, userId, question, { answerable: false, usages: [] });
-      return done({ answerable: false, reason: 'no_regulations', blocks: [], citations: [], consulted: [] }, 0);
+      // AI 를 부르지 않았다 — 한도에서 돌려준다
+      await this.finish(logId, { aiCalled: false, usages });
+      return { answerable: false, reason: 'no_regulations', blocks: [], citations: [], consulted: [], usage: usage(false) };
     }
     const toc = buildToc(groups, TOC_MAX_CHARS);
     if (toc.truncated) this.log.warn(`목차가 ${TOC_MAX_CHARS}자를 넘어 일부만 보냄 (tenant ${tenantId})`);
 
-    const usages: AiUsage[] = [];
-    let selectedKeys: string[];
-    try {
-      const sel = await provider.select({ toc: toc.text, question });
-      usages.push(sel.usage);
-      const byTocKey = new Map(toc.entries.map((e) => [e.key, e.group.key]));
-      selectedKeys = sel.keys.map((k) => byTocKey.get(k.trim())).filter((k): k is string => !!k);
-    } catch (e) {
-      if (e instanceof AskRefusedError) {
-        await this.record(tenantId, userId, question, { answerable: false, usages });
-        return done({ answerable: false, reason: 'refused', blocks: [], citations: [], consulted: [] }, 1);
-      }
-      throw e;
-    }
+    const sel = await provider.select({ toc: toc.text, question });
+    usages.push(sel.usage);
+    const byTocKey = new Map(toc.entries.map((e) => [e.key, e.group.key]));
+    const selectedKeys = sel.keys.map((k) => byTocKey.get(k.trim())).filter((k): k is string => !!k);
     const liveKeys = new Set(groups.map((g) => g.key));
     const keywordKeys = await this.keywordGroups(tenantId, questionKeywords(question), liveKeys);
     const chosen: string[] = [];
@@ -296,8 +361,8 @@ export class AskService {
       if (chosen.length >= MAX_GROUPS) break;
     }
     if (!chosen.length) {
-      await this.record(tenantId, userId, question, { answerable: false, usages });
-      return done({ answerable: false, reason: 'no_candidates', blocks: [], citations: [], consulted: [] }, 1);
+      await this.finish(logId, { aiCalled: true, usages });
+      return { answerable: false, reason: 'no_candidates', blocks: [], citations: [], consulted: [], usage: usage(true) };
     }
 
     // ② 고른 조의 시행 중 본문만 참조 번호를 붙여 준다
@@ -328,8 +393,9 @@ export class AskService {
       checked = checkAnswer(ans.raw, new Set(ctx.refs.map((r) => r.ref)));
     } catch (e) {
       if (e instanceof AskRefusedError) {
-        await this.record(tenantId, userId, question, { answerable: false, usages, contextRowCount: ctx.refs.length });
-        return done({ answerable: false, reason: 'refused', blocks: [], citations: [], consulted }, 1);
+        if (e.usage) usages.push(e.usage);
+        await this.finish(logId, { aiCalled: true, usages, contextRowCount: ctx.refs.length, failure: `refused:${e.message}` });
+        return { answerable: false, reason: 'refused', blocks: [], citations: [], consulted, usage: usage(true) };
       }
       throw e;
     }
@@ -354,22 +420,21 @@ export class AskService {
         content: row.content,
       };
     });
-    await this.record(tenantId, userId, question, {
+    await this.finish(logId, {
+      aiCalled: true,
       answerable: checked.answerable,
       blocks: checked.blocks,
       citedArticleIds: citations.map((c) => c.articleId),
       contextRowCount: ctx.refs.length,
       usages,
     });
-    return done(
-      {
-        answerable: checked.answerable,
-        ...(checked.answerable ? {} : { reason: 'no_basis' as const }),
-        blocks: checked.blocks,
-        citations,
-        consulted,
-      },
-      1,
-    );
+    return {
+      answerable: checked.answerable,
+      ...(checked.answerable ? {} : { reason: 'no_basis' as const }),
+      blocks: checked.blocks,
+      citations,
+      consulted,
+      usage: usage(true),
+    };
   }
 }
