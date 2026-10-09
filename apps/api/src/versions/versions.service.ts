@@ -334,18 +334,37 @@ export class VersionsService {
       })) === 0;
 
     const approvedAt = new Date();
-    await this.prisma.$transaction(async (tx) => {
-      for (const a of targets) {
-        const previous = await previousIssued(tx, a.id, a.versions[0].id);
-        const row = await tx.articleVersion.update({
-          where: { id: a.versions[0].id },
+    // 큰 규정(수백 조문)도 한 트랜잭션에 들어가야 한다 — 조문마다 왕복하지 않게 한 번에 읽고 한 번에 바꾼다.
+    // 변수 연결을 옮길 것은 폐지 뒤 다시 쓴 조문 중 폐지한 버전에 연결이 있는 것뿐이다(T-109)
+    await this.prisma.$transaction(
+      async (tx) => {
+        const draftIds = targets.map((a) => a.versions[0].id);
+        await tx.articleVersion.updateMany({
+          where: { id: { in: draftIds } },
           data: { status: 'published', approvedBy: userId, approvedAt, publishedAt: approvedAt, effectiveDate: effective, changeNote: reason },
         });
-        // 폐지 뒤 다시 쓴 조문이면 폐지한 버전의 변수 연결을 옮긴다(T-109)
-        await this.variablesService.inheritBindings(tx, tenantId, previous, row, userId);
-      }
-      if (firstPublication) await tx.policy.update({ where: { id: policyId }, data: { effectiveDate: effective } });
-    });
+        // 시행본이 없는 조문들이라 앞 시행본은 가장 최근에 내려간(폐지한) 버전이다
+        const previous = await tx.articleVersion.findMany({
+          where: {
+            articleId: { in: targets.map((a) => a.id) },
+            status: 'archived',
+            variableBindings: { some: { state: { in: ['active', 'needs_review'] } } },
+          },
+          orderBy: [{ articleId: 'asc' }, { versionNum: 'desc' }],
+          distinct: ['articleId'],
+          select: { id: true, articleId: true, content: true },
+        });
+        for (const prev of previous) {
+          const latest = await previousIssued(tx, prev.articleId, draftIds[targets.findIndex((a) => a.id === prev.articleId)]);
+          // 연결이 있는 버전보다 더 최근에 내려간 버전이 있으면 그 버전이 앞 시행본이다(연결이 없으니 옮길 것도 없다)
+          if (latest?.id !== prev.id) continue;
+          const a = targets.find((t) => t.id === prev.articleId)!;
+          await this.variablesService.inheritBindings(tx, tenantId, prev, { id: a.versions[0].id, articleId: a.id, content: a.versions[0].content }, userId);
+        }
+        if (firstPublication) await tx.policy.update({ where: { id: policyId }, data: { effectiveDate: effective } });
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
 
     await this.audit.log({
       tenantId,
