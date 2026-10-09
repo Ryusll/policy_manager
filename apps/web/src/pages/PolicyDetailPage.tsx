@@ -96,6 +96,8 @@ import { EffectiveDateFillNotice } from '../components/EffectiveDateFillNotice';
 import { ReparseReviewNotice } from '../components/ReparseReviewNotice';
 import VariableBindingDialog from '../components/VariableBindingDialog';
 import { serviceToday } from '../lib/serviceDate';
+import { formatVersionDates, versionDates } from '../lib/versionDates';
+import { VersionDatesLine } from '../components/VersionDatesLine';
 import { SpeechControls } from '../components/SpeechControls';
 import { buildPolicySpeech } from '../lib/speech';
 import {
@@ -1460,11 +1462,13 @@ export default function PolicyDetailPage() {
       for (const a of [...(ch.articles || [])].sort(sortArticlesToc)) {
         const v = a.versions?.[0];
         if (!v) continue;
+        // 날짜 3종(T-111) — 작성일(createdAt)은 시행·발행과 상관없어 보이지 않는다
+        const dates = versionDates(v);
         rows.push({
           key: a.id,
           articleId: a.id,
           line: `${toKoreanOrdinal(ch.number)}장 · ${articleShortLabel(a)} (${a.title || '제목 없음'})`,
-          sub: `게시 v${v.versionNum} · ${versionStatusLabel(v)} · ${new Date(v.createdAt).toLocaleDateString('ko-KR')}`,
+          sub: `v${v.versionNum} · ${versionStatusLabel(v)}${dates ? ` · ${formatVersionDates(dates)}` : ''}`,
         });
       }
     }
@@ -3355,9 +3359,6 @@ export default function PolicyDetailPage() {
                             v{version.versionNum}
                           </span>
                           <StatusBadge status={version.status} repealedOn={version.repealedOn} />
-                          {(version.status === 'published' || version.status === 'archived') && version.effectiveDate && (
-                            <span className="text-[11px] text-gray-500">시행 {String(version.effectiveDate).slice(0, 10)}</span>
-                          )}
                           {version.repealedOn && (
                             <span className="text-[11px] text-red-700">· {String(version.repealedOn).slice(0, 10)} 폐지</span>
                           )}
@@ -3418,6 +3419,8 @@ export default function PolicyDetailPage() {
                           )}
                         </div>
                       </div>
+                      {/* 날짜 3종(T-111) — 사내 시행일 · 발행일시 · 법령 시행일. 법령·후보 화면은 열람자가 못 연다 */}
+                      <VersionDatesLine version={version} linkable={user?.role !== 'viewer'} />
                       <div
                         className={clsx(
                           'bg-gray-50 border border-gray-200 rounded p-3 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed',
@@ -3720,15 +3723,19 @@ export default function PolicyDetailPage() {
                       <div>
                         <p className="text-[11px] font-semibold text-gray-600 mb-1">개정 이력 타임라인</p>
                         <div className="space-y-1 max-h-24 overflow-auto">
-                          {versions.slice(0, 6).map((v: any) => (
-                            <p key={v.id} className="text-[11px] text-gray-700 bg-gray-50 border border-gray-200 rounded px-2 py-1">
-                              <span className="font-semibold mr-1">v{v.versionNum}</span>
-                              <span className="mr-1">{versionStatusLabel(v)}</span>
-                              <span className="text-gray-500">
-                                {new Date(v.createdAt).toLocaleDateString('ko-KR')}
-                              </span>
-                            </p>
-                          ))}
+                          {versions.slice(0, 6).map((v: any) => {
+                            // 발행 이력은 날짜 3종(T-111), 초안·검토 중은 작성일
+                            const dates = versionDates(v);
+                            return (
+                              <p key={v.id} className="text-[11px] text-gray-700 bg-gray-50 border border-gray-200 rounded px-2 py-1">
+                                <span className="font-semibold mr-1">v{v.versionNum}</span>
+                                <span className="mr-1">{versionStatusLabel(v)}</span>
+                                <span className="text-gray-500">
+                                  {dates ? formatVersionDates(dates) : `작성 ${new Date(v.createdAt).toLocaleDateString('ko-KR')}`}
+                                </span>
+                              </p>
+                            );
+                          })}
                           {versions.length === 0 && <p className="text-[11px] text-gray-500">이력이 없습니다.</p>}
                         </div>
                       </div>

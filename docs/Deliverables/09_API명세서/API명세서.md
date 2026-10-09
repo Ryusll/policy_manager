@@ -56,7 +56,7 @@
 | GET | (root) | admin, editor | 규정 목록(검색·필터) |
 | GET | import-logs | admin, editor | 가져오기 이력 |
 | POST | import-logs | admin, editor | 가져오기 이력 기록 |
-| GET | :id | admin, editor | 규정 상세. 조문은 **조 → 가지(`branchNumber`, 제3조의2) → 조 본문 → 항 → 목** 순. 조문마다 `versions`(최신 시행본 1건)와 `_count.comments`(**처리 안 된** 의견 수). **admin·editor 에게만** 조문마다 `pendingVersion`(시행본 유무와 무관한 최신 초안·검토중 버전, 없으면 null)을 더한다 — 시행본이 없는 조문은 화면이 이것을 "초안 · 시행 전"으로 보인다. 열람자에게는 보내지 않는다 (T-117) |
+| GET | :id | admin, editor | 규정 상세. 조문은 **조 → 가지(`branchNumber`, 제3조의2) → 조 본문 → 항 → 목** 순. 조문마다 `versions`(최신 시행본 1건)와 `_count.comments`(**처리 안 된** 의견 수). **admin·editor 에게만** 조문마다 `pendingVersion`(시행본 유무와 무관한 최신 초안·검토중 버전, 없으면 null)을 더한다 — 시행본이 없는 조문은 화면이 이것을 "초안 · 시행 전"으로 보인다. 열람자에게는 보내지 않는다 (T-117). 조문마다 `versions[0]` 에 `lawChange`(아래 버전 목록과 같은 모양 — 연혁 탭의 날짜 3종, T-111) |
 | POST | (root) | admin, editor | 규정 생성 |
 | PUT | :id | admin, editor | 규정 수정(개정일·시행일·알림 설정 포함) |
 | DELETE | :id | admin | 규정 삭제 |
@@ -97,7 +97,7 @@
 ## versions (`/api/articles/:articleId/versions`, `/api/versions/:id`)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | articles/:articleId/versions | admin, editor | 조문 버전 목록 — 버전마다 `_count.variableBindings`(그 버전 본문의 변수 연결 수, T-109) `structure`(발행 이력이면 얼린 계층, 초안·검토 중이면 재파싱 제안 계층)·`reparseItemId`·`reparseItem.reviewId`(재파싱 묶음의 버전, T-110 ②) |
+| GET | articles/:articleId/versions | 로그인(열람자 포함) | 조문 버전 목록 — 버전마다 `_count.variableBindings`(그 버전 본문의 변수 연결 수, T-109) `structure`(발행 이력이면 얼린 계층, 초안·검토 중이면 재파싱 제안 계층)·`reparseItemId`·`reparseItem.reviewId`(재파싱 묶음의 버전, T-110 ②). **날짜 3종**(T-111): `effectiveDate`(사내 규정 시행일 — 시점 조회의 기준)·`publishedAt`(발행일, 없으면 null)·`publishedAtFromApproval`(발행일을 승인 시각으로 보정했는지)·`lawChange`(개정 후보 승인으로 발행한 버전만 `{ eventId, lawId, lawName, label, lawEffectiveDate }` — 법령 시행일은 YYYY-MM-DD, 이벤트에 없으면 null, 조항 행이 없으면(T-124 전 동기화가 지운 조항) `label` 은 이벤트 위치로 되살린 표기. 그 밖의 버전은 `lawChange: null`) |
 | POST | articles/:articleId/versions | admin, editor | 초안(draft) 버전 생성 |
 | GET | versions/:id | admin, editor | 버전 상세 |
 | PUT | versions/:id | admin, editor | 초안 본문·변경메모 수정 |

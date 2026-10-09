@@ -391,8 +391,12 @@ model ArticleVersion {
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
   /// 발행일 — 시스템에서 시행본으로 발행한 시각(T-108, 특허 청구항 7). 시행일(effectiveDate)·법령 시행일과
-  /// 다르다. 시점 조회의 기준은 여전히 시행일이다. T-108 이전에 발행된 버전은 비어 있다(보정은 T-111)
+  /// 다르다. 시점 조회의 기준은 여전히 시행일이다. T-108 이전에 발행된 버전은 T-111 이 승인 시각으로 채웠고,
+  /// 승인 시각도 없는 발행 이력(관리자 JSON 일괄 등록 등)은 비어 있다 — 화면은 "발행 기록 없음"
   publishedAt   DateTime?     @map("published_at")
+  /// 발행일을 그때 기록하지 않고 T-111 이 승인 시각(approvedAt)에서 옮겨 적었다 — 화면에 "승인 기록으로 보정".
+  /// 두 시각이 같다는 것만으로는 가를 수 없어(그때 기록한 것도 같다) 따로 둔다
+  publishedAtFromApproval Boolean @default(false) @map("published_at_from_approval")
   /// 이 버전을 낳은 법령 변경 이벤트 — 개정 후보 승인으로 발행됐을 때만(T-108)
   changeEventId String?       @map("change_event_id")
   /// 이 버전을 낳은 개정 후보 — 승인 이력의 원천(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다

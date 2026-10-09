@@ -52,6 +52,7 @@ import {
   UpdateRevisionReasonDto,
 } from './policies.dto';
 import { ARTICLE_ORDER, formatJo } from '../common/article-label';
+import { VERSION_LAW_CHANGE, withLawChange } from '../versions/version-law-change';
 
 /**
  * 계층을 바꾸는 쓰기(장·절·조문 생성·수정·삭제, 조 순서 재정렬)는 규정 행을 잠근다 — 재파싱 묶음(T-110 ②)이 같은 잠금 아래에서
@@ -192,6 +193,8 @@ export class PoliciesService {
                   where: { status: 'published' },
                   orderBy: { versionNum: 'desc' },
                   take: 1,
+                  // 연혁 탭의 날짜 3종(T-111) — 개정 후보 승인 버전의 법령 시행일
+                  include: { changeEvent: VERSION_LAW_CHANGE },
                 },
                 // 목차의 "의견 있음" 점 — 처리 안 된 의견이 있을 때만 찍는다
                 _count: { select: { comments: { where: { isResolved: false } } } },
@@ -210,9 +213,16 @@ export class PoliciesService {
       },
     });
     if (!policy) throw new NotFoundException('Policy not found');
-    if (!opts.includePending) return policy;
+    const shaped = {
+      ...policy,
+      chapters: policy.chapters.map((c) => ({
+        ...c,
+        articles: c.articles.map((a) => ({ ...a, versions: a.versions.map(withLawChange) })),
+      })),
+    };
+    if (!opts.includePending) return shaped;
 
-    const ids = policy.chapters.flatMap((c) => c.articles.map((a) => a.id));
+    const ids = shaped.chapters.flatMap((c) => c.articles.map((a) => a.id));
     const pending = ids.length
       ? await this.prisma.articleVersion.findMany({
           where: { articleId: { in: ids }, status: { in: ['draft', 'review'] } },
@@ -223,8 +233,8 @@ export class PoliciesService {
     const latest = new Map<string, (typeof pending)[number]>();
     for (const v of pending) if (!latest.has(v.articleId)) latest.set(v.articleId, v);
     return {
-      ...policy,
-      chapters: policy.chapters.map((c) => ({
+      ...shaped,
+      chapters: shaped.chapters.map((c) => ({
         ...c,
         articles: c.articles.map((a) => ({ ...a, pendingVersion: latest.get(a.id) ?? null })),
       })),

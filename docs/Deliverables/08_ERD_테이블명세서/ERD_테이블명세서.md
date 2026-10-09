@@ -117,7 +117,8 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | effectiveDate | date? | **이 버전이 시행된 날. 시점 조회(as-of)의 기준.** 승인 시 확정(미지정이면 승인일) |
 | approvedBy / approvedAt | string?/datetime? | |
 | createdBy | string? | |
-| publishedAt | datetime? | **발행일** — 시스템에서 시행본으로 발행한 시각(T-108). 시행일·법령 시행일과 다르고 시점 조회의 기준이 아니다. 개정 후보 승인·일반 승인·한꺼번에 시행·가져오기 확정·JSON 일괄 등록이 남긴다(그 전 버전은 비어 있다 — 보정은 T-111) |
+| publishedAt | datetime? | **발행일** — 시스템에서 시행본으로 발행한 시각(T-108). 시행일·법령 시행일과 다르고 시점 조회의 기준이 아니다. 개정 후보 승인·일반 승인·한꺼번에 시행·가져오기 확정·JSON 일괄 등록·재파싱 묶음 승인이 남긴다. 그 전 발행 이력은 T-111 이 승인 시각으로 채웠다(아래 표시). 승인 시각도 없는 발행 이력은 비어 있다 — 화면은 "발행 기록 없음" |
+| publishedAtFromApproval | boolean (기본 false) | 발행일을 그때 기록하지 않고 T-111 이 승인 시각(`approvedAt`)에서 옮겨 적었다 — 화면에 "승인 기록으로 보정". 두 시각이 같다는 것만으로는 그때 기록한 것과 가를 수 없어 따로 둔다(마이그레이션 `20261010010000_published_at_backfill`) |
 | changeEventId | uuid FK? → LawChangeEvent (SetNull) | 이 버전을 낳은 법령 변경 — 개정 후보 승인으로 발행됐을 때만(T-108) |
 | sourceCandidateId | uuid FK? unique → AmendmentCandidate (SetNull) | 이 버전을 낳은 개정 후보(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다 |
 | repealedOn | date? | **폐지 시행일**(T-126) — "게시본 폐지"로 내린 버전만 있다(폐지한 날, 한국 날짜). 이 날부터 조문은 시행 중이 아니다: 시점 조회가 이 버전을 고르면 옛 버전으로 되돌아가지 않고 "폐지"로 본다(규정 시점 조회·신구 대비·법령 영향 분석·개정 후보 공통). 새 버전에 밀려 내려간 버전은 비어 있다. 마이그레이션 `20261009120000_article_repeal` 이 기존 폐지를 감사 기록(`version.archive`, 같은 회사) 시각의 한국 날짜로 채웠다 — 감사가 없는 archived 는 비워 둠 |
@@ -215,7 +216,8 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `VariableValue` · `VariableBinding`(옛 `VariableUsage` 대체) | ✅ **스키마에 있다** (T-109 ①, 마이그레이션 `20261009150000_variable_values_bindings`) |
 | `AmendmentCandidate.plannedEffectiveDate`·`variableFingerprint` | ✅ **스키마에 있다** (T-109 ②, 마이그레이션 `20261009180000_amendment_variables`) |
 | `ReparseReview` · `ReparseReviewItem` | ✅ **스키마에 있다** (T-110 ①, 마이그레이션 `20261009210000_reparse_reviews`) |
-| `ArticleVersion.structure`·`reparseItemId` · `ReparseReview` 반영·승인 필드 · `ReparseReviewItem.outcome` | ✅ **스키마에 있다** (T-110 ②, 마이그레이션 `20261009230000_reparse_apply`) |
+| `ArticleVersion.structure`·`reparseItemId` · `ReparseReview` 반영·승인 필드 · `ReparseReviewItem.outcome` | ✅ **스키마에 있다** (T-110 ②, 마이그레이션 `20261010000000_reparse_apply`) |
+| `ArticleVersion.publishedAtFromApproval` · 옛 발행일 보정 | ✅ **스키마에 있다** (T-111, 마이그레이션 `20261010010000_published_at_backfill`) |
 
 ### 3.1 관계 개요
 
@@ -434,6 +436,8 @@ tenantId FK(cascade), candidateId FK → AmendmentCandidate(cascade), revision(i
 | 사내 규정 시행일 | `ArticleVersion.effectiveDate` | 개정된 사내 규정이 효력을 갖는 날 |
 
 **시점 조회(as-of)의 기준은 `effectiveDate` 하나로 유지한다.** `publishedAt` 을 기준으로 바꾸면 "발행은 했지만 아직 시행 전인 개정"이 조회 결과에 섞인다.
+
+> **T-111** — T-108 이전 발행 이력(시행본·이전 버전)의 `publishedAt` 은 `approvedAt` 으로 채우고 `publishedAtFromApproval` 로 표시했다(승인 시각은 처음부터 모든 발행 경로가 발행하는 그 순간에 적어 왔다). 초안·검토 중, 이미 기록된 발행일, 승인 시각이 없는 행은 건드리지 않는다. 법령 시행일은 버전에 옮겨 적지 않고 `changeEventId` → `LawChangeEvent.lawEffectiveDate` 로 읽는다 — 개정 후보가 변경 이벤트를 Restrict 로 붙잡고 법령 추적 해제도 후보가 있으면 막혀서, 버전이 남아 있는 동안 이벤트가 지워지지 않는다.
 
 ## 4. 참고
 - 모든 타임스탬프는 `createdAt`(default now) / `updatedAt`(@updatedAt) 패턴 일관 적용

@@ -10,6 +10,7 @@ import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
 import { planEffectiveDateFill } from './effective-date-fill';
 import * as Diff from 'diff';
 import { ARTICLE_ORDER, formatJo } from '../common/article-label';
+import { VERSION_LAW_CHANGE, withLawChange } from './version-law-change';
 
 /** 재파싱 묶음의 버전은 묶음으로만 검토 요청·승인·반려한다(T-110 ②) — 하나씩 처리하면 같은 시행일·계층 확인을 건너뛴다 */
 function assertNotBundle(version: { reparseItemId?: string | null }) {
@@ -47,7 +48,7 @@ export class VersionsService {
     });
     if (!article) throw new NotFoundException('Article not found');
 
-    return this.prisma.articleVersion.findMany({
+    const versions = await this.prisma.articleVersion.findMany({
       where: { articleId },
       orderBy: { versionNum: 'desc' },
       // 버전 카드의 "변수 연결 N"(T-109) — 다시 이어야 하는 것도 센다
@@ -55,8 +56,11 @@ export class VersionsService {
         _count: { select: { variableBindings: { where: { state: { in: ['active', 'needs_review'] } } } } },
         // 재파싱 묶음의 버전이면 그 검토로 이끈다(T-110 ②)
         reparseItem: { select: { reviewId: true } },
+        // 날짜 3종의 법령 시행일(T-111) — 개정 후보 승인으로 발행한 버전만
+        changeEvent: VERSION_LAW_CHANGE,
       },
     });
+    return versions.map(withLawChange);
   }
 
   async findOne(tenantId: string, versionId: string) {

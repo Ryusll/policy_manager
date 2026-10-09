@@ -20,6 +20,7 @@ import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
 import { formatArticleAnchor } from '../lib/articleAnchor';
 import { serviceToday } from '../lib/serviceDate';
+import { versionDates } from '../lib/versionDates';
 import { toast } from '../stores/toastStore';
 import { useAuthStore } from '../stores/authStore';
 import { StateBadge } from './AmendmentsPage';
@@ -174,8 +175,10 @@ function Header({ data }: { data: AmendmentDetail }) {
         <Link to={`/laws/${data.event.lawId}?change=${data.event.id}`} className="text-navy-700 hover:underline">
           {data.event.lawName} {data.event.label}
         </Link>
-        {data.event.lawEffectiveDate && ` · 법령 시행 ${data.event.lawEffectiveDate}`} · 기준일 {data.asOf} · 예정 사내 시행일{' '}
-        {data.plannedEffectiveDate} ·{' '}
+        {data.event.lawEffectiveDate && ` · 법령 시행일 ${data.event.lawEffectiveDate}`} · 기준일 {data.asOf} · 예정 사내 시행일{' '}
+        {data.plannedEffectiveDate}
+        {/* 승인 전에는 발행되지 않았다 — 확정 날짜는 승인 뒤 배너(T-111) */}
+        {data.reviewState !== 'approved' && ' · 미발행'} ·{' '}
         {data.createdBy ? `만든 사람 ${data.createdByName ?? '알 수 없음'}` : '자동 생성'} ·{' '}
         {new Date(data.createdAt).toLocaleString('ko-KR')}
       </p>
@@ -206,9 +209,8 @@ function Alerts({ data }: { data: AmendmentDetail }) {
     <>
       {data.decision?.state === 'approved' && data.resultVersion && (
         <div className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900" data-testid="amendment-approved">
-          승인됨 — <b>v{data.resultVersion.versionNum}</b> 발행 · 시행 {data.resultVersion.effectiveDate}
-          {data.resultVersion.effectiveDate && data.resultVersion.effectiveDate > serviceToday() && ' (시행 예정)'} ·{' '}
-          {data.decision.by?.name ?? '알 수 없음'} · {new Date(data.decision.at).toLocaleString('ko-KR')}
+          승인됨 — <b>v{data.resultVersion.versionNum}</b> · <ResultDates data={data} /> · 승인{' '}
+          {data.decision.by?.name ?? '알 수 없음'}
           {data.decision.reason && <span className="block text-xs mt-0.5 whitespace-pre-wrap">개정 사유: {data.decision.reason}</span>}
           <Link to={`/policies/${data.policy.id}#${formatArticleAnchor(data.article)}`} className="block text-xs mt-1 text-emerald-800 underline">
             규정에서 보기
@@ -831,5 +833,37 @@ function HistoryCard({ history }: { history: AmendmentHistory }) {
         ))}
       </ol>
     </section>
+  );
+}
+
+/**
+ * 승인 결과의 날짜 3종(T-111, 특허 청구항 7) — 발행한 버전의 확정 값. 사내 규정 시행일 · 발행일시 · 법령 시행일 순서로,
+ * 버전 카드와 같은 표기다. 발행일시가 곧 승인 시각이다(같은 트랜잭션).
+ */
+function ResultDates({ data }: { data: AmendmentDetail }) {
+  const v = data.resultVersion!;
+  const d = versionDates({
+    // 승인으로 낸 버전 — 뒤에 다른 개정에 밀려 내려갔어도 "시행 예정"은 시행일로만 가린다
+    status: 'published',
+    effectiveDate: v.effectiveDate,
+    publishedAt: v.publishedAt,
+    lawChange: {
+      eventId: data.event.id,
+      lawId: data.event.lawId,
+      lawName: data.event.lawName,
+      label: data.event.label,
+      lawEffectiveDate: data.event.lawEffectiveDate,
+    },
+  })!;
+  return (
+    <span data-testid="amendment-result-dates">
+      사내 시행일 {d.effective ?? '기록 없음'}
+      {d.upcoming && ' (시행 예정)'} · 발행 {d.published ?? '기록 없음'} · 법령 시행일 {d.law!.date ?? '기록 없음'}
+      {d.law!.early && (
+        <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-xs" data-testid="amendment-result-early">
+          법령보다 조기 시행
+        </span>
+      )}
+    </span>
   );
 }
