@@ -159,12 +159,18 @@ function ImpactRow({ item }: { item: ImpactedArticle }) {
           </Link>
           에서 시행일을 넣으면 개정 후보를 만들 수 있습니다.
         </p>
+      ) : item.skipReason === 'repealed' ? (
+        <p className="text-[11px] text-amber-700">
+          이 조문은 {item.repealedOn}에 폐지돼 기준일에 시행 중이 아닙니다 — 개정 후보를 만들지 않습니다.
+        </p>
       ) : (
         <p className="text-[11px] text-amber-700">
           기준일에 시행 중인 본문이 없습니다(아직 시행 전이거나 초안뿐) — 이 조문은 개정 초안을 만들 수 없습니다.
         </p>
       )}
-      {item.candidate && <AmendmentCandidatePreview candidate={item.candidate} isCurrentBase={item.candidate.isCurrentBase} />}
+      {item.candidate && (
+        <AmendmentCandidatePreview candidate={item.candidate} isCurrentBase={item.candidate.isCurrentBase} repealedOn={item.repealedOn} />
+      )}
     </li>
   );
 }

@@ -1,10 +1,12 @@
+import type { Prisma } from '@prisma/client';
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CreateVersionDto, UpdateVersionDto } from './versions.dto';
 import { VariablesService } from '../variables/variables.service';
 import { AuditService } from '../audit/audit.service';
 import { RevisionNotifyService } from '../notifications/revision-notify.service';
-import { coerceNullableDate, parseDateOnly, todayDateOnly } from '../common/date-only';
+import { coerceNullableDate, parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
+import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
 import { planEffectiveDateFill } from './effective-date-fill';
 import * as Diff from 'diff';
 import { ARTICLE_ORDER, formatJo } from '../common/article-label';
@@ -154,6 +156,7 @@ export class VersionsService {
     const result = await this.prisma.$transaction(async (tx) => {
       // 개정 후보 승인(T-108)과 같은 조문 잠금 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게 줄 세운다
       await tx.$queryRaw`SELECT id FROM articles WHERE id = ${version.articleId} FOR UPDATE`;
+      await assertAfterRepeal(tx, version.articleId, effective);
       await tx.articleVersion.updateMany({
         where: { articleId: version.articleId, status: 'published' },
         data: { status: 'archived' },
@@ -218,7 +221,7 @@ export class VersionsService {
   }
 
   /**
-   * 시행된 적 없는 조문의 초안을 한꺼번에 시행한다.
+   * 시행본이 없는 조문(새로 넣은 조문, 폐지 뒤 다시 쓴 조문)의 초안을 한꺼번에 시행한다.
    *
    * 조·항을 손으로 추가하면 내용이 초안으로만 저장되고 전문 보기에는 시행본만 나온다.
    * 기존 규정을 옮겨 적는 사람은 "넣었는데 안 보인다"고 느끼고, 보이게 하려면 항마다
@@ -272,6 +275,27 @@ export class VersionsService {
     });
     const targets = articles.filter((a) => a.versions.length > 0);
     if (!targets.length) return { published: 0 };
+
+    // 폐지한 조문을 다시 쓴 초안이면 시행일이 폐지일 이후여야 한다(T-126, 단건 승인과 같다). 하나라도 어긋나면
+    // 아무것도 시행하지 않는다 — 일부만 시행되면 어디까지 됐는지 다시 맞춰야 한다
+    const repeals = await this.prisma.articleVersion.findMany({
+      where: { articleId: { in: targets.map((a) => a.id) }, repealedOn: { gt: effective } },
+      orderBy: { repealedOn: 'desc' },
+      select: { articleId: true, repealedOn: true },
+    });
+    if (repeals.length) {
+      const latest = new Map<string, Date>(); // 폐지일 내림차순이라 조문마다 처음 것이 마지막 폐지
+      for (const r of repeals) if (!latest.has(r.articleId)) latest.set(r.articleId, r.repealedOn!);
+      const list = [...latest].map(([articleId, day]) => {
+        const a = targets.find((t) => t.id === articleId)!;
+        const tail = `${a.clauseNumber ? ` 제${a.clauseNumber}항` : ''}${a.itemNumber ? ` 제${a.itemNumber}목` : ''}`;
+        return `${formatJo(a.number, a.branchNumber)}${tail}(${toDateOnlyString(day)} 폐지)`;
+      });
+      throw new BadRequestException(
+        `폐지한 조문은 폐지일보다 이른 시행일로 다시 시행할 수 없습니다 — ${list.slice(0, 5).join(', ')}${list.length > 5 ? ` 외 ${list.length - 5}건` : ''}. ` +
+          '시행일을 그날이나 그 뒤로 정하세요. 아무것도 시행하지 않았습니다.',
+      );
+    }
 
     // 규정의 첫 시행이면 규정 단위 시행일도 같은 날로 채운다(가져오기와 같다). 이미 시행 중인
     // 조문이 있는 규정에 새로 넣은 조문이면 그 날짜는 규정 시행일이 아니므로 건드리지 않는다.
@@ -447,32 +471,77 @@ export class VersionsService {
   }
 
   /**
-   * 폐지 — 게시된 버전을 archived 로 내린다 (T-10).
+   * 폐지 — 게시된 버전을 내리고 **오늘(한국 날짜)부터** 조문을 시행에서 뺀다 (T-10, 폐지 시행일 T-126).
    *
-   * 이 조문의 마지막 게시본이면 조문이 **전문 보기·인쇄에서 본문 없이 남는다**.
-   * 정당한 폐지도 있으므로 막지는 않고, 그렇게 됐는지를 응답으로 알려 화면이 말하게 한다.
+   * 폐지 시행일(`repealedOn`)을 남겨야 시점 조회가 "새 버전에 밀려 내려간 버전"과 "폐지"를 가른다 — 없으면
+   * 폐지 뒤 날짜에도 조문이 옛 본문으로 시행 중으로 나온다. 날짜는 고르지 않는다(사용자 지시로 코덱스 자문):
+   * 미래 폐지는 "현재" 화면이 시행 예정을 가르게 된 뒤(T-127)에, 소급 폐지는 하지 않는다.
+   *
+   * 조문 행을 잠그고(승인과 같은 잠금) 다시 확인한다 — 시행일이 기록돼 있고 오늘 시행 중인 그 버전만 폐지한다.
+   * 시행일이 없거나, 아직 시행 전이거나, 오늘 뒤에 시행될 버전이 따로 있으면 폐지가 그날 이후를 다 덮지 못해 거부한다.
+   * 이 조문의 마지막 게시본이면 조문이 **전문 보기·인쇄에서 본문 없이 남는다**. 정당한 폐지라 막지는 않고,
+   * 그렇게 됐는지를 응답으로 알려 화면이 말하게 한다.
    */
   async archive(tenantId: string, versionId: string, userId: string) {
     const version = await this.findOne(tenantId, versionId);
     if (version.status !== 'published') {
       throw new BadRequestException('Only published versions can be archived');
     }
-    const row = await this.prisma.articleVersion.update({
-      where: { id: versionId },
-      data: { status: 'archived' },
+    const today = todayDateOnly();
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM articles WHERE id = ${version.articleId} FOR UPDATE`;
+      const history = await tx.articleVersion.findMany({
+        where: { articleId: version.articleId, status: { in: ['published', 'archived'] } },
+        select: { id: true, status: true, effectiveDate: true, versionNum: true },
+      });
+      const target = history.find((v) => v.id === versionId);
+      if (target?.status !== 'published') {
+        throw new ConflictException('그 사이 이 버전이 내려갔습니다 — 화면을 새로 고쳐 확인하세요.');
+      }
+      if (!target.effectiveDate) {
+        throw new BadRequestException('시행일이 기록되지 않은 시행본은 폐지할 수 없습니다 — 규정 화면에서 시행일을 먼저 보정하세요.');
+      }
+      if (target.effectiveDate.getTime() > today.getTime()) {
+        throw new BadRequestException(
+          `아직 시행 전인 버전입니다(${toDateOnlyString(target.effectiveDate)} 시행) — 시행일부터 폐지할 수 있습니다.`,
+        );
+      }
+      const later = history.find((v) => v.effectiveDate && v.effectiveDate.getTime() > today.getTime());
+      if (later) {
+        throw new BadRequestException(
+          `오늘 뒤에 시행되는 버전(v${later.versionNum}, ${toDateOnlyString(later.effectiveDate!)} 시행)이 있어 폐지할 수 없습니다.`,
+        );
+      }
+      const current = await tx.articleVersion.findFirst({
+        where: { articleId: version.articleId, ...asOfVersionWhere(today) },
+        orderBy: AS_OF_VERSION_ORDER,
+        select: { id: true, versionNum: true },
+      });
+      if (current?.id !== versionId) {
+        throw new BadRequestException(
+          `오늘 시행 중인 본문은 이 버전이 아니라 v${current?.versionNum}입니다 — 시행일 기록을 먼저 확인하세요.`,
+        );
+      }
+
+      const row = await tx.articleVersion.update({
+        where: { id: versionId },
+        data: { status: 'archived', repealedOn: today },
+      });
+      const remainingPublished = await tx.articleVersion.count({
+        where: { articleId: version.articleId, status: 'published' },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId,
+          action: 'version.archive',
+          entityType: 'ArticleVersion',
+          entityId: versionId,
+          details: { articleId: version.articleId, repealedOn: toDateOnlyString(today), remainingPublished },
+        },
+      });
+      return { ...row, remainingPublished };
     });
-    const remainingPublished = await this.prisma.articleVersion.count({
-      where: { articleId: version.articleId, status: 'published' },
-    });
-    await this.audit.log({
-      tenantId,
-      userId,
-      action: 'version.archive',
-      entityType: 'ArticleVersion',
-      entityId: versionId,
-      details: { articleId: version.articleId, remainingPublished },
-    });
-    return { ...row, remainingPublished };
   }
 
   async diff(tenantId: string, versionId1: string, versionId2: string) {
@@ -480,5 +549,23 @@ export class VersionsService {
     const v2 = await this.findOne(tenantId, versionId2);
     const changes = Diff.diffWords(v1.content, v2.content);
     return { changes, v1, v2 };
+  }
+}
+
+/**
+ * 폐지한 조문을 다시 시행할 때 시행일이 마지막 폐지일 이후인가(T-126). 같은 날은 된다 — 같은 날 시행분은 나중
+ * 버전이 이기므로 그날부터 새 본문이 시행된다. 더 이르면 폐지가 지워지고 폐지 전 날짜의 시점 조회까지 새 본문으로
+ * 바뀐다. 조문 잠금 안에서 부른다.
+ */
+async function assertAfterRepeal(tx: Prisma.TransactionClient, articleId: string, effective: Date) {
+  const repeal = await tx.articleVersion.findFirst({
+    where: { articleId, repealedOn: { not: null } },
+    orderBy: { repealedOn: 'desc' },
+    select: { repealedOn: true },
+  });
+  if (repeal?.repealedOn && effective.getTime() < repeal.repealedOn.getTime()) {
+    throw new BadRequestException(
+      `이 조문은 ${toDateOnlyString(repeal.repealedOn)}에 폐지됐습니다 — 다시 시행하려면 시행일을 그날이나 그 뒤로 정하세요.`,
+    );
   }
 }

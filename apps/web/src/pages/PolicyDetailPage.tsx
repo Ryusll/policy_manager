@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { policiesApi, versionsApi, filesApi, commentsApi, searchApi } from '../api/policies';
+import { policiesApi, versionsApi, filesApi, commentsApi, searchApi, type AsOfRepealedArticle } from '../api/policies';
 import { templatesApi } from '../api/templates';
 import {
   ChevronLeft,
@@ -92,6 +92,7 @@ import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
 import { FavoriteButton } from '../components/FavoriteButton';
 import { LawLinksPanel } from '../components/LawLinksPanel';
 import { EffectiveDateFillNotice } from '../components/EffectiveDateFillNotice';
+import { serviceToday } from '../lib/serviceDate';
 import { SpeechControls } from '../components/SpeechControls';
 import { buildPolicySpeech } from '../lib/speech';
 import {
@@ -106,8 +107,15 @@ const statusLabel: Record<string, string> = {
   draft: '초안',
   review: '검토중',
   published: '시행중',
-  archived: '폐지',
+  // 내려간 버전 — 폐지 시행일이 있으면 "폐지", 없으면 새 버전에 밀려 내려간 것(T-126, versionStatusLabel)
+  archived: '이전 버전',
 };
+
+/** 버전 상태 표시 — 같은 archived 라도 폐지한 것과 새 버전에 밀려 내려간 것을 가른다(T-126) */
+function versionStatusLabel(v: { status: string; repealedOn?: string | null }): string {
+  if (v.status === 'archived' && v.repealedOn) return '폐지';
+  return statusLabel[v.status] || v.status;
+}
 
 const statusClass: Record<string, string> = {
   draft: 'badge-draft',
@@ -116,10 +124,10 @@ const statusClass: Record<string, string> = {
   archived: 'badge-archived',
 };
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, repealedOn }: { status: string; repealedOn?: string | null }) {
   return (
     <span className={`${statusClass[status] || 'badge-draft'} inline-flex whitespace-nowrap`}>
-      {statusLabel[status] || status}
+      {versionStatusLabel({ status, repealedOn })}
     </span>
   );
 }
@@ -1162,10 +1170,11 @@ export default function PolicyDetailPage() {
       qc.invalidateQueries({ queryKey: ['policy', id] });
       qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
       setArchiveTarget(null);
+      const from = res?.repealedOn ? `${String(res.repealedOn).slice(0, 10)}부터 시행에서 빠집니다` : '';
       setVersionActionMsg(
         res?.remainingPublished === 0
-          ? '폐지했습니다. 이 조문에는 게시된 본문이 남아 있지 않습니다 — 전문 보기·인쇄에서 본문 없이 나옵니다.'
-          : '폐지했습니다.',
+          ? `폐지했습니다${from ? ` — ${from}` : ''}. 이 조문에는 게시된 본문이 남아 있지 않습니다 — 전문 보기·인쇄에서 본문 없이 나옵니다.`
+          : `폐지했습니다${from ? ` — ${from}` : ''}.`,
       );
     },
   });
@@ -1448,7 +1457,7 @@ export default function PolicyDetailPage() {
           key: a.id,
           articleId: a.id,
           line: `${toKoreanOrdinal(ch.number)}장 · ${articleShortLabel(a)} (${a.title || '제목 없음'})`,
-          sub: `게시 v${v.versionNum} · ${statusLabel[v.status] || v.status} · ${new Date(v.createdAt).toLocaleDateString('ko-KR')}`,
+          sub: `게시 v${v.versionNum} · ${versionStatusLabel(v)} · ${new Date(v.createdAt).toLocaleDateString('ko-KR')}`,
         });
       }
     }
@@ -2925,6 +2934,16 @@ export default function PolicyDetailPage() {
                       asOfInfo?.omittedArticles ? ` (그 시점에 없던 조문 ${asOfInfo.omittedArticles}개 제외)` : ''
                     }`}
               </span>
+              {!isAsOfLoading && asOfInfo?.repealedArticles?.length > 0 && (
+                <span className="text-[11px] text-red-800 bg-red-50 border border-red-200 rounded px-2 py-0.5" data-testid="as-of-repealed">
+                  그날 폐지돼 있어 뺀 조문 {asOfInfo.repealedArticles.length}개:{' '}
+                  {asOfInfo.repealedArticles
+                    .slice(0, 5)
+                    .map((a: AsOfRepealedArticle) => `${formatArticleAnchor(a)}(${a.repealedOn} 폐지)`)
+                    .join(', ')}
+                  {asOfInfo.repealedArticles.length > 5 ? ` 외 ${asOfInfo.repealedArticles.length - 5}개` : ''}
+                </span>
+              )}
               {asOfInfo && !asOfInfo.hasEffectiveDates ? (
                 <span className="text-[11px] text-gray-500">
                   시행일이 기록된 조문 버전이 없어 결과가 비어 있을 수 있습니다.
@@ -3314,7 +3333,13 @@ export default function PolicyDetailPage() {
                           <span className="text-xs font-mono bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">
                             v{version.versionNum}
                           </span>
-                          <StatusBadge status={version.status} />
+                          <StatusBadge status={version.status} repealedOn={version.repealedOn} />
+                          {(version.status === 'published' || version.status === 'archived') && version.effectiveDate && (
+                            <span className="text-[11px] text-gray-500">시행 {String(version.effectiveDate).slice(0, 10)}</span>
+                          )}
+                          {version.repealedOn && (
+                            <span className="text-[11px] text-red-700">· {String(version.repealedOn).slice(0, 10)} 폐지</span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
                           {version.status === 'draft' && canEdit && (
@@ -3571,13 +3596,13 @@ export default function PolicyDetailPage() {
                         <select className="input text-xs" value={compareV1} onChange={(e) => setCompareV1(e.target.value)}>
                           <option value="">기준 버전</option>
                           {versions.map((v: any) => (
-                            <option key={v.id} value={v.id}>v{v.versionNum} · {statusLabel[v.status] || v.status}</option>
+                            <option key={v.id} value={v.id}>v{v.versionNum} · {versionStatusLabel(v)}</option>
                           ))}
                         </select>
                         <select className="input text-xs" value={compareV2} onChange={(e) => setCompareV2(e.target.value)}>
                           <option value="">비교 버전</option>
                           {versions.map((v: any) => (
-                            <option key={v.id} value={v.id}>v{v.versionNum} · {statusLabel[v.status] || v.status}</option>
+                            <option key={v.id} value={v.id}>v{v.versionNum} · {versionStatusLabel(v)}</option>
                           ))}
                         </select>
                       </div>
@@ -3656,7 +3681,7 @@ export default function PolicyDetailPage() {
                           {versions.slice(0, 6).map((v: any) => (
                             <p key={v.id} className="text-[11px] text-gray-700 bg-gray-50 border border-gray-200 rounded px-2 py-1">
                               <span className="font-semibold mr-1">v{v.versionNum}</span>
-                              <span className="mr-1">{statusLabel[v.status] || v.status}</span>
+                              <span className="mr-1">{versionStatusLabel(v)}</span>
                               <span className="text-gray-500">
                                 {new Date(v.createdAt).toLocaleDateString('ko-KR')}
                               </span>
@@ -4449,8 +4474,9 @@ export default function PolicyDetailPage() {
             </div>
             <div className="p-5 space-y-4">
               <p className="text-xs text-gray-600 leading-relaxed">
-                한 번도 시행된 적 없는 조문 <strong>{draftOnlyCount}건</strong>의 초안을 시행합니다. 이미 시행 중인
-                조문의 개정 초안은 포함되지 않습니다 — 개정은 조문별 검토·승인으로 진행하세요.
+                시행본이 없는 조문 <strong>{draftOnlyCount}건</strong>(새로 넣은 조문, 폐지 뒤 다시 쓴 조문)의 초안을
+                시행합니다. 이미 시행 중인 조문의 개정 초안은 포함되지 않습니다 — 개정은 조문별 검토·승인으로 진행하세요.
+                폐지한 조문을 다시 시행할 때는 시행일이 폐지일이나 그 뒤여야 합니다.
               </p>
               <label className="block text-xs font-medium text-gray-600">
                 시행 사유
@@ -5185,12 +5211,19 @@ export default function PolicyDetailPage() {
                 </span>{' '}
                 을(를) 폐지할까요?
               </p>
-              {/* 게시본이 하나뿐이면 조문이 본문 없이 남는다. 정당한 폐지도 있으므로 막지 않고 알린다. */}
+              {/* 폐지 시행일은 오늘(한국 날짜)로 정해진다 — 고르지 않는다(T-126). 게시본이 하나뿐이면 조문이 본문 없이
+                  남는다. 정당한 폐지도 있으므로 막지 않고 알린다. */}
               <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
-                <p>폐지하면 이 버전은 게시 상태에서 내려갑니다. 내용과 이력은 남습니다.</p>
                 <p>
-                  이 조문의 <strong>마지막 게시본이면 전문 보기·인쇄에 본문 없이 나옵니다.</strong> 새 버전을 올려
-                  승인하거나, 조문 자체를 정리해야 합니다.
+                  <strong>오늘({serviceToday()})부터 이 조문은 시행에서 빠집니다.</strong> 그날부터의 시점 조회·신구조문대비표·법령
+                  영향 분석에 나오지 않고, 그 전 날짜에는 지금 본문이 그대로 나옵니다.
+                </p>
+                <p>
+                  이 버전은 게시 상태에서 내려가고 내용과 이력은 남습니다. 폐지는 되돌릴 수 없습니다 — 다시 시행하려면 새
+                  버전을 올려 오늘이나 그 뒤 시행일로 승인하세요.
+                </p>
+                <p>
+                  이 조문의 <strong>마지막 게시본이면 전문 보기·인쇄에 본문 없이 나옵니다.</strong>
                 </p>
               </div>
               {archiveMutation.isError && (

@@ -6,7 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
+import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
@@ -191,6 +191,7 @@ export class PoliciesService {
    *
    * 조문별로 "시행일이 기준일 이하인 시행분 중 가장 나중" 버전을 고른다.
    * 기준일에 아직 시행되지 않은 조는 결과에서 제외한다(그날 존재하지 않던 조문).
+   * 고른 버전이 그날 폐지돼 있으면 그 조문도 뺀다 — 옛 버전으로 되살리지 않고, 폐지일과 함께 따로 알린다(T-126).
    * `findOne`과 같은 형태로 돌려주므로 전문 보기·인쇄·PDF가 그대로 재사용된다.
    */
   async findOneAsOf(tenantId: string, id: string, asOf: string) {
@@ -232,10 +233,32 @@ export class PoliciesService {
     if (!policy) throw new NotFoundException('Policy not found');
 
     let omittedArticles = 0;
+    const repealedArticles: Array<{
+      id: string;
+      number: number;
+      branchNumber: number | null;
+      clauseNumber: number | null;
+      itemNumber: number | null;
+      title: string | null;
+      repealedOn: string;
+    }> = [];
     const chapters = policy.chapters.map((chapter) => {
       const articles = chapter.articles.filter((article) => {
-        if (article.versions.length > 0) return true;
-        omittedArticles += 1;
+        const state = asOfState(article.versions[0], asOfDate);
+        if (state === 'in_force') return true;
+        if (state === 'repealed') {
+          repealedArticles.push({
+            id: article.id,
+            number: article.number,
+            branchNumber: article.branchNumber,
+            clauseNumber: article.clauseNumber,
+            itemNumber: article.itemNumber,
+            title: article.title,
+            repealedOn: toDateOnlyString(article.versions[0].repealedOn!),
+          });
+        } else {
+          omittedArticles += 1;
+        }
         return false;
       });
       return { ...chapter, articles };
@@ -247,6 +270,8 @@ export class PoliciesService {
       asOf: {
         date: asOf,
         omittedArticles,
+        /** 그날 폐지돼 있어 뺀 조문(T-126) — "그 시점에 없던 조문"과 따로 알린다 */
+        repealedArticles,
         // 시행일이 하나도 기록되지 않았다면 시점 조회가 무의미하다는 신호
         hasEffectiveDates: await this.hasAnyEffectiveDate(id),
       },
@@ -452,7 +477,7 @@ export class PoliciesService {
     });
 
     return articles
-      .filter((article) => article.versions.length > 0)
+      .filter((article) => asOfState(article.versions[0], asOfDate) === 'in_force')
       .map((article) => {
         const version = article.versions[0];
         return {
@@ -478,24 +503,31 @@ export class PoliciesService {
     return count > 0;
   }
 
-  /** 시점 조회 슬라이더용: 이 규정에서 실제로 본문이 바뀐 날짜들 */
+  /** 시점 조회 슬라이더용: 이 규정에서 실제로 본문이 바뀐 날짜들 — 조문이 폐지돼 빠진 날도 넣는다(T-126) */
   async listEffectiveDates(tenantId: string, id: string) {
     const policy = await this.prisma.policy.findFirst({ where: { id, tenantId }, select: { id: true } });
     if (!policy) throw new NotFoundException('Policy not found');
 
-    const rows = await this.prisma.articleVersion.findMany({
-      where: {
-        status: { in: ['published', 'archived'] },
-        effectiveDate: { not: null },
-        article: { chapter: { policyId: id } },
-      },
-      select: { effectiveDate: true },
-      distinct: ['effectiveDate'],
-      orderBy: { effectiveDate: 'desc' },
-    });
-    return rows
-      .map((r) => (r.effectiveDate ? toDateOnlyString(r.effectiveDate) : null))
-      .filter((d): d is string => !!d);
+    const [rows, repeals] = await Promise.all([
+      this.prisma.articleVersion.findMany({
+        where: {
+          status: { in: ['published', 'archived'] },
+          effectiveDate: { not: null },
+          article: { chapter: { policyId: id } },
+        },
+        select: { effectiveDate: true },
+        distinct: ['effectiveDate'],
+      }),
+      this.prisma.articleVersion.findMany({
+        where: { repealedOn: { not: null }, article: { chapter: { policyId: id } } },
+        select: { repealedOn: true },
+        distinct: ['repealedOn'],
+      }),
+    ]);
+    const days = new Set<string>();
+    for (const r of rows) if (r.effectiveDate) days.add(toDateOnlyString(r.effectiveDate));
+    for (const r of repeals) if (r.repealedOn) days.add(toDateOnlyString(r.repealedOn));
+    return [...days].sort().reverse();
   }
 
   async create(tenantId: string, dto: CreatePolicyDto, userId: string) {

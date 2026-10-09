@@ -3,6 +3,7 @@ import {
   parseDateOnly,
   toDateOnlyString,
   coerceNullableDate,
+  todayDateOnly,
 } from '../apps/api/src/common/date-only';
 
 describe('parseDateOnly', () => {
@@ -37,5 +38,22 @@ describe('coerceNullableDate', () => {
     expect(coerceNullableDate('2026-08-04T09:30:00Z')?.toISOString()).toBe(
       '2026-08-04T00:00:00.000Z',
     );
+  });
+});
+
+describe('todayDateOnly — 한국 날짜 (T-126)', () => {
+  it('한국 시간 0시부터 다음 날이다 — 서버(UTC) 날짜를 따르지 않는다', () => {
+    // 2026-10-09 00:30 KST = 2026-10-08 15:30 UTC
+    expect(toDateOnlyString(todayDateOnly(new Date('2026-10-08T15:30:00.000Z')))).toBe('2026-10-09');
+    expect(toDateOnlyString(todayDateOnly(new Date('2026-10-08T15:00:00.000Z')))).toBe('2026-10-09');
+  });
+
+  it('한국 시간 자정 전까지는 그날이다', () => {
+    // 2026-10-08 23:59:59 KST = 2026-10-08 14:59:59 UTC
+    expect(toDateOnlyString(todayDateOnly(new Date('2026-10-08T14:59:59.999Z')))).toBe('2026-10-08');
+  });
+
+  it('값은 그날의 UTC 자정이다 — 날짜 컬럼과 비교하는 표현은 그대로', () => {
+    expect(todayDateOnly(new Date('2026-10-08T20:00:00.000Z')).toISOString()).toBe('2026-10-09T00:00:00.000Z');
   });
 });

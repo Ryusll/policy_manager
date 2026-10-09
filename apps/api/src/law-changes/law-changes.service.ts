@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
+import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { labelFromNodeKey } from '../laws/law-rows';
 import { impactReferenceDate } from './law-impact';
@@ -47,7 +47,7 @@ function presentEvent(e: EventRow) {
 }
 
 /** 제1 조문이 없는 이유 — `impactedArticles` 참고 */
-export type ImpactSkipReason = 'not_in_force' | 'effective_date_missing';
+export type ImpactSkipReason = 'not_in_force' | 'effective_date_missing' | 'repealed';
 
 export type ImpactedArticle = Awaited<ReturnType<LawChangesService['impactedArticles']>>[number];
 
@@ -191,6 +191,8 @@ export class LawChangesService {
    * - `effective_date_missing` — 시행본은 있는데 시행일이 기록되지 않았다(T-123 이전에 가져온
    *   규정). 규정 화면에서 시행일을 보정하면 풀린다. 임의 날짜로 기준 본문을 만들지 않는다
    * - `not_in_force` — 기준일에 시행 중인 버전이 없다(초안뿐이거나 시행 전)
+   * - `repealed` — 기준일에 이 조문은 폐지돼 있다(T-126). 연결은 남아 있으니 목록에서 빼지 않고 폐지일과 함께
+   *   보인다 — 사라지면 "왜 영향 조문이 줄었나"를 설명할 수 없다. 개정 후보는 만들지 않는다
    */
   async impactedArticles(tenantId: string, lawArticleId: string, asOfDate: Date) {
     const links = await this.prisma.lawLink.findMany({
@@ -224,7 +226,7 @@ export class LawChangesService {
               where: asOfVersionWhere(asOfDate),
               orderBy: AS_OF_VERSION_ORDER,
               take: 1,
-              select: { id: true, versionNum: true, status: true, effectiveDate: true, content: true },
+              select: { id: true, versionNum: true, status: true, effectiveDate: true, content: true, repealedOn: true },
             },
           },
         },
@@ -246,12 +248,17 @@ export class LawChangesService {
 
     return links
       .map((link) => {
-        const version = link.article.versions[0] ?? null;
-        const skipReason: ImpactSkipReason | null = version
-          ? null
-          : undated.has(link.article.id)
-            ? 'effective_date_missing'
-            : 'not_in_force';
+        const picked = link.article.versions[0] ?? null;
+        const state = asOfState(picked, asOfDate);
+        const version = state === 'in_force' ? picked : null;
+        const skipReason: ImpactSkipReason | null =
+          state === 'in_force'
+            ? null
+            : state === 'repealed'
+              ? 'repealed'
+              : undated.has(link.article.id)
+                ? 'effective_date_missing'
+                : 'not_in_force';
         return {
           linkId: link.id,
           relationType: link.relationType,
@@ -279,6 +286,8 @@ export class LawChangesService {
               }
             : null,
           skipReason,
+          /** 기준일에 폐지돼 있으면 그 폐지 시행일 */
+          repealedOn: state === 'repealed' ? dateOnly(picked!.repealedOn) : null,
         };
       })
       .sort(

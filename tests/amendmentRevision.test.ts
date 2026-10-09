@@ -34,11 +34,12 @@ describe('개정 후보의 판 (T-107)', () => {
 });
 
 describe('historyFingerprint — 발행 이력 지문 (T-108)', () => {
-  const v = (id: string, status: string, eff: string | null, n: number) => ({
+  const v = (id: string, status: string, eff: string | null, n: number, repealed: string | null = null) => ({
     id,
     status,
     effectiveDate: eff ? new Date(`${eff}T00:00:00.000Z`) : null,
     versionNum: n,
+    repealedOn: repealed ? new Date(`${repealed}T00:00:00.000Z`) : null,
   });
 
   it('시행본·폐지본만, 순서와 무관하게 같은 값', () => {
@@ -56,5 +57,18 @@ describe('historyFingerprint — 발행 이력 지문 (T-108)', () => {
     expect(historyFingerprint([...base, v('b', 'published', '2019-01-01', 2)])).not.toBe(f);
     // 초안은 이력이 아니다
     expect(historyFingerprint([...base, v('d', 'draft', null, 2)])).toBe(f);
+  });
+
+  it('폐지 시행일은 있을 때만 줄 끝에 붙는다 — 폐지가 없으면 T-108 때 지문과 같다 (T-126)', () => {
+    const plain = [v('a', 'archived', '2020-01-01', 1), v('b', 'published', '2024-03-01', 2)];
+    expect(historyFingerprint(plain)).toBe(
+      `fp1:${createHash('sha256').update('a|archived|2020-01-01|1\nb|published|2024-03-01|2', 'utf8').digest('hex')}`,
+    );
+    const repealed = [v('a', 'archived', '2020-01-01', 1, '2021-05-01'), v('b', 'published', '2024-03-01', 2)];
+    expect(historyFingerprint(repealed)).toBe(
+      `fp1:${createHash('sha256').update('a|archived|2020-01-01|1|2021-05-01\nb|published|2024-03-01|2', 'utf8').digest('hex')}`,
+    );
+    // 폐지일이 바뀌어도 달라진다
+    expect(historyFingerprint([v('a', 'archived', '2020-01-01', 1, '2021-05-02'), plain[1]])).not.toBe(historyFingerprint(repealed));
   });
 });

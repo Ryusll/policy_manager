@@ -133,6 +133,18 @@ export const policiesApi = {
       .then((r) => r.data),
 };
 
+/** 시점 조회에서 그날 폐지돼 있어 뺀 조문 (`asOf.repealedArticles`, T-126) */
+export type AsOfRepealedArticle = {
+  id: string;
+  number: number;
+  branchNumber: number | null;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+  title: string | null;
+  /** 폐지 시행일 (YYYY-MM-DD) */
+  repealedOn: string;
+};
+
 export type PolicyRevisionKind = 'enactment' | 'amendment' | 'full_amendment' | 'repeal';
 
 export type RevisionReasonInput = {
@@ -227,7 +239,8 @@ export const versionsApi = {
   reject: (id: string, reason: string) =>
     client.post('/versions/' + id + '/reject', { reason }).then((r) => r.data),
   /** 폐지 — 응답의 `remainingPublished` 가 0이면 이 조문에 게시본이 없다 (T-10) */
-  archive: (id: string): Promise<{ remainingPublished: number }> =>
+  /** 게시본 폐지 — 폐지 시행일은 서버가 오늘(한국 날짜)로 정한다(T-126) */
+  archive: (id: string): Promise<{ remainingPublished: number; repealedOn: string }> =>
     client.post('/versions/' + id + '/archive').then((r) => r.data),
   diff: (v1: string, v2: string) =>
     client.get('/versions/diff', { params: { v1, v2 } }).then((r) => r.data),

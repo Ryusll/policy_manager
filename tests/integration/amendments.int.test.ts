@@ -25,7 +25,8 @@ function sql(query: string): string {
   ).trim();
 }
 
-const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+/** 한국 날짜 — 서버의 "오늘"(todayDateOnly)이 한국 날짜다(T-126). UTC 로 만들면 한국 시간 0~9시에 하루 어긋난다 */
+const day = (offset: number) => new Date(Date.now() + 9 * 3_600_000 + offset * 86_400_000).toISOString().slice(0, 10);
 const PW = 'IntegrationTest!234';
 
 const LAW_BEFORE = '사용자는 근로자에게 15일의 유급휴가를 주어야 한다. <개정 2012.2.1>';

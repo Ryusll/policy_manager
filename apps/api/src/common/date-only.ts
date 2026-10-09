@@ -25,9 +25,17 @@ export function toDateOnlyString(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** 오늘(UTC 자정) */
-export function todayDateOnly(): Date {
-  return parseDateOnly(toDateOnlyString(new Date()))!;
+/** 서비스 기준 시간대 — 한국(UTC+9). 한국은 서머타임이 없어 고정 오프셋이면 된다 */
+const SERVICE_UTC_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+/**
+ * 오늘 — **한국 날짜**를 UTC 자정으로(T-126).
+ *
+ * 서버 시간대(컨테이너는 UTC)를 따르면 한국 시간 0~9시에 "오늘"이 전날이 된다. 그러면 그 시간에 한
+ * 폐지가 전날 날짜로 남고, 승인 기본 시행일·소급 검사·영향 분석 기준일이 사용자가 보는 날짜와 하루 어긋난다.
+ */
+export function todayDateOnly(now: Date = new Date()): Date {
+  return parseDateOnly(toDateOnlyString(new Date(now.getTime() + SERVICE_UTC_OFFSET_MS)))!;
 }
 
 /**

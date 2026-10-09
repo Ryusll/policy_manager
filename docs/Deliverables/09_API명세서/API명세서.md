@@ -76,7 +76,7 @@
 | POST | :id/revision-reasons | admin, editor | 제정·개정 이유 추가 |
 | PUT | :id/revision-reasons/:reasonId | admin, editor | 제정·개정 이유 수정 |
 | DELETE | :id/revision-reasons/:reasonId | admin, editor | 제정·개정 이유 삭제 |
-| GET | :id/effective-dates | admin, editor | **시점 조회용** — 본문이 바뀐 시행일 목록(내림차순) |
+| GET | :id/effective-dates | admin, editor | **시점 조회용** — 본문이 바뀐 시행일 목록(내림차순). 조문이 폐지돼 빠진 날(폐지 시행일)도 넣는다(T-126) |
 | GET | :id/as-of | admin, editor | **시점 조회** — 기준일에 시행 중이던 본문. Query: `date`(YYYY-MM-DD) |
 | GET | :id/compare | admin, editor | **신구조문대비표** — 두 시점 본문을 조문 단위로 대비. Query: `from`, `to`(YYYY-MM-DD) |
 | GET | :id/compare-with | admin, editor | **규정 간 비교**(T-91) — 같은 기관의 **다른 규정**과 조문을 대조. Query: `targetId`. 게시본 기준(전문 보기와 같다). 공유 식별자가 없어 **조·항·목 번호로 맞대며**, 번호는 같은데 제목이 다른 줄은 `titleDiffers`·`summary.suspect` 로 표시한다. **두 규정 모두 테넌트 소속인지 각각 확인**한다(대상만 남의 것이어도 404) |
@@ -102,11 +102,11 @@
 | GET | versions/:id | admin, editor | 버전 상세 |
 | PUT | versions/:id | admin, editor | 초안 본문·변경메모 수정 |
 | POST | versions/:id/submit | admin | 검토 요청 (draft→review) |
-| POST | versions/:id/approve | admin | 시행 승인 (review→published, 이전 published는 archived). **`effectiveDate` 확정 — 시점 조회의 기준**. 발행일 `publishedAt` 을 남기고(T-108), 개정 후보 승인과 같은 조문 잠금을 건다 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게 |
+| POST | versions/:id/approve | admin | 시행 승인 (review→published, 이전 published는 archived). **`effectiveDate` 확정 — 시점 조회의 기준**. 발행일 `publishedAt` 을 남기고(T-108), 개정 후보 승인과 같은 조문 잠금을 건다 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게. **폐지한 조문을 다시 시행하면 시행일은 마지막 폐지일 이후**여야 한다(같은 날 가능 — 같은 날 시행분은 나중 버전이 이긴다, 아니면 400, T-126) |
 | POST | versions/:id/reject | admin | 검토 반려(review→draft). Body: `reason`(**필수**) — 사유는 버전의 `reviewNote` 에 남아 편집자에게 보인다. 다시 검토 요청하면 지워진다 (T-10) |
-| POST | versions/:id/archive | admin | 게시본 폐지(published→archived). 응답에 `remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10) |
+| POST | versions/:id/archive | admin | 게시본 폐지(published→archived) — **오늘(한국 날짜)부터 조문을 시행에서 뺀다**: 폐지 시행일 `repealedOn` 을 남긴다(T-126). 날짜는 고르지 않는다(미래 폐지는 T-127 뒤, 소급 없음). 조문 행을 잠그고(승인과 같은 잠금) 다시 확인한다 — 그 사이 내려갔으면 409, 시행일이 없으면(보정 먼저)·아직 시행 전이면·오늘 뒤에 시행될 버전이 따로 있으면·오늘 시행 중인 본문이 이 버전이 아니면 400. 응답에 `repealedOn`·`remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10). 감사 `version.archive`(같은 트랜잭션, details `repealedOn`·`remainingPublished`) |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
-| POST | policies/:policyId/publish-drafts | admin | **시행된 적 없는 조문의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate`(**필수**, YYYY-MM-DD — 이 조문들이 실제로 시행된 날. 오늘로 채우지 않는다(PAT-02), 없으면 400). 규정의 첫 시행이고 규정 시행일이 비어 있으면 같은 날로 채운다. 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건") |
+| POST | policies/:policyId/publish-drafts | admin | **시행본이 없는 조문(새로 넣은 조문, 폐지 뒤 다시 쓴 조문)의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate`(**필수**, YYYY-MM-DD — 이 조문들이 실제로 시행된 날. 오늘로 채우지 않는다(PAT-02), 없으면 400). 규정의 첫 시행이고 규정 시행일이 비어 있으면 같은 날로 채운다. 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건"). 폐지한 조문이 있으면 시행일이 그 폐지일 이후여야 한다 — 하나라도 어긋나면 400(조문·폐지일 목록)이고 아무것도 시행하지 않는다(T-126) |
 | POST | policies/:policyId/fill-effective-date | admin | **시행일 없이 시행된 버전에 확인한 시행일 넣기**(T-123 · PAT-02, 예전 가져오기 데이터 보정). Body: `effectiveDate`(YYYY-MM-DD, **필수** — 최초 제정일이 아니라 지금 본문이 시행된 날), `reason`(**필수**). 시행일이 비어 있는 시행본(published·archived)에만 넣고, 규정 단위 시행일이 비어 있으면 함께 채운다. **같은 조문의 앞뒤 시행본과 순서가 어긋나거나 비어 있는 시행본이 둘 이상인 조문이 하나라도 있으면 409 + `conflicts[]`(label·detail)로 아무것도 바꾸지 않는다.** 넣을 것이 없으면 400. 응답 `{updated}`. 감사 `version.effective_date_fill` |
 
 ## comments (`/api/articles/:articleId/comments`, `/api/comments/:id`)
@@ -291,7 +291,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | (root) | admin·editor | 변경 이벤트 목록(최근 순, `lawId`·`affected`·`limit` 필터). 각 행에 `label`(조문이 사라진 이벤트도 nodeKey 로 되살린 표기)과 `impact: { confirmed, suggested }` — **우리 회사** 연결 수. `affected=true` 면 확정 영향이 있는 이벤트만 |
-| GET | :id/impact | admin·editor | **이 변경이 걸리는 우리 회사 조문.** 확정(`confirmed`) 연결만 — 추천은 `suggestedCount` 로만. 조문마다 정책·관계 유형·근거 문구와 **제1 조문**(`baseVersion` — 기준일에 시행 중인 발행 버전, 규정 시점 조회와 같은 규칙). 기준일(`asOf`, 생략 시 **법령 시행일과 오늘 중 늦은 날**)에 시행 중인 버전이 없으면 빼지 않고 `baseVersion: null` 과 이유 `skipReason` — `effective_date_missing`(시행본은 있는데 시행일이 기록되지 않음 — T-123 이전에 가져온 규정, 규정 화면에서 보정하면 풀린다) / `not_in_force`(기준일에 시행 중인 본문 없음). 조문마다 이 변경으로 만든 **개정 후보** `candidate`(T-106 — 지금 기준 본문으로 만든 것, 없으면 가장 최근 것과 `isCurrentBase: false`, 없으면 `null`). 법령에서 조문이 통째로 사라져 연결도 함께 지워진 이벤트는 `unresolvable` 에 사유 |
+| GET | :id/impact | admin·editor | **이 변경이 걸리는 우리 회사 조문.** 확정(`confirmed`) 연결만 — 추천은 `suggestedCount` 로만. 조문마다 정책·관계 유형·근거 문구와 **제1 조문**(`baseVersion` — 기준일에 시행 중인 발행 버전, 규정 시점 조회와 같은 규칙). 기준일(`asOf`, 생략 시 **법령 시행일과 오늘 중 늦은 날**)에 시행 중인 버전이 없으면 빼지 않고 `baseVersion: null` 과 이유 `skipReason` — `effective_date_missing`(시행본은 있는데 시행일이 기록되지 않음 — T-123 이전에 가져온 규정, 규정 화면에서 보정하면 풀린다) / `not_in_force`(기준일에 시행 중인 본문 없음) / `repealed`(기준일에 폐지돼 있음 — 폐지 시행일 `repealedOn` 을 함께, T-126). 조문마다 이 변경으로 만든 **개정 후보** `candidate`(T-106 — 지금 기준 본문으로 만든 것, 없으면 가장 최근 것과 `isCurrentBase: false`, 없으면 `null`). 법령에서 조문이 통째로 사라져 연결도 함께 지워진 이벤트는 `unresolvable` 에 사유 |
 | POST | (root) | admin·editor | 수동 등록 (`receivedVia=manual`) — **아직 설계** |
 
 ### law-sync (`/api/platform-admin/law-sync`) — 주기 동기화, `global_admin` 전용 ✅ 구현됨 (T-104)
@@ -307,14 +307,14 @@
 ### amendments (`/api/amendments`) — 개정 후보, ⚠️ **테넌트별** ✅ 생성·조회(T-106)·목록·손질·검토 요청(T-107)·승인·반려(T-108) 구현됨
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | admin·editor | 후보 목록 `{ rows, total, page, limit }` (최근 순). `state`: `open`(기본 — 처리할 것 = 작성·검토)·`draft`·`review`·`approved`·`rejected`·`all`, `policyId`, `policyActive`(`active`/`inactive`, 생략하면 모두 — 비활성 규정의 후보도 숨기지 않는다), `changeEventId`, `page`, `limit`(1~100, 기본 30). 행마다 규정·조문·법령 변경·`current`(지금 판 기준: `revision`·`hasChanges`(공백 말고 기준 본문과 다른가)·`unexplained`·`edited`)·`isCurrentBase`(지금 다시 만들면 고를 기준 본문이 이 후보의 제1 조문과 같은가 — 시점 조회와 같은 규칙)·`createdBy`(null 이면 자동 생성) |
-| GET | :id | admin·editor | 후보 1건 — 제1 조문(`baseVersion`)·후보 본문(`candidateContent`)·**변경 근거**(`rationale`: 법령 변경 부분 `lawChanges`, 연결 스냅샷 `link`, 경로 `path`, 적용 규칙 `applications`, 반영하지 못한 변경 `unmapped`, 충돌 `conflicts`)·**변경 전후 비교**(`diff`: 표시용 `parts`, 문자 구간 `changes[]` 과 각 구간의 근거 `rationaleRefs`, 근거 없는 구간 수 `unexplained`)·생성 정보(`generationMeta`: 규칙·템플릿과 버전, 신뢰도 판정, 입력 원천)·`confidence`(high·medium·low, **생성 때 값으로 고정**)·`reviewFlags`(생성 때 값)·`current`(지금 판 기준 표시)·`reviewState`·`revision`·`lockVersion`·`asOf`·`event`·`policy`·`article`·`isCurrentBase`·`currentBase`(기준 본문이 그 사이 바뀌었으면 지금 기준 본문)·`reviewRequest`(검토 중이면 요청 — 대상 판·사유·요청자·시각)·`siblings`(같은 변경·조문의 다른 후보). 다른 회사 후보는 **404** |
+| GET | (root) | admin·editor | 후보 목록 `{ rows, total, page, limit }` (최근 순). `state`: `open`(기본 — 처리할 것 = 작성·검토)·`draft`·`review`·`approved`·`rejected`·`all`, `policyId`, `policyActive`(`active`/`inactive`, 생략하면 모두 — 비활성 규정의 후보도 숨기지 않는다), `changeEventId`, `page`, `limit`(1~100, 기본 30). 행마다 규정·조문·법령 변경·`current`(지금 판 기준: `revision`·`hasChanges`(공백 말고 기준 본문과 다른가)·`unexplained`·`edited`)·`isCurrentBase`(지금 다시 만들면 고를 기준 본문이 이 후보의 제1 조문과 같은가 — 시점 조회와 같은 규칙)·`staleReason`(낡은 까닭 — `repealed`(기준일에 조문이 폐지됨, T-126)·`base_changed`(그 사이 개정됨)·`history_changed`(기준 본문은 같아도 발행 이력이 바뀜, T-108))·`createdBy`(null 이면 자동 생성) |
+| GET | :id | admin·editor | 후보 1건 — 제1 조문(`baseVersion`)·후보 본문(`candidateContent`)·**변경 근거**(`rationale`: 법령 변경 부분 `lawChanges`, 연결 스냅샷 `link`, 경로 `path`, 적용 규칙 `applications`, 반영하지 못한 변경 `unmapped`, 충돌 `conflicts`)·**변경 전후 비교**(`diff`: 표시용 `parts`, 문자 구간 `changes[]` 과 각 구간의 근거 `rationaleRefs`, 근거 없는 구간 수 `unexplained`)·생성 정보(`generationMeta`: 규칙·템플릿과 버전, 신뢰도 판정, 입력 원천)·`confidence`(high·medium·low, **생성 때 값으로 고정**)·`reviewFlags`(생성 때 값)·`current`(지금 판 기준 표시)·`reviewState`·`revision`·`lockVersion`·`asOf`·`event`·`policy`·`article`·`isCurrentBase`·`staleReason`(목록과 같다)·`currentBase`(기준 본문이 그 사이 바뀌었으면 지금 기준 본문 — 조문이 폐지됐으면 null)·`reviewRequest`(검토 중이면 요청 — 대상 판·사유·요청자·시각)·`siblings`(같은 변경·조문의 다른 후보). 다른 회사 후보는 **404** |
 | GET | :id/history | admin·editor | 판(`revisions[]` — 생성본 판 1 부터, 판마다 본문·해시·수정 사유·고친 사람·고치기 전 상태·**직전 판 대비** `fromPrevious`)과 상태 전환(`stateChanges[]` — 검토 요청·손질로 인한 요청 취소, 판 번호·사유·누가) (T-107) |
-| POST | generate | admin·editor | 변경 이벤트로 **우리 회사** 영향 조문마다 후보를 만든다(규칙 기반, **확정된 관계만**, 영향 판정은 `law-changes/:id/impact` 와 같다). **200** `{ changeEventId, asOf, created[], existing[], skipped[{articleId, policyId, label, reason}], noSubstantiveChange, unresolvable }` — 같은 이벤트·조문·기준 발행본·생성 방식·개정안의 후보가 이미 있으면 다시 만들지 않고 `existing` 으로 돌려준다(사람이 손댄 후보를 덮지 않는다, 감사 기록도 새로 남기지 않는다). 연혁 표기만 바뀐 개정은 `noSubstantiveChange: true`. 만들면 감사 `amendment.generate`(같은 트랜잭션) |
+| POST | generate | admin·editor | 변경 이벤트로 **우리 회사** 영향 조문마다 후보를 만든다(규칙 기반, **확정된 관계만**, 영향 판정은 `law-changes/:id/impact` 와 같다). **200** `{ changeEventId, asOf, created[], existing[], skipped[{articleId, policyId, label, reason(`effective_date_missing`·`not_in_force`·`repealed`)}], noSubstantiveChange, unresolvable }` — 같은 이벤트·조문·기준 발행본·생성 방식·개정안의 후보가 이미 있으면 다시 만들지 않고 `existing` 으로 돌려준다(사람이 손댄 후보를 덮지 않는다, 감사 기록도 새로 남기지 않는다). 연혁 표기만 바뀐 개정은 `noSubstantiveChange: true`. 만들면 감사 `amendment.generate`(같은 트랜잭션) |
 | PATCH | :id | admin·editor | **손질 — 새 판**(T-107). `{ candidateContent, note, expectedRevision, expectedLockVersion }` — 수정 사유 필수(빈칸 400), 바뀐 것이 없으면 400, 화면이 본 판·잠금 버전이 지금과 다르면 **409**(`{ message, revision, lockVersion }` — 그 사이 누가 고쳤거나 검토를 요청했다). 비교 정보를 다시 만들어 규칙이 낸 문구가 그 자리에 그대로 남은 곳만 규칙 근거로 잇고, 사람이 고친 곳은 근거 없는 변경(검토 대상)으로 남긴다. 검토 중(반려된) 후보를 고치면 **작성으로 되돌린다** — 새 판으로 다시 검토를 요청해야 한다(요청 기록은 이력에 남는다). 승인된 후보는 400. 감사 `amendment.edit`(판 번호·전후 본문 해시·사유, 본문 자체는 판 테이블에만). 응답은 `GET :id` 와 같다 |
 | POST | :id/review | admin·editor | **검토 요청**(작성 → 검토, T-107). `{ expectedRevision, expectedLockVersion, reason? }` — 검토 대상 판을 기록한다. 본문이 기준 본문과 (공백 말고) 다르지 않으면 "개정 불필요" 판단이라 `reason` 필수(400). 작성 상태가 아니면 400, 판·잠금이 다르면 409. 기준 본문이 그 사이 바뀌었어도 막지 않는다(화면이 경고, 승인 때 T-108 이 다시 확인). 감사 `amendment.request_review`(요청 id·판·해시·사유) |
 | POST | :id/regenerate | admin·editor | **다시 만들기**(T-107) — 같은 변경·**그 조문만** 지금 기준 본문으로 후보를 만든다. `{ asOf? }`(T-108) — 승인하려던 시행일을 주면 그 날 시행 중인 본문이 기준 본문이 된다(409 `base_mismatch`·`history_changed` 뒤에 쓴다). 같은 기준 본문·발행 이력이면 있던 후보를 돌려준다. 옛 후보는 그대로(사람이 고친 것을 옮기지 않는다). `{ candidateId, created, unchanged(기준 본문이 그대로라 같은 후보), skipped, noSubstantiveChange, unresolvable }` |
-| POST | :id/approve | **admin** | **승인 → 후속 버전 발행**(T-108). `{ effectiveDate, changeNote, earlyReason?, expectedRevision, expectedLockVersion }`. 검토 중인 후보·검토를 요청한 **그 판**만(아니면 400/409). 사내 규정 시행일 필수·**소급 불가**(오늘 이후, 아니면 400), 법령 시행일보다 이르면 `earlyReason` 필수(400). 본문이 기준 본문과 (공백 말고) 같으면 400(개정 불필요는 반려). **조문 행을 잠그고** 다시 확인해 어긋나면 **409 `{ message, reason }`** — `undated_history`(시행일 미기록 시행본) · `base_mismatch`(그 시행일의 시행본이 기준 본문이 아님) · `later_version`(그보다 늦은 시행본) · `history_changed`(후보를 만든 뒤 다른 발행·폐지·시행일 보정 — 발행 이력 지문). 통과하면 한 트랜잭션: 같은 조문(**조문 식별자 유지**)의 후속 버전(번호 = 가장 큰 번호 + 1, `published`, 시행일, 개정 사유, 발행일 `publishedAt`, `changeEventId`, `sourceCandidateId`) 생성 · 옛 시행본 폐지(archived) · 후보 `approved` · 상태 전환 기록 · 감사 `amendment.approve`(5요소 + 개정 당시 근거) · 알림(검토 요청자·후보 생성자에게 결과, 규정에 지정한 개정 알림 수신자에게 개정 시행 — 시행일이 미래면 "발행 · 시행 예정", 승인한 사람은 빼고 한 사람에 한 건). **같은 요청을 다시 보내면**(같은 판·시행일·사유) 새로 발행하지 않고 `alreadyApproved: true` 로 결과를 돌려준다 — 다른 시행일·사유면 409. 응답은 `GET :id` 와 같다(`decision`·`resultVersion` 포함) |
+| POST | :id/approve | **admin** | **승인 → 후속 버전 발행**(T-108). `{ effectiveDate, changeNote, earlyReason?, expectedRevision, expectedLockVersion }`. 검토 중인 후보·검토를 요청한 **그 판**만(아니면 400/409). 사내 규정 시행일 필수·**소급 불가**(오늘 이후, 아니면 400), 법령 시행일보다 이르면 `earlyReason` 필수(400). 본문이 기준 본문과 (공백 말고) 같으면 400(개정 불필요는 반려). **조문 행을 잠그고** 다시 확인해 어긋나면 **409 `{ message, reason }`** — `undated_history`(시행일 미기록 시행본) · `repealed`(그 시행일에 조문이 폐지돼 있음 — 반려로 닫는다, T-126) · `base_mismatch`(그 시행일의 시행본이 기준 본문이 아님) · `later_version`(그보다 늦은 시행본) · `history_changed`(후보를 만든 뒤 다른 발행·폐지·시행일 보정 — 발행 이력 지문). 통과하면 한 트랜잭션: 같은 조문(**조문 식별자 유지**)의 후속 버전(번호 = 가장 큰 번호 + 1, `published`, 시행일, 개정 사유, 발행일 `publishedAt`, `changeEventId`, `sourceCandidateId`) 생성 · 옛 시행본은 내려감(archived, 폐지 시행일 없음) · 후보 `approved` · 상태 전환 기록 · 감사 `amendment.approve`(5요소 + 개정 당시 근거) · 알림(검토 요청자·후보 생성자에게 결과, 규정에 지정한 개정 알림 수신자에게 개정 시행 — 시행일이 미래면 "발행 · 시행 예정", 승인한 사람은 빼고 한 사람에 한 건). **같은 요청을 다시 보내면**(같은 판·시행일·사유) 새로 발행하지 않고 `alreadyApproved: true` 로 결과를 돌려준다 — 다른 시행일·사유면 409. 응답은 `GET :id` 와 같다(`decision`·`resultVersion` 포함) |
 | POST | :id/reject | **admin** | **반려**(T-108). `{ reason, expectedRevision, expectedLockVersion }` — 검토 중인 후보만, 사유 필수(빈칸 400), 판·잠금이 다르면 409. 발행본은 그대로. 상태 전환 기록(반려자·시각·대상 판·사유)·감사 `amendment.reject`·알림(요청자·생성자). 반려된 후보를 고치면 작성으로 돌아간다 |
 
 > **viewer 에게는 열지 않는다.** 개정 초안은 확정 전 내부 문서다.
@@ -379,17 +379,19 @@
 - 비교 전 공백·줄바꿈을 정규화하므로 서식 차이만으로는 개정이 되지 않는다(표시는 원문 그대로).
 - `diff`는 `changed`일 때만 채우며 낱말 단위(`diffWords`) `{value, added?, removed?}` 배열이다.
 - 표기 위치(`number`/`clauseNumber`/`itemNumber`)는 신조문 기준, 삭제된 조문만 구조문 기준.
+- 그 시점에 폐지돼 있던 조문은 그 시점 스냅샷에서 빠지므로 `removed` 로 나온다(T-126).
 - `from > to`면 400.
 
 ### 시점 조회(as-of) 응답 규칙
 - 조문별로 **시행일 ≤ 기준일인 `published`/`archived` 버전 중 가장 나중** 것을 고른다.
 - 기준일에 아직 시행되지 않은 조문은 응답에서 **제외**한다(그날 존재하지 않던 조문).
-- 응답은 `GET :id`와 같은 형태 + `asOf: { date, omittedArticles, hasEffectiveDates }`. 전문 보기·인쇄·PDF가 그대로 재사용한다.
+- 고른 버전의 폐지 시행일(`repealedOn`)이 기준일 이하면 그 조문도 **제외**한다 — 옛 버전으로 되살리지 않는다. 대신 `asOf.repealedArticles[]`(`id`·번호·`title`·`repealedOn`)로 따로 알린다(T-126). 폐지 뒤 다시 시행한 버전은 시행일이 폐지일 이후라 그 날부터 나온다.
+- 응답은 `GET :id`와 같은 형태 + `asOf: { date, omittedArticles, repealedArticles, hasEffectiveDates }`. 전문 보기·인쇄·PDF가 그대로 재사용한다.
 
 ## versions
 **CreateVersionDto** — `content`(문자열), `changeNote?`
 **UpdateVersionDto** — `content?`, `changeNote?`
-**ApproveVersionDto** — `changeNote`(필수, 최소 1자 — "개정 사유를 입력하세요"), `effectiveDate?`(YYYY-MM-DD, 생략 시 승인일 — **시점 조회의 기준**)
+**ApproveVersionDto** — `changeNote`(필수, 최소 1자 — "개정 사유를 입력하세요"), `effectiveDate?`(YYYY-MM-DD, 생략 시 승인일(한국 날짜, T-126) — **시점 조회의 기준**. 폐지한 조문이면 폐지일 이후만)
 
 ## comments
 **CreateArticleCommentDto** — `content`(1~2000자)

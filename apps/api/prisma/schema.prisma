@@ -383,6 +383,9 @@ model ArticleVersion {
   changeEventId String?       @map("change_event_id")
   /// 이 버전을 낳은 개정 후보 — 승인 이력의 원천(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다
   sourceCandidateId String?   @unique @map("source_candidate_id")
+  /// 폐지 시행일(T-126) — "게시본 폐지"로 내린 버전만 있다. 이 날부터 조문은 시행 중이 아니다.
+  /// 새 버전에 밀려 내려간(대체) 버전은 비어 있다 — 상태(archived)만으로는 둘을 가를 수 없다
+  repealedOn    DateTime?     @map("repealed_on") @db.Date
 
   article        Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
   variableUsages VariableUsage[]

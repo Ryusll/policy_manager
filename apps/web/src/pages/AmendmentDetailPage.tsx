@@ -17,6 +17,7 @@ import {
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
 import { formatArticleAnchor } from '../lib/articleAnchor';
+import { serviceToday } from '../lib/serviceDate';
 import { toast } from '../stores/toastStore';
 import { useAuthStore } from '../stores/authStore';
 import { StateBadge } from './AmendmentsPage';
@@ -201,7 +202,7 @@ function Alerts({ data }: { data: AmendmentDetail }) {
       {data.decision?.state === 'approved' && data.resultVersion && (
         <div className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900" data-testid="amendment-approved">
           승인됨 — <b>v{data.resultVersion.versionNum}</b> 발행 · 시행 {data.resultVersion.effectiveDate}
-          {data.resultVersion.effectiveDate && data.resultVersion.effectiveDate > new Date().toISOString().slice(0, 10) && ' (시행 예정)'} ·{' '}
+          {data.resultVersion.effectiveDate && data.resultVersion.effectiveDate > serviceToday() && ' (시행 예정)'} ·{' '}
           {data.decision.by?.name ?? '알 수 없음'} · {new Date(data.decision.at).toLocaleString('ko-KR')}
           {data.decision.reason && <span className="block text-xs mt-0.5 whitespace-pre-wrap">개정 사유: {data.decision.reason}</span>}
           <Link to={`/policies/${data.policy.id}#${formatArticleAnchor(data.article)}`} className="block text-xs mt-1 text-emerald-800 underline">
@@ -220,7 +221,9 @@ function Alerts({ data }: { data: AmendmentDetail }) {
       {!data.isCurrentBase && data.reviewState !== 'approved' && (
         <div role="alert" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 space-y-1.5">
           <p>
-            {data.staleReason === 'history_changed' ? (
+            {data.staleReason === 'repealed' ? (
+              <>후보를 만든 뒤 이 조문이 폐지됐습니다 — 기준일에 시행 중인 본문이 없어 이 후보는 승인할 수 없습니다. 검토에서 반려로 닫으세요.</>
+            ) : data.staleReason === 'history_changed' ? (
               <>
                 후보를 만든 뒤 이 조문에 다른 발행·폐지·시행일 보정이 있었습니다 — 기준 본문(v{data.baseVersion.versionNum})은
                 같아도 그대로 승인할 수 없습니다. 다시 만들어 검토하세요.
@@ -241,14 +244,17 @@ function Alerts({ data }: { data: AmendmentDetail }) {
               <p className="mt-1 whitespace-pre-wrap text-gray-800">{data.currentBase.content}</p>
             </details>
           )}
-          <button
-            type="button"
-            className="btn-secondary text-xs"
-            disabled={regenerate.isPending}
-            onClick={() => regenerate.mutate()}
-          >
-            {regenerate.isPending ? '만드는 중…' : '지금 기준 본문으로 다시 만들기'}
-          </button>
+          {/* 폐지된 조문은 다시 만들어도 기준 본문이 없다 */}
+          {data.staleReason !== 'repealed' && (
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              disabled={regenerate.isPending}
+              onClick={() => regenerate.mutate()}
+            >
+              {regenerate.isPending ? '만드는 중…' : '지금 기준 본문으로 다시 만들기'}
+            </button>
+          )}
         </div>
       )}
       {data.reviewRequest && (
@@ -377,7 +383,7 @@ function LawChangeCard({ data }: { data: AmendmentDetail }) {
 function DecisionPanel({ data }: { data: AmendmentDetail }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = serviceToday();
   const [effectiveDate, setEffectiveDate] = useState('');
   const [changeNote, setChangeNote] = useState('');
   const [earlyReason, setEarlyReason] = useState('');
@@ -507,7 +513,7 @@ function DecisionPanel({ data }: { data: AmendmentDetail }) {
             <Link to={`/policies/${data.policy.id}`} className="underline">
               규정 화면에서 시행일 보정하기
             </Link>
-          ) : block.reason !== 'later_version' ? (
+          ) : block.reason !== 'later_version' && block.reason !== 'repealed' ? (
             <button type="button" className="btn-secondary text-xs" disabled={regenerate.isPending} onClick={() => regenerate.mutate()}>
               {regenerate.isPending ? '만드는 중…' : `${effectiveDate} 기준으로 다시 만들기`}
             </button>

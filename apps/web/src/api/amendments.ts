@@ -70,7 +70,8 @@ export type AmendmentCandidate = {
   diff: { parts: CandidateDiffPart[]; changes: CandidateChange[]; unexplained: number };
 };
 
-export type StaleReason = 'base_changed' | 'history_changed' | null;
+/** 낡은 까닭 — 기준일에 조문이 폐지됨(T-126) / 그 사이 개정됨 / 기준 본문은 같아도 발행 이력이 바뀜 */
+export type StaleReason = 'repealed' | 'base_changed' | 'history_changed' | null;
 
 export type AmendmentDetail = AmendmentCandidate & {
   createdByName: string | null;
@@ -147,7 +148,7 @@ export type RegenerateResult = {
   candidateId: string | null;
   created: boolean;
   unchanged: boolean;
-  skipped: 'not_in_force' | 'effective_date_missing' | null;
+  skipped: 'not_in_force' | 'effective_date_missing' | 'repealed' | null;
   noSubstantiveChange: boolean;
   unresolvable: string | null;
 };
@@ -157,7 +158,7 @@ export type GenerateResult = {
   asOf: string;
   created: { id: string; articleId: string }[];
   existing: { id: string; articleId: string }[];
-  skipped: { articleId: string; label: string; reason: 'not_in_force' | 'effective_date_missing' }[];
+  skipped: { articleId: string; label: string; reason: 'not_in_force' | 'effective_date_missing' | 'repealed' }[];
   noSubstantiveChange: boolean;
   unresolvable: string | null;
 };
@@ -271,4 +272,4 @@ export const amendmentsApi = {
 };
 
 /** 승인을 막은 이유(409 의 reason) — 화면 안내용 */
-export type ApproveBlock = 'undated_history' | 'base_mismatch' | 'later_version' | 'history_changed';
+export type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed';

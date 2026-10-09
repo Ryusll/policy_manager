@@ -110,7 +110,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | articleId | uuid FK → Article (cascade) | |
 | versionNum | int | |
 | content | string | 조문 본문 |
-| status | enum VersionStatus | draft/review/published/archived |
+| status | enum VersionStatus | draft/review/published/archived — archived 는 "새 버전에 밀려 내려감(대체)"과 "폐지" 둘 다다. 가르는 것은 `repealedOn`(T-126) |
 | changeNote | string? | 조문 단위 개정 사유. 시행 승인 시 필수 |
 | reviewNote | string? | **반려 사유**(T-10). 되돌린 초안 카드에 그대로 보인다. 다시 검토 요청하면 지운다 — 남겨 두면 재제출 뒤에도 반려 상태처럼 보인다 |
 | effectiveDate | date? | **이 버전이 시행된 날. 시점 조회(as-of)의 기준.** 승인 시 확정(미지정이면 승인일) |
@@ -119,6 +119,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | publishedAt | datetime? | **발행일** — 시스템에서 시행본으로 발행한 시각(T-108). 시행일·법령 시행일과 다르고 시점 조회의 기준이 아니다. 개정 후보 승인·일반 승인·한꺼번에 시행·가져오기 확정·JSON 일괄 등록이 남긴다(그 전 버전은 비어 있다 — 보정은 T-111) |
 | changeEventId | uuid FK? → LawChangeEvent (SetNull) | 이 버전을 낳은 법령 변경 — 개정 후보 승인으로 발행됐을 때만(T-108) |
 | sourceCandidateId | uuid FK? unique → AmendmentCandidate (SetNull) | 이 버전을 낳은 개정 후보(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다 |
+| repealedOn | date? | **폐지 시행일**(T-126) — "게시본 폐지"로 내린 버전만 있다(폐지한 날, 한국 날짜). 이 날부터 조문은 시행 중이 아니다: 시점 조회가 이 버전을 고르면 옛 버전으로 되돌아가지 않고 "폐지"로 본다(규정 시점 조회·신구 대비·법령 영향 분석·개정 후보 공통). 새 버전에 밀려 내려간 버전은 비어 있다. 마이그레이션 `20261009120000_article_repeal` 이 기존 폐지를 감사 기록(`version.archive`, 같은 회사) 시각의 한국 날짜로 채웠다 — 감사가 없는 archived 는 비워 둠 |
 
 인덱스: `[articleId, effectiveDate]` — 시점 조회에서 조문별 "기준일 이전 시행분 중 가장 최근"을 찾는 경로.
 

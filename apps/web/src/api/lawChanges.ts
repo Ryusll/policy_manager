@@ -56,8 +56,10 @@ export type ImpactedArticle = {
     effectiveDate: string | null;
     content: string;
   } | null;
-  /** 제1 조문이 없는 이유 — 시행일 미기록(가져온 규정, 보정하면 풀림) / 기준일에 시행 중인 본문 없음 */
-  skipReason: 'not_in_force' | 'effective_date_missing' | null;
+  /** 제1 조문이 없는 이유 — 시행일 미기록(가져온 규정, 보정하면 풀림) / 기준일에 시행 중인 본문 없음 / 기준일에 폐지됨(T-126) */
+  skipReason: 'not_in_force' | 'effective_date_missing' | 'repealed' | null;
+  /** 기준일에 폐지돼 있으면 그 폐지 시행일 (YYYY-MM-DD) */
+  repealedOn: string | null;
   /** 이 변경으로 만든 개정 후보(T-106). isCurrentBase 가 false 면 그 뒤 기준 본문이 바뀌었다 */
   candidate: (AmendmentCandidate & { isCurrentBase: boolean }) | null;
 };

@@ -74,7 +74,7 @@ export class VersionsController {
   @Post('policies/:policyId/publish-drafts')
   @Roles('admin')
   @HttpCode(200)
-  @ApiOperation({ summary: '시행된 적 없는 조문의 초안을 한꺼번에 시행 (최초 등록용)' })
+  @ApiOperation({ summary: '시행본이 없는 조문(새 조문, 폐지 뒤 다시 쓴 조문)의 초안을 한꺼번에 시행 — 폐지한 조문은 폐지일 이후 시행일만 (T-126)' })
   publishDrafts(@Request() req: any, @Param('policyId') policyId: string, @Body() dto: PublishDraftsDto) {
     return this.versionsService.publishInitialDrafts(
       req.user.tenantId,
@@ -110,7 +110,7 @@ export class VersionsController {
   @Post('versions/:id/archive')
   @Roles('admin')
   @HttpCode(200)
-  @ApiOperation({ summary: '폐지 — 게시본을 내린다. 응답의 remainingPublished 가 0이면 조문에 게시본이 없다 (T-10)' })
+  @ApiOperation({ summary: '폐지 — 게시본을 내리고 오늘(한국 날짜)부터 조문을 시행에서 뺀다(repealedOn). 응답의 remainingPublished 가 0이면 조문에 게시본이 없다 (T-10, T-126)' })
   archive(@Request() req: any, @Param('id') id: string) {
     return this.versionsService.archive(req.user.tenantId, id, req.user.id);
   }

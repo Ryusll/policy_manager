@@ -19,9 +19,12 @@ import {
 export default function AmendmentCandidatePreview({
   candidate,
   isCurrentBase,
+  repealedOn = null,
 }: {
   candidate: AmendmentCandidate;
   isCurrentBase: boolean;
+  /** 기준일에 조문이 폐지돼 있으면 그 폐지 시행일 — 다시 만들어도 후보가 생기지 않는다(T-126) */
+  repealedOn?: string | null;
 }) {
   const { rationale, diff } = candidate;
   const changes = rationale.lawChanges;
@@ -116,12 +119,17 @@ export default function AmendmentCandidatePreview({
         검토 화면에서 보기{candidate.current.edited ? ` (판 ${candidate.current.revision})` : ''}
       </Link>
 
-      {!isCurrentBase && (
-        <p className="text-[11px] text-amber-800">
-          이 후보를 만든 뒤 기준 본문이 바뀌었습니다(v{candidate.baseVersion.versionNum} 기준) — 다시 만들면 지금 본문으로
-          새 후보가 생깁니다.
-        </p>
-      )}
+      {!isCurrentBase &&
+        (repealedOn ? (
+          <p className="text-[11px] text-amber-800">
+            이 후보를 만든 뒤 조문이 폐지됐습니다({repealedOn}) — 승인할 수 없으니 검토 화면에서 반려로 닫으세요.
+          </p>
+        ) : (
+          <p className="text-[11px] text-amber-800">
+            이 후보를 만든 뒤 기준 본문이 바뀌었습니다(v{candidate.baseVersion.versionNum} 기준) — 다시 만들면 지금 본문으로
+            새 후보가 생깁니다.
+          </p>
+        ))}
     </div>
   );
 }
