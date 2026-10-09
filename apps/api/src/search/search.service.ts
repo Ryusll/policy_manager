@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { formatJo } from '../common/article-label';
+import { currentVersionsSql } from '../common/as-of';
+import { todayDateOnly } from '../common/date-only';
 
 type RelatedType = 'precedent' | 'law' | 'rule';
 type RelatedSort = 'relevance' | 'latest';
@@ -31,6 +33,8 @@ export class SearchService {
       const rows = await this.prisma.articleVersion.findMany({
         where: {
           status: 'published',
+          // 시행일 전인 개정은 아직 규정이 아니다(T-127)
+          OR: [{ effectiveDate: null }, { effectiveDate: { lte: todayDateOnly() } }],
           ...(scope === 'title' ? {} : { content: { contains: q, mode: 'insensitive' } }),
           article: {
             chapter: { policy: { tenantId } },
@@ -181,50 +185,43 @@ export class SearchService {
     }
 
     try {
-      return await this.searchWithBigm(tenantId, q, page, limit);
+      return { ...(await this.searchCurrent(tenantId, q, page, limit, 'LIKE')), searchEngine: 'pg_bigm_ready' };
     } catch (e: any) {
       this.log.warn(`pg_bigm search fallback: ${e?.message || e}`);
-      return { ...(await this.searchFallback(tenantId, q, page, limit)), searchEngine: 'ilike' };
+      return { ...(await this.searchCurrent(tenantId, q, page, limit, 'ILIKE')), searchEngine: 'ilike' };
     }
   }
 
-  /** pg_bigm GIN 인덱스가 있으면 LIKE 검색이 가속됩니다. 확장/인덱스 없으면 예외 후 폴백. */
-  private async searchWithBigm(tenantId: string, query: string, page: number, limit: number) {
+  /**
+   * 검색 대상은 조문마다 **지금 시행 중인 본문 하나**다(T-127) — 규칙은 `common/as-of.ts` 의
+   * `currentVersionsSql`(규정 상세·규정 질문과 같다). 예전에는 `status = 'published'` 를 그대로 찾아,
+   * 미래 시행일로 승인한 개정이 시행일 전부터 검색에 걸리고 지금 시행 중인 이전 본문은 걸리지 않았다.
+   * 폐지된 조문(폐지일이 오늘 이하)도 빠진다.
+   *
+   * pg_bigm GIN 인덱스가 있으면 LIKE 가 가속된다. LIKE 경로가 실패하면 ILIKE 로 한 번 더 찾는다(SEARCH-2).
+   * (예전 LIKE 경로는 텍스트 열을 `::uuid` 와 비교해 늘 실패했고, 실제로는 폴백만 돌고 있었다.)
+   */
+  private async searchCurrent(tenantId: string, query: string, page: number, limit: number, op: 'LIKE' | 'ILIKE') {
     const skip = (page - 1) * limit;
+    const today = todayDateOnly();
     const pattern = `%${query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+    const like = Prisma.raw(op);
+    const hits = Prisma.sql`
+      SELECT cur.version_id
+      FROM (${currentVersionsSql(tenantId, today)}) cur
+      JOIN articles a ON a.id = cur.article_id
+      WHERE (cur.repealed_on IS NULL OR cur.repealed_on > ${today})
+        AND (cur.content ${like} ${pattern} ESCAPE '\\' OR a.title ${like} ${pattern} ESCAPE '\\')`;
 
-    const countRows = await this.prisma.$queryRaw<{ n: bigint }[]>(Prisma.sql`
-      SELECT COUNT(*)::bigint AS n
-      FROM article_versions av
-      INNER JOIN articles a ON a.id = av.article_id
-      INNER JOIN chapters c ON c.id = a.chapter_id
-      INNER JOIN policies p ON p.id = c.policy_id
-      WHERE p.tenant_id = ${tenantId}::uuid
-        AND av.status = 'published'
-        AND (
-          av.content LIKE ${pattern} ESCAPE '\\'
-          OR a.title LIKE ${pattern} ESCAPE '\\'
-        )
-    `);
+    const countRows = await this.prisma.$queryRaw<{ n: bigint }[]>(
+      Prisma.sql`SELECT COUNT(*)::bigint AS n FROM (${hits}) h`,
+    );
     const total = Number(countRows[0]?.n ?? 0);
+    const idRows = await this.prisma.$queryRaw<{ version_id: string }[]>(
+      Prisma.sql`SELECT h.version_id FROM (${hits}) h ORDER BY h.version_id LIMIT ${limit} OFFSET ${skip}`,
+    );
 
-    const idRows = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
-      SELECT av.id
-      FROM article_versions av
-      INNER JOIN articles a ON a.id = av.article_id
-      INNER JOIN chapters c ON c.id = a.chapter_id
-      INNER JOIN policies p ON p.id = c.policy_id
-      WHERE p.tenant_id = ${tenantId}::uuid
-        AND av.status = 'published'
-        AND (
-          av.content LIKE ${pattern} ESCAPE '\\'
-          OR a.title LIKE ${pattern} ESCAPE '\\'
-        )
-      ORDER BY av.id
-      LIMIT ${limit} OFFSET ${skip}
-    `);
-
-    const ids = idRows.map((r) => r.id);
+    const ids = idRows.map((r) => r.version_id);
     let versions =
       ids.length === 0
         ? []
@@ -257,64 +254,6 @@ export class SearchService {
       policies,
       versions,
       pagination: { total, page, limit, totalPages: Math.ceil(total / limit) || 0 },
-      searchEngine: 'pg_bigm_ready',
-    };
-  }
-
-  private async searchFallback(tenantId: string, query: string, page: number, limit: number) {
-    const skip = (page - 1) * limit;
-
-    const [policies, versions, total] = await Promise.all([
-      this.prisma.policy.findMany({
-        where: {
-          tenantId,
-          OR: [
-            { title: { contains: query, mode: 'insensitive' } },
-            { code: { contains: query, mode: 'insensitive' } },
-            { description: { contains: query, mode: 'insensitive' } },
-          ],
-        },
-        take: 5,
-      }),
-      this.prisma.articleVersion.findMany({
-        where: {
-          status: 'published',
-          article: {
-            chapter: { policy: { tenantId } },
-            OR: [
-              { title: { contains: query, mode: 'insensitive' } },
-              { versions: { some: { status: 'published', content: { contains: query, mode: 'insensitive' } } } },
-            ],
-          },
-        },
-        include: {
-          article: {
-            include: {
-              chapter: { include: { policy: true } },
-            },
-          },
-        },
-        skip,
-        take: limit,
-      }),
-      this.prisma.articleVersion.count({
-        where: {
-          status: 'published',
-          article: {
-            chapter: { policy: { tenantId } },
-            OR: [
-              { title: { contains: query, mode: 'insensitive' } },
-              { versions: { some: { status: 'published', content: { contains: query, mode: 'insensitive' } } } },
-            ],
-          },
-        },
-      }),
-    ]);
-
-    return {
-      policies,
-      versions,
-      pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 }

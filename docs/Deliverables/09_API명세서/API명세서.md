@@ -136,7 +136,7 @@
 ## search (`/api/search`)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | JWT | 통합검색. Query: `q`(필수), `page`(기본 1), `limit`(기본 20) |
+| GET | (root) | JWT | 통합검색. Query: `q`(필수), `page`(기본 1), `limit`(기본 20). **찾는 대상은 조문마다 지금(오늘, 한국 날짜) 시행 중인 본문 하나**다(T-127 — 시행일 전인 개정·폐지된 조문은 빠지고, 시행일 없는 예전 시행본은 현재 본문으로 본다). 응답 `searchEngine`: `pg_bigm_ready`(LIKE) / `ilike`(LIKE 가 실패했을 때) |
 | GET | related-preview | JWT | 판·법·규 연관 미리보기. Query: `type`(precedent\|law\|rule, 필수), `q`(필수), `limit`(기본 5), `sort`(relevance\|latest), `scope`(title\|fulltext) |
 
 ## ask (`/api/ask`) — 규정 근거 AI 질의응답 (T-130, D-09) — 화면: `/ask`

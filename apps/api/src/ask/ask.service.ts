@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { todayDateOnly } from '../common/date-only';
+import { currentVersionsSql } from '../common/as-of';
 import { AnthropicAskProvider, AskProvider, AskRefusedError, AiUsage, MockAskProvider } from './ask-provider';
 import {
   AnswerBlock,
@@ -72,9 +73,9 @@ export function kstMonthStart(now = new Date()): Date {
 /**
  * T-130 규정 근거 AI 질의응답(세규식, D-09 결정 2026-10-09).
  *
- * 근거는 **지금 시행 중인 본문**뿐이다 — 시점 조회 규칙(`common/as-of.ts`)과 같게 오늘(한국 날짜)
- * 이하에 시행된 발행분 중 가장 나중을 고르고, 그날 폐지된 조문은 뺀다. 시행일 없이 들어간 예전
- * 시행본(T-123 보정 전)은 화면에 보이는 그대로 쓴다.
+ * 근거는 **지금 시행 중인 본문**뿐이다 — 규정 상세·검색과 같은 "현재" 규칙(`common/as-of.ts` 의
+ * `currentVersionsSql`, T-127): 오늘(한국 날짜) 이하에 시행된 발행분 중 가장 나중, 시행일 없는 예전 시행본도
+ * 후보, 미래 시행 개정은 제외, 그날 폐지된 조문은 뺀다.
  */
 @Injectable()
 export class AskService {
@@ -126,39 +127,20 @@ export class AskService {
   }
 
   /**
-   * 지금 시행 중인 조문 행 전부(본문 없이) — 목차와 낱말 찾기의 기준.
-   * 조 머리는 버전이 없어도(제목만 있는 조) 같은 조에 시행 중인 행이 있으면 넣는다.
+   * 지금 시행 중인 조문 행 전부(본문 없이) — 목차와 낱말 찾기의 기준. "현재" 판정은 규정 상세·검색과
+   * 같은 규칙(`currentVersionsSql`, T-127)이다. 조 머리는 버전이 없어도(제목만 있는 조) 같은 조에 시행 중인
+   * 행이 있으면 넣는다.
    */
   private async inForceRows(tenantId: string) {
     const today = todayDateOnly();
     const picked = await this.prisma.$queryRaw<{ article_id: string; version_id: string; repealed_on: Date | null }[]>(
-      Prisma.sql`
-        SELECT DISTINCT ON (av.article_id) av.article_id, av.id AS version_id, av.repealed_on
-        FROM article_versions av
-        JOIN articles a ON a.id = av.article_id
-        JOIN chapters c ON c.id = a.chapter_id
-        JOIN policies p ON p.id = c.policy_id
-        WHERE p.tenant_id = ${tenantId} AND p.is_active = true
-          AND av.status IN ('published', 'archived')
-          AND av.effective_date IS NOT NULL AND av.effective_date <= ${today}
-        ORDER BY av.article_id, av.effective_date DESC, av.version_num DESC`,
+      currentVersionsSql(tenantId, today, { activePoliciesOnly: true }),
     );
     const versionOf = new Map<string, string>();
     for (const r of picked) {
       if (r.repealed_on && r.repealed_on.getTime() <= today.getTime()) continue; // 그날 폐지 상태
       versionOf.set(r.article_id, r.version_id);
     }
-    const pickedIds = new Set(picked.map((r) => r.article_id));
-    const legacy = await this.prisma.$queryRaw<{ article_id: string; version_id: string }[]>(Prisma.sql`
-      SELECT DISTINCT ON (av.article_id) av.article_id, av.id AS version_id
-      FROM article_versions av
-      JOIN articles a ON a.id = av.article_id
-      JOIN chapters c ON c.id = a.chapter_id
-      JOIN policies p ON p.id = c.policy_id
-      WHERE p.tenant_id = ${tenantId} AND p.is_active = true
-        AND av.status = 'published' AND av.effective_date IS NULL
-      ORDER BY av.article_id, av.version_num DESC`);
-    for (const r of legacy) if (!pickedIds.has(r.article_id)) versionOf.set(r.article_id, r.version_id);
 
     const articles = await this.prisma.article.findMany({
       where: { chapter: { policy: { tenantId, isActive: true } } },
@@ -197,17 +179,19 @@ export class AskService {
   /** 질문 낱말이 시행 중 본문·조문 제목에 들어 있는 조 — 들어 있는 낱말 수가 많은 순 */
   private async keywordGroups(tenantId: string, keywords: string[], liveKeys: Set<string>): Promise<string[]> {
     const score = new Map<string, number>();
+    const today = todayDateOnly();
     for (const kw of keywords) {
       const pattern = `%${kw.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+      // 본문은 "현재" 버전만 본다(T-127) — 시행일 전인 개정 문구로 후보를 고르지 않는다
       const hits = await this.prisma.$queryRaw<{ policy_id: string; number: number; branch_number: number | null }[]>(
         Prisma.sql`
           SELECT DISTINCT c.policy_id, a.number, a.branch_number
           FROM articles a
           JOIN chapters c ON c.id = a.chapter_id
           JOIN policies p ON p.id = c.policy_id
-          LEFT JOIN article_versions av ON av.article_id = a.id AND av.status IN ('published', 'archived')
+          LEFT JOIN (${currentVersionsSql(tenantId, today, { activePoliciesOnly: true })}) cur ON cur.article_id = a.id
           WHERE p.tenant_id = ${tenantId} AND p.is_active = true
-            AND (a.title LIKE ${pattern} ESCAPE '\\' OR av.content LIKE ${pattern} ESCAPE '\\')
+            AND (a.title LIKE ${pattern} ESCAPE '\\' OR cur.content LIKE ${pattern} ESCAPE '\\')
           LIMIT 200`,
       );
       for (const h of hits) {
