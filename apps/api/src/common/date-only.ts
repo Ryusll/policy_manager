@@ -39,6 +39,17 @@ export function todayDateOnly(now: Date = new Date()): Date {
 }
 
 /**
+ * 한국 날짜 하루가 시작되는 순간(UTC). `2026-10-09` → 2026-10-08T15:00:00Z. 형식이 어긋나면 null.
+ *
+ * 기록 시각(timestamp)을 사용자가 고른 날짜로 거를 때 쓴다(T-129) — UTC 자정으로 자르면 한국 시간 0~9시
+ * 기록이 전날로 간다.
+ */
+export function kstDayStart(dateOnly: unknown): Date | null {
+  const d = parseDateOnly(dateOnly);
+  return d ? new Date(d.getTime() - SERVICE_UTC_OFFSET_MS) : null;
+}
+
+/**
  * 선택 입력 날짜를 `@db.Date` 컬럼에 넣을 값으로 바꾼다.
  * 빈 값·null은 "지우기"로 보고 null, 형식이 어긋나면 예외 대신 null(검증은 DTO 몫).
  */

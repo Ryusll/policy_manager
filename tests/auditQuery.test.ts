@@ -33,16 +33,30 @@ describe('buildAuditWhere (T-11)', () => {
     expect(where).toEqual({ tenantId: TENANT });
   });
 
-  it('끝날을 포함해서 거른다', () => {
-    // `lte: to` 로 두면 그날 00:00 이후 기록이 전부 빠져서, "오늘"을 골라도 오늘 게 안 나온다
+  it('한국 날짜로, 끝날을 포함해서 거른다 (T-129)', () => {
+    // 한국 8/1 0시 = UTC 7/31 15시. 끝날 8/23 은 한국 8/24 0시(= UTC 8/23 15시) "미만"까지
     const where = buildAuditWhere(TENANT, { from: '2026-08-01', to: '2026-08-23' }) as any;
-    expect(where.createdAt.gte.toISOString()).toBe('2026-08-01T00:00:00.000Z');
-    expect(where.createdAt.lte.toISOString()).toBe('2026-08-23T23:59:59.999Z');
+    expect(where.createdAt.gte.toISOString()).toBe('2026-07-31T15:00:00.000Z');
+    expect(where.createdAt.lt.toISOString()).toBe('2026-08-23T15:00:00.000Z');
+    expect(where.createdAt.lte).toBeUndefined();
   });
 
-  it('형식이 맞지 않는 날짜는 무시한다', () => {
+  it('한국 시간 0~9시 기록이 그날에 든다', () => {
+    const where = buildAuditWhere(TENANT, { from: '2026-10-09', to: '2026-10-09' }) as any;
+    const inRange = (iso: string) => {
+      const t = new Date(iso).getTime();
+      return t >= where.createdAt.gte.getTime() && t < where.createdAt.lt.getTime();
+    };
+    expect(inRange('2026-10-08T15:30:00Z')).toBe(true); // 한국 10/9 00:30
+    expect(inRange('2026-10-09T14:59:59Z')).toBe(true); // 한국 10/9 23:59:59
+    expect(inRange('2026-10-08T14:59:59Z')).toBe(false); // 한국 10/8 23:59:59
+    expect(inRange('2026-10-09T15:00:00Z')).toBe(false); // 한국 10/10 00:00
+  });
+
+  it('형식이 맞지 않거나 없는 날짜는 무시한다', () => {
     const where = buildAuditWhere(TENANT, { from: '2026/08/01', to: 'yesterday' });
     expect(where).toEqual({ tenantId: TENANT });
+    expect(buildAuditWhere(TENANT, { from: '2026-02-31' })).toEqual({ tenantId: TENANT });
   });
 });
 

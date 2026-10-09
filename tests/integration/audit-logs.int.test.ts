@@ -83,7 +83,8 @@ describe('감사 로그 조회 (T-11)', () => {
 
     /** `lte: to` 로 두면 그날 00:00 이후 기록이 전부 빠져서, "오늘"을 골라도 오늘 게 안 나온다 */
     it('종료일 당일 기록이 포함된다', async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      // 한국 날짜 — 서버가 한국 날짜로 거른다(T-129). UTC 날짜로 고르면 한국 0~9시에 전날이 된다
+      const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const { body } = await api(`/audit-logs?from=${today}&to=${today}`, { token: t.token });
       expect(body.total).toBeGreaterThan(0);
     });

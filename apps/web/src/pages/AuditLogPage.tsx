@@ -149,7 +149,7 @@ export default function AuditLogPage() {
             value={filter.to ?? ''}
             onChange={(e) => setFilterField({ to: e.target.value })}
           />
-          <p className="text-[11px] text-gray-500 mt-1">종료일 당일까지 포함합니다.</p>
+          <p className="text-[11px] text-gray-500 mt-1">한국 시간 기준, 종료일 당일까지 포함합니다.</p>
         </div>
       </div>
 

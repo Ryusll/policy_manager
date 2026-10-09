@@ -4,6 +4,7 @@ import {
   toDateOnlyString,
   coerceNullableDate,
   todayDateOnly,
+  kstDayStart,
 } from '../apps/api/src/common/date-only';
 
 describe('parseDateOnly', () => {
@@ -55,5 +56,18 @@ describe('todayDateOnly — 한국 날짜 (T-126)', () => {
 
   it('값은 그날의 UTC 자정이다 — 날짜 컬럼과 비교하는 표현은 그대로', () => {
     expect(todayDateOnly(new Date('2026-10-08T20:00:00.000Z')).toISOString()).toBe('2026-10-09T00:00:00.000Z');
+  });
+});
+
+describe('kstDayStart — 한국 날짜 하루의 시작 (T-129)', () => {
+  it('한국 0시 = UTC 전날 15시', () => {
+    expect(kstDayStart('2026-10-09')?.toISOString()).toBe('2026-10-08T15:00:00.000Z');
+    expect(kstDayStart('2026-01-01')?.toISOString()).toBe('2025-12-31T15:00:00.000Z');
+  });
+
+  it('형식이 틀리거나 없는 날짜는 null', () => {
+    expect(kstDayStart('2026/10/09')).toBeNull();
+    expect(kstDayStart('2026-02-31')).toBeNull();
+    expect(kstDayStart('')).toBeNull();
   });
 });

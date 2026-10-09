@@ -225,7 +225,7 @@
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | admin | 목록. Query: `action`(정확히 일치 / 끝에 `.` 이면 접두어 묶음), `userId`, `from`·`to`(YYYY-MM-DD, **종료일 당일 포함**), `page`, `limit`(기본 50, 최대 200). 응답 `{rows, total, page, limit}`. **`rows` 에는 `details` 본문이 없다** — `hasDetails`·`keys` 만 (T-11) |
+| GET | (root) | admin | 목록. Query: `action`(정확히 일치 / 끝에 `.` 이면 접두어 묶음), `userId`, `from`·`to`(YYYY-MM-DD, **한국 날짜 기준·종료일 당일 포함** — 한국 그날 0시 이상 ~ 다음 날 0시 미만, T-129. 없는 날짜는 거르지 않는다), `page`, `limit`(기본 50, 최대 200). 응답 `{rows, total, page, limit}`. **`rows` 에는 `details` 본문이 없다** — `hasDetails`·`keys` 만 (T-11) |
 | GET | actions | admin | 이 회사에 쌓인 액션 종류·건수 (필터 드롭다운용) |
 | GET | actors | admin | 기록을 남긴 적 있는 사용자 목록 (필터용) |
 | GET | :id | admin | 기록 상세 — `details` 본문 포함 |

@@ -1,3 +1,5 @@
+import { kstDayStart } from '../common/date-only';
+
 /**
  * 감사 로그 조회 조건 조립 (T-11).
  *
@@ -8,9 +10,9 @@
 export type AuditQueryInput = {
   action?: string;
   userId?: string;
-  /** YYYY-MM-DD (그날 00:00부터) */
+  /** YYYY-MM-DD — 한국 시간 그날 0시부터 */
   from?: string;
-  /** YYYY-MM-DD (그날 23:59:59까지 — 끝날을 포함하지 않으면 "오늘"을 골라도 오늘 게 안 나온다) */
+  /** YYYY-MM-DD — 한국 시간 그날 끝까지(끝날을 포함하지 않으면 "오늘"을 골라도 오늘 게 안 나온다) */
   to?: string;
   page?: string | number;
   limit?: string | number;
@@ -26,8 +28,6 @@ export type AuditQueryPlan = {
 
 export const AUDIT_PAGE_SIZE = 50;
 export const AUDIT_MAX_PAGE_SIZE = 200;
-
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 function toInt(value: unknown, fallback: number): number {
   const n = Number.parseInt(String(value ?? ''), 10);
@@ -52,12 +52,14 @@ export function buildAuditWhere(tenantId: string, input: AuditQueryInput): Recor
   const userId = String(input.userId ?? '').trim();
   if (userId) where.userId = userId;
 
+  // 날짜는 **한국 날짜**로 자른다(T-129). UTC 하루로 자르면 한국 시간 0~9시 기록이 전날로 잡혀, 오늘을 고르면
+  // 오늘 0~9시 기록이 빠지고 다음 날 0~9시 기록이 들어온다. 없는 날짜(2026-02-31)는 거르지 않는다.
   const createdAt: Record<string, Date> = {};
-  const from = String(input.from ?? '').trim();
-  const to = String(input.to ?? '').trim();
-  if (DATE_ONLY.test(from)) createdAt.gte = new Date(`${from}T00:00:00.000Z`);
-  // 끝날을 포함해야 한다. `lte: to` 로 두면 그날 00:00 이후 기록이 전부 빠진다.
-  if (DATE_ONLY.test(to)) createdAt.lte = new Date(`${to}T23:59:59.999Z`);
+  const from = kstDayStart(String(input.from ?? '').trim());
+  const to = kstDayStart(String(input.to ?? '').trim());
+  if (from) createdAt.gte = from;
+  // 끝날을 포함해야 한다 — 다음 날(한국) 0시 "미만"
+  if (to) createdAt.lt = new Date(to.getTime() + 24 * 60 * 60 * 1000);
   if (Object.keys(createdAt).length) where.createdAt = createdAt;
 
   return where;
