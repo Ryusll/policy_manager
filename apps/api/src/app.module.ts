@@ -30,6 +30,7 @@ import { AmendmentsModule } from './amendments/amendments.module';
 import { PlatformBrandingModule } from './platform-branding/platform-branding.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
+import { AskModule } from './ask/ask.module';
 
 @Module({
   controllers: [HealthController],
@@ -61,6 +62,7 @@ import { FavoritesModule } from './favorites/favorites.module';
     PlatformBrandingModule,
     NotificationsModule,
     FavoritesModule,
+    AskModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

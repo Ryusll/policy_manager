@@ -36,6 +36,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | plan | enum PlanTier | starter/pro/enterprise, 기본 starter |
 | planExpiresAt | datetime? | |
 | billingStatus | enum BillingStatus | active/trial/past_due/canceled |
+| aiQaEnabled | bool, 기본 true | 규정 질문(AI) 사용 여부(T-130). 회사 관리자가 끈다 — 질문할 때 관련 조문이 외부 AI 로 간다 |
 | createdAt/updatedAt | datetime | |
 
 ### User (`users`)
@@ -163,6 +164,9 @@ tenantId FK, userId FK, kind(기본 "policy_revision", 법령 개정 후보 알�
 
 ### AuditLog (`audit_logs`)
 tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json).
+
+### AiQaLog (`ai_qa_logs`) — T-130 규정 질문 기록
+tenantId FK(cascade), userId FK?(SetNull), question(text), answerable(근거가 남아 답을 내보냈는가), answer(json? — 화면에 낸 답 블록, 답하지 않았으면 null), citedArticleIds(text[] — 근거로 보여 준 조문 행), contextRowCount(AI 에 본문을 준 행 수), aiCalled(AI 를 불렀는가 — 월 한도는 이것만 센다), model?, inputTokens·outputTokens·cacheReadTokens(사용량·비용 집계). 인덱스: `[tenantId, createdAt]`. 마이그레이션 `20261009230000_ai_qa`.
 
 ### PolicyImportLog (`policy_import_logs`)
 tenantId FK, userId FK?, policyId FK?, sourceName, parseProfile, chapterCount, articleCount, cleanupOptions(json), status, message. 인덱스: `[tenantId, createdAt]`.

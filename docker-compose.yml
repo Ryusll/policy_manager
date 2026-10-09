@@ -75,8 +75,13 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
       MINIO_BUCKET: policy-files
       # 법제처 국가법령정보 공동활용 OPEN API 인증값. 비우면 연동만 꺼진다(다른 기능 영향 없음).
-      # 인증값과 함께 이 서버의 공인 IP도 open.law.go.kr에 등록돼 있어야 한다.
+      # 법제처가 서버 IP·도메인을 이유로 거절하면 법제처에 등록된 서버 IP·도메인을 확인한다.
       LAW_GO_KR_OC: ${LAW_GO_KR_OC:-}
+      # T-130 규정 질문(AI). 키가 없으면 그 기능만 "설정 안 됨"으로 꺼진다. 질문할 때 관련 조문이 Anthropic 으로 간다.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_QA_MODEL: ${AI_QA_MODEL:-}
+      AI_QA_MONTHLY_LIMIT: ${AI_QA_MONTHLY_LIMIT:-}
+      AI_QA_PROVIDER: ${AI_QA_PROVIDER:-}
     depends_on:
       postgres:
         condition: service_healthy

@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
 import { policiesApi } from '../api/policies';
-import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText, Scale, FileDiff } from 'lucide-react';
+import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText, Scale, FileDiff, MessageCircleQuestion } from 'lucide-react';
 import UserMenu from './UserMenu';
 import { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
@@ -23,6 +23,7 @@ const navDefs = [
   { path: '/laws', labelKey: 'layout.nav.laws', icon: Scale, id: 'nav-laws' },
   { path: '/amendments', labelKey: 'layout.nav.amendments', icon: FileDiff, id: 'nav-amendments' },
   { path: '/search', labelKey: 'layout.nav.search', icon: Search, id: 'nav-search' },
+  { path: '/ask', labelKey: 'layout.nav.ask', icon: MessageCircleQuestion, id: 'nav-ask' },
   { path: '/variables', labelKey: 'layout.nav.variables', icon: Variable, id: 'nav-variables' },
   { path: '/settings', labelKey: 'layout.nav.settings', icon: Settings, id: 'nav-settings' },
   { path: '/integrations', labelKey: 'layout.nav.integrations', icon: PlugZap, id: 'nav-integrations' },
@@ -139,6 +140,7 @@ export default function Layout() {
     () => ({
       policies: t('layout.nav.policies'),
       search: t('layout.nav.search'),
+      ask: t('layout.nav.ask'),
       variables: t('layout.nav.variables'),
       settings: t('layout.nav.settings'),
       integrations: t('layout.nav.integrations'),

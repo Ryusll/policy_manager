@@ -10,6 +10,7 @@ import PolicyImportPage from './pages/PolicyImportPage';
 import PolicyDetailPage from './pages/PolicyDetailPage';
 import ReparseReviewPage from './pages/ReparseReviewPage';
 import SearchPage from './pages/SearchPage';
+import AskPage from './pages/AskPage';
 import VariablesPage from './pages/VariablesPage';
 import SettingsPage from './pages/SettingsPage';
 import AboutPage from './pages/AboutPage';
@@ -72,6 +73,7 @@ export default function App() {
           <Route path="policies/:id" element={<PolicyDetailPage />} />
           <Route path="policies/:id/reparse/:reviewId" element={<ReparseReviewPage />} />
           <Route path="search" element={<SearchPage />} />
+          <Route path="ask" element={<AskPage />} />
           <Route path="variables" element={<VariablesPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="integrations" element={<IntegrationsPage />} />

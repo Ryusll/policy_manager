@@ -139,6 +139,13 @@
 | GET | (root) | JWT | 통합검색. Query: `q`(필수), `page`(기본 1), `limit`(기본 20) |
 | GET | related-preview | JWT | 판·법·규 연관 미리보기. Query: `type`(precedent\|law\|rule, 필수), `q`(필수), `limit`(기본 5), `sort`(relevance\|latest), `scope`(title\|fulltext) |
 
+## ask (`/api/ask`) — 규정 근거 AI 질의응답 (T-130, D-09) — 화면: `/ask`
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | status | JWT(전 역할) | `{configured, provider(anthropic\|mock\|null), enabled, used, limit}` — 서버에 AI 키가 있는지, 회사가 켜 두었는지, 이번 달(한국 시간) AI 를 부른 질문 수와 한도. 키는 내보내지 않는다 |
+| POST | (root) | JWT(전 역할) | 규정에 대해 묻기. Body `question`(2~500자). **근거는 지금 시행 중인 본문뿐**(시점 조회 규칙과 같다 — 초안·미래 시행·폐지 조문은 후보가 아니다). ① 조 목차(규정명·조 제목)에서 AI 가 관련 조를 고르고 질문 낱말이 든 조를 더해 최대 12개 조 ② 그 본문만 참조 번호를 붙여 주고 답을 받는다 ③ 준 번호 밖의 근거는 버리고, 남는 근거가 없으면 답하지 않는다. 응답 `{answerable, reason?(no_regulations\|no_candidates\|no_basis\|refused), blocks[](paragraph·list·table), citations[](ref, articleId, policyId, policyTitle, label, joTitle, number, branchNumber, clauseNumber, itemNumber, content=DB 의 시행 중 본문), consulted[](살펴본 조), usage{used, limit}}`. 꺼져 있으면 403 `AI_QA_DISABLED`, 월 한도를 넘으면 429 `AI_QA_MONTHLY_LIMIT`, 서버 미설정 503, AI 호출 실패 502/503. 질문마다 `ai_qa_logs` 에 남는다 |
+| PATCH | settings | admin | 회사의 규정 질문 켜기/끄기. Body `enabled`(bool). 바뀌면 감사 `ai_qa.settings_change`(details `{enabled}`) |
+
 ## templates (`/api/templates`)
 
 > 컨트롤러 전체에 `@MinPlan('pro')`가 적용되어 **Starter 플랜은 모든 템플릿 엔드포인트가 차단**된다(403).
@@ -427,6 +434,10 @@
 **PolicyRevisionNotifyDto**(policies.update에서 사용) — `enabled?`(bool), `userIds?`(문자열 배열, 유니크), `groupIds?`(문자열 배열, 유니크)
 **CreateNotificationGroupDto** — `name`(≤80, 예 "정보보안팀"), `userIds?`(문자열 배열)
 **UpdateNotificationGroupDto** — `name?`(≤80), `userIds?`
+
+## ask
+**AskDto**(T-130) — `question`(앞뒤 공백 제거 후 2~500자)
+**AskSettingsDto**(T-130) — `enabled`(bool)
 
 ## regulation-parse
 **UpdateRegulationParseTreeDto** — `roots`(배열)

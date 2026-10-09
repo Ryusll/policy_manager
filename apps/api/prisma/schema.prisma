@@ -68,6 +68,8 @@ model Tenant {
   plan          PlanTier      @default(starter)
   planExpiresAt DateTime?     @map("plan_expires_at")
   billingStatus BillingStatus @default(active) @map("billing_status")
+  /// T-130 규정 근거 AI 질의응답 — 회사 관리자가 끌 수 있다(질문할 때 관련 조문이 외부 AI 로 간다)
+  aiQaEnabled   Boolean       @default(true) @map("ai_qa_enabled")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
@@ -93,6 +95,7 @@ model Tenant {
   variableValues          VariableValue[]
   variableBindings        VariableBinding[]
   reparseReviews          ReparseReview[]
+  aiQaLogs                AiQaLog[]
 
   @@map("tenants")
 }
@@ -123,6 +126,7 @@ model User {
   notificationGroupMembers NotificationGroupMember[]
   userNotifications        UserNotification[]
   favorites                Favorite[]
+  aiQaLogs                 AiQaLog[]
 
   @@unique([tenantId, email])
   @@unique([oauthProvider, oauthSub])
@@ -1221,4 +1225,33 @@ model ReparseReviewItem {
   @@unique([reviewId, seq])
   @@index([articleId])
   @@map("reparse_review_items")
+}
+
+/// T-130 규정 근거 AI 질의응답 기록 — 무엇을 묻고 AI 가 무엇을 근거로 답했는지, 월 한도·비용 집계용
+model AiQaLog {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  userId           String?  @map("user_id")
+  question         String   @db.Text
+  /// 근거가 남아 답을 내보냈는가
+  answerable       Boolean
+  /// 화면에 낸 답 블록(문단·목록·표). 답하지 않았으면 null
+  answer           Json?
+  /// 근거로 보여 준 조문 행
+  citedArticleIds  String[] @map("cited_article_ids")
+  /// AI 에 본문을 준 조문 행 수
+  contextRowCount  Int      @default(0) @map("context_row_count")
+  /// AI 를 불렀는가 — 월 한도는 이것만 센다(근거 후보가 하나도 없으면 부르지 않는다)
+  aiCalled         Boolean  @map("ai_called")
+  model            String?
+  inputTokens      Int      @default(0) @map("input_tokens")
+  outputTokens     Int      @default(0) @map("output_tokens")
+  cacheReadTokens  Int      @default(0) @map("cache_read_tokens")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@map("ai_qa_logs")
 }
