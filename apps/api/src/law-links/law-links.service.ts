@@ -33,7 +33,7 @@ export class LawLinksService {
     // LawArticle 은 테넌트 공용이라 존재만 확인한다. 소속 확인은 필요 없다.
     const row = await this.prisma.lawArticle.findUnique({
       where: { id: lawArticleId },
-      select: { id: true, lawId: true },
+      select: { id: true, lawId: true, deletedAt: true },
     });
     if (!row) throw new NotFoundException('법령조항을 찾을 수 없습니다.');
     return row;
@@ -72,7 +72,11 @@ export class LawLinksService {
   /** 수동 생성 — 사람이 직접 만든 연결이므로 바로 확정 상태로 저장한다 */
   async create(tenantId: string, userId: string, dto: CreateLawLinkDto) {
     await this.requireOwnedArticle(tenantId, dto.articleId);
-    await this.requireLawArticle(dto.lawArticleId);
+    const lawArticle = await this.requireLawArticle(dto.lawArticleId);
+    // 법령에서 사라진 조항(T-124)은 걸어 둔 연결만 남겨 둔다 — 새로 걸 대상은 아니다
+    if (lawArticle.deletedAt) {
+      throw new ConflictException('법령에서 삭제된 조항에는 새로 연결할 수 없습니다.');
+    }
 
     const dup = await this.prisma.lawLink.findUnique({
       where: {
@@ -172,9 +176,10 @@ export class LawLinksService {
       for (const law of laws) {
         const lawArticle = await this.prisma.lawArticle.findUnique({
           where: { lawId_nodeKey: { lawId: law.id, nodeKey } },
-          select: { id: true },
+          select: { id: true, deletedAt: true },
         });
-        if (!lawArticle || alreadyLinked.has(lawArticle.id)) continue;
+        // 법령에서 사라진 조항(T-124)은 추천하지 않는다
+        if (!lawArticle || lawArticle.deletedAt || alreadyLinked.has(lawArticle.id)) continue;
 
         const link = await this.prisma.lawLink.create({
           data: {

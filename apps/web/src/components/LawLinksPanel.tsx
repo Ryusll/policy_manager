@@ -118,6 +118,14 @@ export function LawLinksPanel({ articleId, canEdit }: { articleId: string; canEd
                     {link.lawArticle?.law.lawName} {link.lawArticle?.label}
                   </span>
                   <ConfirmBadge state={link.confirmState} />
+                  {link.lawArticle?.deletedAt && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded border font-medium shrink-0 bg-gray-100 text-gray-600 border-gray-300"
+                      title="법령 개정으로 이 조항이 법령에서 사라졌습니다. 연결은 남겨 두었으니 사내 조문을 정리할지 확인하세요."
+                    >
+                      법령에서 삭제됨
+                    </span>
+                  )}
                   <span className="text-[10px] text-gray-500">{RELATION_TYPE_LABEL[link.relationType]}</span>
                 </div>
                 {link.evidenceText && (

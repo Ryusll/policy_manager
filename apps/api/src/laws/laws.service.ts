@@ -188,9 +188,10 @@ export class LawsService {
   ): Promise<number> {
     const { rows, lawEffectiveDate } = version;
 
-    // T-103: 변경 감지의 "이전" 스냅샷 — 아래 upsert 루프가 값을 갈아끼우기 전에 찍는다
+    // T-103: 변경 감지의 "이전" 스냅샷 — 아래 upsert 루프가 값을 갈아끼우기 전에 찍는다.
+    // 이미 사라진 조항(T-124)은 빼야 동기화마다 "삭제됨" 이벤트가 되풀이되지 않는다
     const existingBefore = await tx.lawArticle.findMany({
-      where: { lawId },
+      where: { lawId, deletedAt: null },
       select: { id: true, nodeKey: true, content: true, versionKey: true },
     });
     const existingArticles: ExistingLawArticleSnapshot[] = existingBefore.map((a) => ({
@@ -216,6 +217,8 @@ export class LawsService {
           // 법령 시행일을 그대로 쓴다 — T-103 에서 조문별 값이 들어오면 거기서 갈린다.
           effectiveDate: lawEffectiveDate,
           sortOrder: row.sortOrder,
+          // 사라졌던 조항이 다시 나타나면 되살린다(같은 행이라 걸어 둔 연결이 그대로 이어진다)
+          deletedAt: null,
         },
         create: {
           lawId,
@@ -257,13 +260,13 @@ export class LawsService {
       });
     }
 
-    // 새 응답에 없는 nodeKey — 조문이 실제로 삭제된 개정. LawLink 가 있었다면 함께
-    // 지워진다(FK onDelete: Cascade) — T-101 은 이 경우를 "연결 끊김"으로 감지하지
-    // 않는다. 재등록 자체가 드물고, 흔한 경로(내용만 바뀐 재등록)는 위 upsert 로 유지된다.
-    // 위에서 만든 deleted LawChangeEvent 의 lawArticleId 는 여기서 SetNull 로 끊긴다 —
-    // 본문은 이미 이벤트에 스냅샷으로 있으므로 잃는 정보가 없다.
-    await tx.lawArticle.deleteMany({
-      where: { lawId, nodeKey: { notIn: rows.map((r) => r.nodeKey) } },
+    // 새 응답에 없는 nodeKey — 조문이 실제로 삭제된 개정(전부개정 같은 구조 변경).
+    // **지우지 않고 "삭제됨"으로 표시한다(T-124).** 지우면 회사들이 걸어 둔 LawLink 가 cascade 로
+    // 함께 지워져, 위에서 만든 "삭제됨" 이벤트의 영향(T-105)·개정 후보(T-106)에서 그 조항에 걸려 있던
+    // 사내 조문을 찾을 수 없었다. 표시만 하면 이벤트의 lawArticleId 와 연결이 그대로 이어진다.
+    await tx.lawArticle.updateMany({
+      where: { lawId, deletedAt: null, nodeKey: { notIn: rows.map((r) => r.nodeKey) } },
+      data: { deletedAt: new Date() },
     });
 
     return changes.length;
@@ -275,7 +278,8 @@ export class LawsService {
       orderBy: [{ lawName: 'asc' }],
       include: {
         source: { select: { code: true, name: true } },
-        _count: { select: { articles: true } },
+        // 법령에서 사라진 조항(T-124)은 세지 않는다
+        _count: { select: { articles: { where: { deletedAt: null } } } },
       },
     });
     return laws.map(({ _count, ...law }) => ({ ...law, articleCount: _count.articles }));
@@ -284,18 +288,21 @@ export class LawsService {
   async findOne(id: string) {
     const law = await this.prisma.law.findUnique({
       where: { id },
-      include: { source: { select: { code: true, name: true } }, _count: { select: { articles: true } } },
+      include: {
+        source: { select: { code: true, name: true } },
+        _count: { select: { articles: { where: { deletedAt: null } } } },
+      },
     });
     if (!law) throw new NotFoundException('법령을 찾을 수 없습니다.');
     const { _count, ...rest } = law;
     return { ...rest, articleCount: _count.articles };
   }
 
-  /** 법령조항 목록 (원문 순서) */
+  /** 법령조항 목록 (원문 순서). 법령에서 사라진 조항(T-124)은 빠진다 — 걸어 둔 연결은 연결 쪽에서 보인다 */
   async articles(id: string) {
     await this.findOne(id);
     return this.prisma.lawArticle.findMany({
-      where: { lawId: id },
+      where: { lawId: id, deletedAt: null },
       orderBy: { sortOrder: 'asc' },
     });
   }

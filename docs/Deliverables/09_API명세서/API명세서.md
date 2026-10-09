@@ -277,7 +277,7 @@
 | GET | (root) | 로그인 | 등록된 법령 목록. `lastCheckedAt`·`lastCheckError`·`articleCount` 포함 — **언제 확인한 것인지, 확인에 실패했는지 화면에서 보여야 한다**(`lastCheckError` 가 있으면 "개정 없음"이 아니라 "확인 못 함") |
 | POST | (root) | admin·editor | 법제처 MST로 법령 등록(추적 시작). 조·항·호를 `LawArticle` 로 저장. **200** |
 | GET | :id | 로그인 | 법령 1건 |
-| GET | :id/articles | 로그인 | 법령조항 목록 (원문 순서) |
+| GET | :id/articles | 로그인 | 법령조항 목록 (원문 순서). 법령에서 사라진 조항(`deletedAt`, T-124)은 빠진다 — 목록·`articleCount` 모두 |
 | DELETE | :id | admin·editor | 추적 해제 |
 
 `POST /api/laws` 본문: `{ "mst": "283457", "sourceCode": "law.go.kr" }` (`sourceCode` 생략 가능).
@@ -304,10 +304,10 @@
 ### law-links (`/api/law-links`) — 법령 관계 정보, ⚠️ **테넌트별** ✅ 구현됨 (T-101)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | `?articleId=` | admin·editor | 이 **사내 조문**에 걸린 법령조항 |
+| GET | `?articleId=` | admin·editor | 이 **사내 조문**에 걸린 법령조항. 법령에서 사라진 조항에 걸린 연결도 남아 있고 `lawArticle.deletedAt` 으로 알 수 있다(T-124) |
 | GET | `?lawArticleId=` | admin·editor | 이 **법령조항**에 걸린 *우리 회사* 조문. ⚠️ `LawArticle` 에 `tenantId` 가 없으므로 **여기서 경계를 건다** |
-| POST | (root) | admin·editor | 연결 생성(수동). 관계 유형·적용 범위·근거 문구 |
-| POST | suggest | admin·editor | 본문 인용 패턴으로 자동 추천 → `confirmState=suggested` 로 생성 |
+| POST | (root) | admin·editor | 연결 생성(수동). 관계 유형·적용 범위·근거 문구. 법령에서 사라진 조항이면 409(T-124) |
+| POST | suggest | admin·editor | 본문 인용 패턴으로 자동 추천 → `confirmState=suggested` 로 생성. 법령에서 사라진 조항은 추천하지 않는다(T-124) |
 | PATCH | :id | admin·editor | 확정/반려/관계 유형 수정 |
 | DELETE | :id | admin·editor | |
 

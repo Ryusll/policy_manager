@@ -29,7 +29,14 @@ export type LawLink = {
   createdAt: string;
   updatedAt: string;
   /** byArticle 조회에만 실린다 */
-  lawArticle?: { id: string; label: string; title: string | null; law: { id: string; lawName: string } };
+  lawArticle?: {
+    id: string;
+    label: string;
+    title: string | null;
+    /** 법령에서 사라진 조항(T-124) — 걸어 둔 연결은 남는다 */
+    deletedAt?: string | null;
+    law: { id: string; lawName: string };
+  };
   /** byLawArticle 조회에만 실린다 */
   article?: { id: string; title: string; number: number; clauseNumber: number | null; itemNumber: number | null };
 };

@@ -268,8 +268,13 @@ id, code(unique, 예 `law.go.kr`), name, baseUrl, isActive.
 
 #### LawArticle (`law_articles`) — 법령조항, 테넌트 공용 ✅ 구현됨
 lawId FK, **nodeKey**, articleNo(조), clauseNo(항, null 허용), itemNo(호, null 허용),
-label(사람이 읽는 표기), title?, content(text), versionKey, effectiveDate?, sortOrder.
+label(사람이 읽는 표기), title?, content(text), versionKey, effectiveDate?, sortOrder,
+deletedAt?(법령에서 사라진 시각 — T-124, 마이그레이션 `20261010030000_law_article_deleted_at`).
 `@@unique([lawId, nodeKey])`, 인덱스 `[lawId, sortOrder]`.
+
+**사라진 조항은 지우지 않는다(T-124).** 동기화에서 응답에 없는 조항은 `deletedAt` 만 채운다 — 지우면 회사들이 걸어 둔
+`LawLink` 가 cascade 로 함께 지워져 그 "삭제됨" 이벤트의 영향 분석·개정 후보에서 사내 조문을 찾을 수 없었다.
+조항 목록·건수·새 연결·자동 추천에서는 빠지고, 같은 nodeKey 가 다시 나타나면 `null` 로 되살린다(같은 행이라 연결이 이어진다).
 
 **청구항의 "법령조항 식별자"가 이 레코드의 `id`** 다.
 
