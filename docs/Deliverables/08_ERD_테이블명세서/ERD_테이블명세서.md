@@ -10,7 +10,7 @@
 ```
 Tenant 1───N User
 Tenant 1───N Policy 1───N Chapter 1───N Section(선택) ┐
-                          └────────────────────────── ├─N Article 1───N ArticleVersion 1───N VariableUsage N───1 Variable
+                          └────────────────────────── ├─N Article 1───N ArticleVersion 1───N VariableBinding N───1 Variable 1───N VariableValue
                                 (Article.sectionId 는 nullable)
                                           Article 1───N ArticleComment N───1 User
                         Policy 1───N PolicyAppendix
@@ -147,9 +147,12 @@ policyId FK, kind(enum PolicyAppendixKind: supplementary/annex/form), title, bod
 ### PolicyTemplate (`policy_templates`)
 tenantId FK, name, description, isDefault, isActive, layoutJson(json), cssText. `@@unique([tenantId, name])`, 인덱스 `[tenantId, isDefault]`.
 
-### Variable / VariableUsage (`variables` / `variable_usages`)
-Variable: tenantId FK, key, label, defaultValue, description — `@@unique([tenantId, key])`.
-VariableUsage: versionId FK → ArticleVersion, variableId FK → Variable — `@@unique([versionId, variableId])`.
+### Variable / VariableValue / VariableBinding (`variables` / `variable_values` / `variable_bindings`) — T-109
+Variable: tenantId FK, key, label, description — `@@unique([tenantId, key])`. 값은 `VariableValue` 에 기간과 함께 여럿(옛 `defaultValue` 는 기간 미확정 값으로 옮기고 지웠다).
+
+VariableValue: tenantId FK(필수 — 범위는 그 회사), variableId FK(cascade), value, **validFrom**(date?, 포함, null = 처음부터), **validTo**(date?, 미포함, null = 끝 없음), **periodConfirmed**(옛 기본값을 옮긴 값은 false — 기간을 정하기 전에는 고르지 않는다), note, createdBy. 인덱스 `[variableId, validFrom]`. 같은 변수에서 기간이 겹쳐도 저장은 받는다(DB 로 막을 수 없다) — 화면이 "검토 필요"로 보이고, 그 날짜에 맞는 값이 **정확히 하나**일 때만 쓴다(나중에 시작한 값이 이기지 않는다).
+
+VariableBinding(옛 `VariableUsage` 대체): tenantId, variableId(cascade), articleId(cascade), **versionId**(기준 조문 버전, cascade), **start·end**(그 버전 본문의 UTF-16 구간 [start, end)), **text**(당시 문구 — 옛 표식이면 `{{KEY}}`), contextBefore·contextAfter(앞뒤 20자), **occurrence**(같은 문구 중 몇 번째), **origin**(manual 화면에서 골라 이음 / marker 검토 요청 때 표식을 값으로 / legacy 옛 사용 기록 / inherited 발행 때 앞 버전에서 옮김), **state**(active / needs_review 다시 이어야 함 / released 풀었음 — 이력으로 남김), reviewReason(span_changed·legacy_unmatched·position_unverified), **valueId**(그 구간에 든 값 — 직전 적용값, SetNull), **parentId**(앞 버전의 연결 — 계보, SetNull). 인덱스 `[versionId, state]`·`[variableId, state]`·`[articleId]`. 새 버전을 발행하면 옛 행은 그대로 두고 위치를 옮긴 새 행을 새 버전에 만든다.
 
 ### NotificationGroup / NotificationGroupMember (`notification_groups` / `notification_group_members`)
 NotificationGroup: tenantId FK, name — `@@unique([tenantId, name])`.
@@ -203,7 +206,7 @@ tenantId FK, billingCustomerId FK?, subscriptionId FK?, provider, providerPaymen
 | `AmendmentCandidate` · `LawChangeEvent.amendmentsProcessedAt` · `UserNotification.link` | ✅ **스키마에 있다** (T-106, 마이그레이션 `20261008120000_amendment_candidates`) |
 | `AmendmentRevision` · `AmendmentStateChange` · `AmendmentCandidate.revision`·`lockVersion` | ✅ **스키마에 있다** (T-107, 마이그레이션 `20261008180000_amendment_review`) |
 | `ArticleVersion.publishedAt`·`changeEventId`·`sourceCandidateId` · `AmendmentCandidate.baseFingerprint` | ✅ **스키마에 있다** (T-108, 마이그레이션 `20261009090000_amendment_approval`) |
-| `VariableValue` / `VariableUsage` 확장 | 설계만 (T-109) |
+| `VariableValue` · `VariableBinding`(옛 `VariableUsage` 대체) | ✅ **스키마에 있다** (T-109 ①, 마이그레이션 `20261009150000_variable_values_bindings`) — 후보 생성 때 값 반영은 2단계 |
 
 ### 3.1 관계 개요
 
@@ -217,8 +220,8 @@ LawChangeEvent 1───N AmendmentCandidate N───1 Article
                                         └──1 ArticleVersion (baseVersionId = 제1 조문)
                                         ▲ tenantId 필수
 
-Variable 1───N VariableValue      (값별 유효기간·테넌트 범위)
-Variable 1───N VariableUsage      (사용 위치 필드 추가)
+Variable 1───N VariableValue      (값별 유효기간, 범위 = 그 회사)
+Variable 1───N VariableBinding N───1 ArticleVersion   (본문 구간 연결, 발행 때 새 버전으로 옮김 — parentId 계보)
 ```
 
 ### 3.2 테넌트 경계 — **이 설계에서 가장 틀리기 쉬운 곳**
@@ -367,13 +370,10 @@ tenantId FK(cascade), candidateId FK → AmendmentCandidate(cascade), revision(i
 
 **발행 버전은 승인 전까지 건드리지 않는다.** 후보를 별도 테이블에 두는 것만으로 청구항 5의 *"승인 정보를 수신하기 전까지 발행 버전의 본문을 유지"* 가 충족된다.
 
-#### VariableValue (`variable_values`) — 변수 값 (신규)
-variableId FK → Variable, tenantId?(null = 전역 기본값), value, validFrom(date), validTo(date?, null = 무기한).
-인덱스 `[variableId, tenantId, validFrom]`.
-
-> 기간이 겹치는 행을 DB 제약으로 막을 수 없다(Postgres `EXCLUDE` 는 Prisma 가 표현하지 못한다).
-> **서비스 계층에서 겹침을 검사**하고, 조회는 `validFrom` 내림차순 첫 행을 쓴다.
-> 겹침을 조용히 허용하면 어느 값이 적용됐는지 알 수 없게 되고, 그건 개정 초안의 신뢰를 통째로 무너뜨린다.
+#### VariableValue (`variable_values`) — 변수 값 (T-109 ①, 위 2절)
+설계 때의 `tenantId?`(null = 전역 기본값)는 쓰지 않았다 — 변수가 이미 회사 소유라 값의 범위도 그 회사다(전역·회사 안 조직 범위는 미룸).
+기간 겹침은 DB 로 막을 수 없어 **저장은 받되 "검토 필요"로 보이고, 그 날짜에 맞는 값이 정확히 하나일 때만 쓴다** — 설계 때의 "나중에
+시작한 값이 이긴다"는 버렸다(어느 값이 들어갔는지 조용히 정하면 개정 초안을 믿을 수 없다). 사용자 지시로 코덱스 자문(T-109 결정 4).
 
 ### 3.4 기존 테이블 변경
 
@@ -383,7 +383,7 @@ variableId FK → Variable, tenantId?(null = 전역 기본값), value, validFrom
 | `ArticleVersion` | `publishedAt DateTime?` | 청구항 7 — **발행일**. 현재는 `approvedAt`(승인 시각)·`effectiveDate`(시행일) 둘뿐 |
 | `ArticleVersion` | `changeEventId String?` | 청구항 7 — 후속 버전을 변경 이벤트와 연결 |
 | `ArticleVersion` | `sourceCandidateId String?` | 청구항 6 — 이 버전이 어느 후보에서 왔는지 (감사 추적) |
-| `VariableUsage` | `occurrenceIndex Int`, `startOffset Int`, `endOffset Int`, `rawToken String` | 청구항 5 — **본문 내 사용 위치**. 현재는 `(versionId, variableId)` 뿐이라 "이 버전이 이 변수를 쓴다"는 사실만 안다. `@@unique` 가 `[versionId, variableId, occurrenceIndex]` 로 바뀐다 |
+| `VariableUsage` → `VariableBinding` | (T-109 ① 에서 새 표로 바꿈 — 위 2절) | 청구항 5 — **본문 내 사용 위치**. 예전 `VariableUsage` 는 `(versionId, variableId)` 뿐이라 "이 버전이 이 변수를 쓴다"는 사실만 알았다 — 한 버전에 여러 자리를 두려고 구간을 가진 행으로 바꿨다 |
 
 **날짜 3종 정리** (청구항 7):
 

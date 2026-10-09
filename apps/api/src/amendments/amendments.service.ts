@@ -6,6 +6,7 @@ import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-o
 import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notify.types';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { impactReferenceDate } from '../law-changes/law-impact';
+import { VariablesService } from '../variables/variables.service';
 import { labelFromNodeKey } from '../laws/law-rows';
 import {
   LawChangesService,
@@ -144,6 +145,7 @@ export class AmendmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly lawChanges: LawChangesService,
+    private readonly variables: VariablesService,
   ) {}
 
   async generateForEvent(
@@ -719,6 +721,8 @@ export class AmendmentsService {
         data: { reviewState: 'approved', lockVersion: { increment: 1 } },
       });
       if (updated.count !== 1) throw new ConflictException(LOCK_MESSAGE);
+      // 변수 표식이 남은 본문은 발행하지 않는다(T-109) — 옛 본문에 표식이 남아 있던 조문
+      await this.variables.assertNoMarkers(tx, tenantId, [{ label: '후보 본문', content: rev.content }]);
 
       const now = new Date();
       await tx.articleVersion.updateMany({
@@ -742,6 +746,14 @@ export class AmendmentsService {
         },
         select: { id: true, versionNum: true },
       });
+      // 기준 본문의 변수 연결을 새 버전으로 옮긴다(T-109) — 후보가 바꾼 구간에 걸린 연결은 "다시 이어야 함"
+      await this.variables.inheritBindings(
+        tx,
+        tenantId,
+        { id: cand.baseVersionId, content: cand.baseVersion.content },
+        { id: version.id, articleId: cand.articleId, content: rev.content },
+        userId,
+      );
       const decision = await tx.amendmentStateChange.create({
         data: {
           tenantId,

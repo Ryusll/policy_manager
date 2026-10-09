@@ -90,6 +90,8 @@ model Tenant {
   amendmentCandidates     AmendmentCandidate[]
   amendmentRevisions      AmendmentRevision[]
   amendmentStateChanges   AmendmentStateChange[]
+  variableValues          VariableValue[]
+  variableBindings        VariableBinding[]
 
   @@map("tenants")
 }
@@ -337,6 +339,7 @@ model Article {
   lawLinks  LawLink[]
 
   amendmentCandidates AmendmentCandidate[]
+  variableBindings    VariableBinding[]
 
   @@map("articles")
 }
@@ -387,8 +390,9 @@ model ArticleVersion {
   /// 새 버전에 밀려 내려간(대체) 버전은 비어 있다 — 상태(archived)만으로는 둘을 가를 수 없다
   repealedOn    DateTime?     @map("repealed_on") @db.Date
 
-  article        Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  variableUsages VariableUsage[]
+  article          Article           @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  /// 이 버전 본문의 변수 연결(T-109) — 위치는 이 버전 기준
+  variableBindings VariableBinding[]
   /// 이 버전을 제1 조문(기준 발행본)으로 삼은 개정 후보(T-106)
   amendmentBases AmendmentCandidate[] @relation("AmendmentBase")
   changeEvent     LawChangeEvent?     @relation(fields: [changeEventId], references: [id], onDelete: SetNull)
@@ -434,33 +438,110 @@ enum PolicyRevisionKind {
   repeal
 }
 
+/// 변수 마스터 — 여러 조문에 함께 쓰는 가변 항목(담당 부서·직위·기준값 등) (특허 청구항 5·9, 도 9 910).
+/// 값은 `VariableValue` 에 유효기간과 함께 여럿 둔다(T-109). 회사(테넌트) 소유라 값의 범위도 그 회사다.
 model Variable {
-  id           String   @id @default(uuid())
-  tenantId     String   @map("tenant_id")
-  key          String
-  label        String
-  defaultValue String?  @map("default_value")
-  description  String?
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  key         String
+  label       String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  usages VariableUsage[]
+  tenant   Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  values   VariableValue[]
+  bindings VariableBinding[]
 
   @@unique([tenantId, key])
   @@map("variables")
 }
 
-model VariableUsage {
-  id         String @id @default(uuid())
-  versionId  String @map("version_id")
-  variableId String @map("variable_id")
+/// 변수 값 — 유효기간 [시작, 종료)(T-109, 도 9). 종료일이 다음 값의 시작일과 같으면 그날은 다음 값이다.
+/// 같은 변수에서 기간이 겹쳐도 저장은 받되 "검토 필요"로 보이고, 그 날짜에 맞는 값이 **정확히 하나**일 때만 고른다.
+model VariableValue {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  variableId      String    @map("variable_id")
+  value           String
+  /// 유효기간 시작(포함). null = 처음부터
+  validFrom       DateTime? @map("valid_from") @db.Date
+  /// 유효기간 종료(미포함). null = 끝 없음
+  validTo         DateTime? @map("valid_to") @db.Date
+  /// 기간을 확인했는가 — 옛 기본값(defaultValue)을 옮긴 값은 false 로 들어와, 관리자가 기간을 정하기 전에는
+  /// 고르지 않는다("처음부터"와 "모름"은 다르다)
+  periodConfirmed Boolean   @default(true) @map("period_confirmed")
+  note            String?
+  createdBy       String?   @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  version  ArticleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
-  variable Variable       @relation(fields: [variableId], references: [id], onDelete: Cascade)
+  tenant   Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variable Variable          @relation(fields: [variableId], references: [id], onDelete: Cascade)
+  bindings VariableBinding[]
 
-  @@unique([versionId, variableId])
-  @@map("variable_usages")
+  @@index([variableId, validFrom])
+  @@map("variable_values")
+}
+
+/// 변수 연결이 생긴 길 — 화면에서 문구를 골라 이음 / 검토 요청 때 표식을 값으로 바꿔 이음 / 옛 사용 기록을 옮김 /
+/// 발행 때 앞 버전에서 옮겨 옴
+enum VariableBindingOrigin {
+  manual
+  marker
+  legacy
+  inherited
+}
+
+/// active — 쓴다 / needs_review — 위치를 확정하지 못해 사람이 다시 이어야 한다 / released — 연결을 풀었다(이력으로 남김)
+enum VariableBindingState {
+  active
+  needs_review
+  released
+}
+
+/// 변수 연결(바인딩) — 조문 버전 본문의 한 구간이 어느 변수의 값인지 (T-109, 특허 도 9 920).
+/// 위치는 **그 버전 본문 기준** UTF-16 [start, end). 같은 문구가 여러 번 나와도 위치로 가른다(순번·앞뒤 문맥은 화면 표시·다시 잇기용).
+/// 새 버전이 발행되면 위치를 옮긴 새 행을 그 버전에 만들고(parentId 로 이어짐) 옛 행은 그대로 둔다.
+model VariableBinding {
+  id            String                @id @default(uuid())
+  tenantId      String                @map("tenant_id")
+  variableId    String                @map("variable_id")
+  articleId     String                @map("article_id")
+  /// 기준 조문 버전
+  versionId     String                @map("version_id")
+  start         Int
+  end           Int
+  /// 그 구간의 당시 문구 — 표식이면 "{{KEY}}"
+  text          String
+  contextBefore String                @map("context_before")
+  contextAfter  String                @map("context_after")
+  /// 같은 문구 중 몇 번째 출현인지(0부터)
+  occurrence    Int
+  origin        VariableBindingOrigin
+  state         VariableBindingState  @default(active)
+  /// needs_review 의 까닭(span_changed·legacy_unmatched·position_unverified)
+  reviewReason  String?               @map("review_reason")
+  /// 이 구간에 든 값(알 때) — 다음에 값을 반영할 때 "직전 적용값"을 확인한다
+  valueId       String?               @map("value_id")
+  /// 앞 버전의 연결(발행 때 옮겨 온 경우)
+  parentId      String?               @map("parent_id")
+  createdBy     String?               @map("created_by")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  tenant   Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variable Variable          @relation(fields: [variableId], references: [id], onDelete: Cascade)
+  article  Article           @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  version  ArticleVersion    @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  value    VariableValue?    @relation(fields: [valueId], references: [id], onDelete: SetNull)
+  parent   VariableBinding?  @relation("BindingLineage", fields: [parentId], references: [id], onDelete: SetNull)
+  children VariableBinding[] @relation("BindingLineage")
+
+  @@index([versionId, state])
+  @@index([variableId, state])
+  @@index([articleId])
+  @@map("variable_bindings")
 }
 
 /// 알림 수신 팀(예: 정보보안팀) — 테넌트별, 구성원은 User와 N:M

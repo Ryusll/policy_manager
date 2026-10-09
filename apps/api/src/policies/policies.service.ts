@@ -8,7 +8,6 @@ import {
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { AuditService } from '../audit/audit.service';
-import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import { buildPolicyForest } from './policy-hierarchy';
 import {
@@ -56,7 +55,6 @@ export class PoliciesService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
-    private variablesService: VariablesService,
   ) {}
 
   /**
@@ -838,7 +836,8 @@ export class PoliciesService {
     });
 
     if (dto.content) {
-      const ver = await this.prisma.articleVersion.create({
+      // 초안이다 — 본문의 변수 표식은 검토 요청 때 값으로 바뀐다(T-109)
+      await this.prisma.articleVersion.create({
         data: {
           articleId: article.id,
           versionNum: 1,
@@ -846,7 +845,6 @@ export class PoliciesService {
           status: 'draft',
         },
       });
-      await this.variablesService.syncVariableUsagesFromContent(tenantId, ver.id, ver.content);
     }
     return article;
   }

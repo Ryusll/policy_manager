@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { LawChangesModule } from '../law-changes/law-changes.module';
+import { VariablesModule } from '../variables/variables.module';
 import { AmendmentsController } from './amendments.controller';
 import { AmendmentsService } from './amendments.service';
 
@@ -9,7 +10,7 @@ import { AmendmentsService } from './amendments.service';
  * `AmendmentsService` 를 export 하는 것은 법령 동기화(LawsModule)가 끝날 때 자동 생성을 부르기 위해서다.
  */
 @Module({
-  imports: [LawChangesModule],
+  imports: [LawChangesModule, VariablesModule],
   controllers: [AmendmentsController],
   providers: [AmendmentsService],
   exports: [AmendmentsService],

@@ -255,12 +255,100 @@ export const versionsApi = {
     client.post('/policies/' + policyId + '/fill-effective-date', data).then((r) => r.data),
 };
 
+/** 변수 값 — 유효기간 [시작, 종료), 비어 있으면 처음부터·끝 없음 (T-109) */
+export type VariableValueRow = {
+  id: string;
+  value: string;
+  validFrom: string | null;
+  validTo: string | null;
+  /** false 면 옛 기본값을 옮긴 값 — 기간을 정하기 전에는 쓰지 않는다 */
+  periodConfirmed: boolean;
+  note: string | null;
+  /** 같은 변수의 다른 값과 기간이 겹친다 */
+  overlapping: boolean;
+};
+
+export type VariablePickReason = 'none' | 'ambiguous' | 'unconfirmed';
+
+export type VariableRow = {
+  id: string;
+  key: string;
+  label: string;
+  description: string | null;
+  values: VariableValueRow[];
+  /** 오늘 쓸 값 — 없으면 currentReason */
+  current: { id: string; value: string } | null;
+  currentReason: VariablePickReason | null;
+  /** 기간 겹침·기간 미확정 값이 있다 */
+  needsReview: boolean;
+  /** 지금 시행 중인 본문의 연결 수(다시 이어야 하는 것 포함) */
+  bindingCount?: number;
+};
+
+export type VariableBindingState = 'active' | 'needs_review' | 'released';
+
+/** 변수 연결 — 조문 버전 본문의 한 구간 [start, end) (T-109) */
+export type VariableBindingRow = {
+  id: string;
+  variableId: string;
+  articleId: string;
+  versionId: string;
+  start: number;
+  end: number;
+  text: string;
+  contextBefore: string;
+  contextAfter: string;
+  occurrence: number;
+  origin: 'manual' | 'marker' | 'legacy' | 'inherited';
+  state: VariableBindingState;
+  reviewReason: string | null;
+  valueId: string | null;
+  variable?: { id: string; key: string; label: string };
+};
+
+export type VariableDetail = VariableRow & {
+  bindings: Array<
+    VariableBindingRow & {
+      versionNum: number;
+      effectiveDate: string | null;
+      policy: { id: string; code: string; title: string };
+      article: { label: string; title: string };
+    }
+  >;
+};
+
+export const VARIABLE_PICK_REASON_LABEL: Record<VariablePickReason, string> = {
+  none: '오늘 맞는 값 없음',
+  ambiguous: '기간이 겹쳐 고를 수 없음',
+  unconfirmed: '기간 미확정',
+};
+
+export const BINDING_REVIEW_REASON_LABEL: Record<string, string> = {
+  span_changed: '문구가 바뀌어 자리를 찾지 못함',
+  legacy_unmatched: '옛 사용 기록 — 본문에 표식 없음',
+  position_unverified: '옛 사용 기록 — 위치 확인 필요',
+};
+
 export const variablesApi = {
-  list: () => client.get('/variables').then((r) => r.data),
-  get: (id: string) => client.get('/variables/' + id).then((r) => r.data),
-  create: (data: any) => client.post('/variables', data).then((r) => r.data),
-  update: (id: string, data: any) => client.put('/variables/' + id, data).then((r) => r.data),
+  list: (): Promise<VariableRow[]> => client.get('/variables').then((r) => r.data),
+  get: (id: string): Promise<VariableDetail> => client.get('/variables/' + id).then((r) => r.data),
+  create: (data: { key: string; label: string; description?: string; value?: string; validFrom?: string }) =>
+    client.post('/variables', data).then((r) => r.data),
+  update: (id: string, data: { label?: string; description?: string }) => client.put('/variables/' + id, data).then((r) => r.data),
   delete: (id: string) => client.delete('/variables/' + id),
+  addValue: (id: string, data: { value: string; validFrom?: string | null; validTo?: string | null; note?: string }) =>
+    client.post(`/variables/${id}/values`, data).then((r) => r.data),
+  updateValue: (
+    id: string,
+    valueId: string,
+    data: { value?: string; validFrom?: string | null; validTo?: string | null; note?: string; confirmPeriod?: boolean },
+  ) => client.put(`/variables/${id}/values/${valueId}`, data).then((r) => r.data),
+  deleteValue: (id: string, valueId: string) => client.delete(`/variables/${id}/values/${valueId}`).then((r) => r.data),
+  versionBindings: (versionId: string): Promise<VariableBindingRow[]> =>
+    client.get(`/versions/${versionId}/variable-bindings`).then((r) => r.data),
+  bind: (versionId: string, data: { variableId: string; start: number; end: number; text: string }) =>
+    client.post(`/versions/${versionId}/variable-bindings`, data).then((r) => r.data),
+  release: (bindingId: string) => client.delete(`/variable-bindings/${bindingId}`).then((r) => r.data),
 };
 
 export const filesApi = {

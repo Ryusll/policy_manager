@@ -12,6 +12,8 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { PoliciesService } from '../policies/policies.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { AuditService } from '../audit/audit.service';
+import { VariablesService } from '../variables/variables.service';
+import { formatJo } from '../common/article-label';
 import { policyUploadDir } from '../policies/upload-path';
 import { buildStoredName, decodeMultipartFilename } from '../policies/upload-name';
 import { regulationParseSourcePath } from './regulation-parse-paths';
@@ -63,6 +65,7 @@ export class RegulationParseService {
     private policiesService: PoliciesService,
     private lawGoKrService: LawGoKrService,
     private audit: AuditService,
+    private variables: VariablesService,
   ) {}
 
   /** 등록하지 않고 버려진 세션의 원문 PDF를 지운다(업로드할 때마다 가볍게 청소) */
@@ -337,6 +340,12 @@ export class RegulationParseService {
     if (!plan.rows.length) {
       throw new BadRequestException('커밋할 조문이 없습니다.');
     }
+    // 바로 시행하는 본문이라 변수 표식이 남아 있으면 안 된다(T-109)
+    await this.variables.assertNoMarkers(
+      this.prisma,
+      tenantId,
+      plan.rows.map((r) => ({ label: formatJo(r.number, r.branchNumber ?? null), content: r.content })),
+    );
     const isLawGoKr = (session.extractMeta as { source?: string } | null)?.source === 'lawgokr';
     const policy = await this.policiesService.create(
       tenantId,

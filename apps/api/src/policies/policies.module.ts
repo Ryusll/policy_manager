@@ -4,10 +4,9 @@ import { PolicyPdfService } from './policy-pdf.service';
 import { PolicyHwpxService } from './policy-hwpx.service';
 import { PoliciesController } from './policies.controller';
 import { AuditModule } from '../audit/audit.module';
-import { VariablesModule } from '../variables/variables.module';
 
 @Module({
-  imports: [AuditModule, VariablesModule],
+  imports: [AuditModule],
   providers: [PoliciesService, PolicyPdfService, PolicyHwpxService],
   controllers: [PoliciesController],
   exports: [PoliciesService],

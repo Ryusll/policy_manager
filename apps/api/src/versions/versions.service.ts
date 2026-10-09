@@ -32,6 +32,8 @@ export class VersionsService {
     return this.prisma.articleVersion.findMany({
       where: { articleId },
       orderBy: { versionNum: 'desc' },
+      // 버전 카드의 "변수 연결 N"(T-109) — 다시 이어야 하는 것도 센다
+      include: { _count: { select: { variableBindings: { where: { state: { in: ['active', 'needs_review'] } } } } } },
     });
   }
 
@@ -43,7 +45,10 @@ export class VersionsService {
       },
       include: {
         article: { include: { chapter: { include: { policy: true } } } },
-        variableUsages: { include: { variable: true } },
+        variableBindings: {
+          where: { state: { in: ['active', 'needs_review'] } },
+          include: { variable: { select: { id: true, key: true, label: true } } },
+        },
       },
     });
     if (!version) throw new NotFoundException('Version not found');
@@ -73,7 +78,6 @@ export class VersionsService {
       },
     });
 
-    await this.variablesService.syncVariableUsagesFromContent(tenantId, created.id, created.content);
     await this.audit.log({
       tenantId,
       userId,
@@ -91,13 +95,12 @@ export class VersionsService {
     if (version.status !== 'draft') {
       throw new BadRequestException('Only draft versions can be edited');
     }
-    const updated = await this.prisma.articleVersion.update({
-      where: { id: versionId },
-      data: dto,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.articleVersion.update({ where: { id: versionId }, data: dto });
+      // 검토 요청 때 표식을 바꿔 넣은 자리(T-109) — 본문을 고치면 위치를 옮기고, 못 옮기면 "다시 이어야 함"
+      if (dto.content !== undefined) await this.variablesService.reanchorVersion(tx, versionId, version.content, row.content);
+      return row;
     });
-    if (dto.content !== undefined) {
-      await this.variablesService.syncVariableUsagesFromContent(tenantId, versionId, updated.content);
-    }
     await this.audit.log({
       tenantId,
       userId,
@@ -114,10 +117,20 @@ export class VersionsService {
     if (version.status !== 'draft') {
       throw new BadRequestException('Only draft versions can be submitted for review');
     }
-    const row = await this.prisma.articleVersion.update({
-      where: { id: versionId },
-      // 이전 반려 사유는 지운다. 남겨 두면 다시 올린 뒤에도 반려 상태처럼 보인다.
-      data: { status: 'review', reviewNote: null },
+    // 본문의 변수 표식({{KEY}})은 입력용이다 — 검토 전에 오늘(한국 날짜) 값으로 바꿔 본문에 저장하고 그 자리를 변수
+    // 연결로 남긴다(T-109, 사용자 지시로 코덱스 자문). 검토자는 실제로 발행될 문구를 본다. 값을 고를 수 없으면 400
+    const { row, applied } = await this.prisma.$transaction(async (tx) => {
+      const { content, applied } = await this.variablesService.resolveMarkers(tx, tenantId, version.content, todayDateOnly());
+      const row = await tx.articleVersion.update({
+        where: { id: versionId },
+        // 이전 반려 사유는 지운다. 남겨 두면 다시 올린 뒤에도 반려 상태처럼 보인다.
+        data: { status: 'review', reviewNote: null, ...(applied.length ? { content } : {}) },
+      });
+      if (applied.length) {
+        await this.variablesService.reanchorVersion(tx, versionId, version.content, content);
+        await this.variablesService.createMarkerBindings(tx, tenantId, { id: versionId, articleId: version.articleId, content }, applied, userId);
+      }
+      return { row, applied };
     });
     await this.audit.log({
       tenantId,
@@ -125,6 +138,9 @@ export class VersionsService {
       action: 'version.submit_review',
       entityType: 'ArticleVersion',
       entityId: versionId,
+      ...(applied.length
+        ? { details: { variables: applied.map((a) => ({ key: a.key, value: a.value, valueId: a.valueId })) } }
+        : {}),
     });
     return row;
   }
@@ -157,13 +173,17 @@ export class VersionsService {
       // 개정 후보 승인(T-108)과 같은 조문 잠금 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게 줄 세운다
       await tx.$queryRaw`SELECT id FROM articles WHERE id = ${version.articleId} FOR UPDATE`;
       await assertAfterRepeal(tx, version.articleId, effective);
+      // 변수(T-109): 표식이 남은 본문은 발행하지 않고, 검토 요청 때 넣은 값이 그 시행일에도 맞는지 다시 본다
+      await this.variablesService.assertNoMarkers(tx, tenantId, [{ label: '이 버전', content: version.content }]);
+      await this.variablesService.assertMarkerValuesAt(tx, versionId, effective);
+      const previous = await previousIssued(tx, version.articleId, versionId);
       await tx.articleVersion.updateMany({
         where: { articleId: version.articleId, status: 'published' },
         data: { status: 'archived' },
       });
 
       const now = new Date();
-      return tx.articleVersion.update({
+      const row = await tx.articleVersion.update({
         where: { id: versionId },
         data: {
           status: 'published',
@@ -174,6 +194,9 @@ export class VersionsService {
           changeNote: reason,
         },
       });
+      // 앞 시행본의 변수 연결을 새 버전으로 옮긴다(T-109)
+      await this.variablesService.inheritBindings(tx, tenantId, previous, row, userId);
+      return row;
     });
 
     await this.audit.log({
@@ -268,13 +291,22 @@ export class VersionsService {
           where: { status: { in: ['draft', 'review'] } },
           orderBy: { versionNum: 'desc' },
           take: 1,
-          select: { id: true },
+          select: { id: true, content: true },
         },
       },
       orderBy: ARTICLE_ORDER,
     });
     const targets = articles.filter((a) => a.versions.length > 0);
     if (!targets.length) return { published: 0 };
+    const labelOf = (a: (typeof targets)[number]) =>
+      `${formatJo(a.number, a.branchNumber)}${a.clauseNumber ? ` 제${a.clauseNumber}항` : ''}${a.itemNumber ? ` 제${a.itemNumber}목` : ''}`;
+
+    // 변수 표식이 남은 초안은 한꺼번에 시행하지 않는다 — 검토 요청 때 그날 값으로 바뀐다(T-109)
+    await this.variablesService.assertNoMarkers(
+      this.prisma,
+      tenantId,
+      targets.map((a) => ({ label: labelOf(a), content: a.versions[0].content })),
+    );
 
     // 폐지한 조문을 다시 쓴 초안이면 시행일이 폐지일 이후여야 한다(T-126, 단건 승인과 같다). 하나라도 어긋나면
     // 아무것도 시행하지 않는다 — 일부만 시행되면 어디까지 됐는지 다시 맞춰야 한다
@@ -286,11 +318,7 @@ export class VersionsService {
     if (repeals.length) {
       const latest = new Map<string, Date>(); // 폐지일 내림차순이라 조문마다 처음 것이 마지막 폐지
       for (const r of repeals) if (!latest.has(r.articleId)) latest.set(r.articleId, r.repealedOn!);
-      const list = [...latest].map(([articleId, day]) => {
-        const a = targets.find((t) => t.id === articleId)!;
-        const tail = `${a.clauseNumber ? ` 제${a.clauseNumber}항` : ''}${a.itemNumber ? ` 제${a.itemNumber}목` : ''}`;
-        return `${formatJo(a.number, a.branchNumber)}${tail}(${toDateOnlyString(day)} 폐지)`;
-      });
+      const list = [...latest].map(([articleId, day]) => `${labelOf(targets.find((t) => t.id === articleId)!)}(${toDateOnlyString(day)} 폐지)`);
       throw new BadRequestException(
         `폐지한 조문은 폐지일보다 이른 시행일로 다시 시행할 수 없습니다 — ${list.slice(0, 5).join(', ')}${list.length > 5 ? ` 외 ${list.length - 5}건` : ''}. ` +
           '시행일을 그날이나 그 뒤로 정하세요. 아무것도 시행하지 않았습니다.',
@@ -306,17 +334,18 @@ export class VersionsService {
       })) === 0;
 
     const approvedAt = new Date();
-    await this.prisma.$transaction([
-      ...targets.map((a) =>
-        this.prisma.articleVersion.update({
+    await this.prisma.$transaction(async (tx) => {
+      for (const a of targets) {
+        const previous = await previousIssued(tx, a.id, a.versions[0].id);
+        const row = await tx.articleVersion.update({
           where: { id: a.versions[0].id },
           data: { status: 'published', approvedBy: userId, approvedAt, publishedAt: approvedAt, effectiveDate: effective, changeNote: reason },
-        }),
-      ),
-      ...(firstPublication
-        ? [this.prisma.policy.update({ where: { id: policyId }, data: { effectiveDate: effective } })]
-        : []),
-    ]);
+        });
+        // 폐지 뒤 다시 쓴 조문이면 폐지한 버전의 변수 연결을 옮긴다(T-109)
+        await this.variablesService.inheritBindings(tx, tenantId, previous, row, userId);
+      }
+      if (firstPublication) await tx.policy.update({ where: { id: policyId }, data: { effectiveDate: effective } });
+    });
 
     await this.audit.log({
       tenantId,
@@ -568,4 +597,22 @@ async function assertAfterRepeal(tx: Prisma.TransactionClient, articleId: string
       `이 조문은 ${toDateOnlyString(repeal.repealedOn)}에 폐지됐습니다 — 다시 시행하려면 시행일을 그날이나 그 뒤로 정하세요.`,
     );
   }
+}
+
+/**
+ * 새로 발행하는 버전의 앞 시행본 — 변수 연결을 옮겨 올 버전(T-109). 지금 시행본이 있으면 그것, 없으면(폐지 뒤 다시
+ * 시행) 가장 최근에 시행했던 버전.
+ */
+async function previousIssued(tx: Prisma.TransactionClient, articleId: string, excludeId: string) {
+  const published = await tx.articleVersion.findFirst({
+    where: { articleId, status: 'published', id: { not: excludeId } },
+    orderBy: { versionNum: 'desc' },
+    select: { id: true, content: true },
+  });
+  if (published) return published;
+  return tx.articleVersion.findFirst({
+    where: { articleId, status: 'archived', id: { not: excludeId } },
+    orderBy: { versionNum: 'desc' },
+    select: { id: true, content: true },
+  });
 }

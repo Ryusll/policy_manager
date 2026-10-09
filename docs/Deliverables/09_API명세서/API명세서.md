@@ -97,16 +97,16 @@
 ## versions (`/api/articles/:articleId/versions`, `/api/versions/:id`)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | articles/:articleId/versions | admin, editor | 조문 버전 목록 |
+| GET | articles/:articleId/versions | admin, editor | 조문 버전 목록 — 버전마다 `_count.variableBindings`(그 버전 본문의 변수 연결 수, T-109) |
 | POST | articles/:articleId/versions | admin, editor | 초안(draft) 버전 생성 |
 | GET | versions/:id | admin, editor | 버전 상세 |
 | PUT | versions/:id | admin, editor | 초안 본문·변경메모 수정 |
-| POST | versions/:id/submit | admin | 검토 요청 (draft→review) |
-| POST | versions/:id/approve | admin | 시행 승인 (review→published, 이전 published는 archived). **`effectiveDate` 확정 — 시점 조회의 기준**. 발행일 `publishedAt` 을 남기고(T-108), 개정 후보 승인과 같은 조문 잠금을 건다 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게. **폐지한 조문을 다시 시행하면 시행일은 마지막 폐지일 이후**여야 한다(같은 날 가능 — 같은 날 시행분은 나중 버전이 이긴다, 아니면 400, T-126) |
+| POST | versions/:id/submit | admin | 검토 요청 (draft→review) — 본문의 변수 표식(`{{KEY}}`, 등록된 변수만)을 **오늘(한국 날짜) 값**으로 바꿔 저장하고 그 자리를 연결로 남긴다(T-109). 값을 정할 수 없는 표식(값 없음·기간 겹침·기간 미확정)이 있으면 아무것도 바꾸지 않고 400(어느 표식이 왜) |
+| POST | versions/:id/approve | admin | 시행 승인 (review→published, 이전 published는 archived). **`effectiveDate` 확정 — 시점 조회의 기준**. 발행일 `publishedAt` 을 남기고(T-108), 개정 후보 승인과 같은 조문 잠금을 건다 — 같은 조문의 발행이 겹쳐 앞선 개정을 덮어쓰지 않게. **폐지한 조문을 다시 시행하면 시행일은 마지막 폐지일 이후**여야 한다(같은 날 가능 — 같은 날 시행분은 나중 버전이 이긴다, 아니면 400, T-126) **변수(T-109)**: 표식이 남은 본문은 400, 검토 요청 때 표식을 바꿔 넣은 값이 그 시행일에도 맞는 값인지 다시 보고 다르면 400(변수를 잠그고 읽는다), 앞 시행본의 변수 연결을 새 버전으로 옮긴다(차이로 위치 이동, 못 옮기면 "다시 이어야 함") |
 | POST | versions/:id/reject | admin | 검토 반려(review→draft). Body: `reason`(**필수**) — 사유는 버전의 `reviewNote` 에 남아 편집자에게 보인다. 다시 검토 요청하면 지워진다 (T-10) |
 | POST | versions/:id/archive | admin | 게시본 폐지(published→archived) — **오늘(한국 날짜)부터 조문을 시행에서 뺀다**: 폐지 시행일 `repealedOn` 을 남긴다(T-126). 날짜는 고르지 않는다(미래 폐지는 T-127 뒤, 소급 없음). 조문 행을 잠그고(승인과 같은 잠금) 다시 확인한다 — 그 사이 내려갔으면 409, 시행일이 없으면(보정 먼저)·아직 시행 전이면·오늘 뒤에 시행될 버전이 따로 있으면·오늘 시행 중인 본문이 이 버전이 아니면 400. 응답에 `repealedOn`·`remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10). 감사 `version.archive`(같은 트랜잭션, details `repealedOn`·`remainingPublished`) |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
-| POST | policies/:policyId/publish-drafts | admin | **시행본이 없는 조문(새로 넣은 조문, 폐지 뒤 다시 쓴 조문)의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate`(**필수**, YYYY-MM-DD — 이 조문들이 실제로 시행된 날. 오늘로 채우지 않는다(PAT-02), 없으면 400). 규정의 첫 시행이고 규정 시행일이 비어 있으면 같은 날로 채운다. 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건"). 폐지한 조문이 있으면 시행일이 그 폐지일 이후여야 한다 — 하나라도 어긋나면 400(조문·폐지일 목록)이고 아무것도 시행하지 않는다(T-126) |
+| POST | policies/:policyId/publish-drafts | admin | **시행본이 없는 조문(새로 넣은 조문, 폐지 뒤 다시 쓴 조문)의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate`(**필수**, YYYY-MM-DD — 이 조문들이 실제로 시행된 날. 오늘로 채우지 않는다(PAT-02), 없으면 400). 규정의 첫 시행이고 규정 시행일이 비어 있으면 같은 날로 채운다. 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건"). 폐지한 조문이 있으면 시행일이 그 폐지일 이후여야 한다 — 하나라도 어긋나면 400(조문·폐지일 목록)이고 아무것도 시행하지 않는다(T-126) 변수 표식이 남은 초안이 있으면 400(검토 요청으로 시행), 폐지 뒤 다시 시행하는 조문은 폐지한 버전의 변수 연결을 옮긴다(T-109) |
 | POST | policies/:policyId/fill-effective-date | admin | **시행일 없이 시행된 버전에 확인한 시행일 넣기**(T-123 · PAT-02, 예전 가져오기 데이터 보정). Body: `effectiveDate`(YYYY-MM-DD, **필수** — 최초 제정일이 아니라 지금 본문이 시행된 날), `reason`(**필수**). 시행일이 비어 있는 시행본(published·archived)에만 넣고, 규정 단위 시행일이 비어 있으면 함께 채운다. **같은 조문의 앞뒤 시행본과 순서가 어긋나거나 비어 있는 시행본이 둘 이상인 조문이 하나라도 있으면 409 + `conflicts[]`(label·detail)로 아무것도 바꾸지 않는다.** 넣을 것이 없으면 400. 응답 `{updated}`. 감사 `version.effective_date_fill` |
 
 ## comments (`/api/articles/:articleId/comments`, `/api/comments/:id`)
@@ -116,15 +116,22 @@
 | POST | articles/:articleId/comments | admin, editor, viewer | 코멘트 작성 |
 | PATCH | comments/:id | admin, editor | 처리완료/미처리 토글 |
 
-## variables (`/api/variables`)
+## variables (`/api/variables`) — 변수 값·유효기간과 본문 위치 연결 (T-109 ①, 특허 도 9)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | admin, editor | 변수 목록 |
-| GET | :id | admin, editor | 변수 상세 |
-| POST | (root) | admin, editor | 변수 생성 |
-| PUT | :id | admin | 변수 수정 |
-| DELETE | :id | admin, editor | 변수 삭제 |
-| POST | :id/usages | admin, editor | 버전-변수 사용 이력 등록 |
+| GET | variables | JWT | 변수 목록 — 값마다 유효기간(`validFrom`·`validTo`, 비면 처음부터·끝 없음)·`periodConfirmed`(false = 옛 기본값을 옮긴 기간 미확정 값)·`overlapping`(같은 변수의 다른 값과 기간 겹침), 오늘 쓸 값 `current`(없으면 `currentReason`: `none`·`ambiguous`(겹침)·`unconfirmed`), `needsReview`, `bindingCount`(지금 시행 중인 본문의 연결 수, 다시 이어야 하는 것 포함) |
+| GET | variables/:id | JWT | 변수 하나 + 지금 시행 중인 본문의 연결 `bindings[]`(규정·조문 표기·버전·구간·문구·앞뒤 문맥·출현 순번·상태) |
+| POST | variables | admin, editor | 변수 등록 `{ key, label, description?, value?, validFrom? }` — 첫 값은 시작일(비우면 처음부터)부터 끝 없이. 감사 `variable.create` |
+| PUT | variables/:id | admin, editor | 표시명·설명 |
+| DELETE | variables/:id | admin | 삭제 — 값·연결도 함께. 감사 `variable.delete` |
+| POST | variables/:id/values | admin, editor | 값 추가 `{ value, validFrom?, validTo?, note? }` — 유효기간 [시작, 종료), 시작 ≥ 종료면 400. 기간이 겹쳐도 저장하고 `changedOverlaps: true` — 겹친 기간에는 값을 고르지 않는다. 변수 행을 잠근다(승인 때 값 재확인과 줄 세움). 감사 `variable.value.create` |
+| PUT | variables/:id/values/:valueId | admin, editor | 값 고치기 `{ value?, validFrom?, validTo?, note?, confirmPeriod? }` — 기간을 넣거나 `confirmPeriod: true` 면 기간 미확정 값이 확정된다. 감사 `variable.value.update`(전후) |
+| DELETE | variables/:id/values/:valueId | admin, editor | 값 지우기. 감사 `variable.value.delete` |
+| GET | versions/:versionId/variable-bindings | JWT | 그 버전 본문의 연결(풀지 않은 것) — 다른 회사 버전은 404 |
+| POST | versions/:versionId/variable-bindings | admin, editor | **시행 중인 버전의 문구를 변수에 잇기** `{ variableId, start, end, text }` — 위치는 저장된 본문의 UTF-16 [start, end). 시행본이 아니거나 `text` 가 본문 그 구간과 다르면(그 사이 바뀜) 409, 다른 연결과 겹치면 409, 앞뒤 공백이 있으면 400. 그 버전 시행일에 맞는 값과 같은 문구면 `valueId`(직전 적용값)를 적는다. 조문을 잠근다(발행 때 연결 옮기기와 줄 세움). 감사 `variable.binding.create` |
+| DELETE | variable-bindings/:id | admin, editor | 연결 풀기 — 지우지 않고 `released` 로 남긴다. 감사 `variable.binding.release` |
+
+> 예전 `POST variables/:id/usages`(버전-변수 사용 기록)와 `defaultValue` 는 없앴다(T-109) — 위치를 가진 연결과 기간 있는 값으로 대신한다. 마이그레이션 `20261009150000_variable_values_bindings` 가 옛 기본값을 기간 미확정 값으로, 옛 사용 기록을 표식 `{{KEY}}` 이 나오는 자리마다의 연결로 옮겼다(본문에 표식이 없던 기록은 "다시 이어야 함", 변수와 버전의 회사가 다른 기록은 옮기지 않음).
 
 ## search (`/api/search`)
 | Method | Path | 인증 | 설명 |
@@ -179,7 +186,7 @@
 | POST | upload | admin, editor | PDF 업로드 → 텍스트 추출(Python pdfplumber/pymupdf) → 조항 트리. 최대 30MB. 파싱에 성공하면 **원문 PDF를 세션 이름(`<세션id>.pdf`)으로 보관**해 `extractMeta.sourceFile` 에 적는다(등록 시 첨부로 옮김, 미등록은 일주일 뒤 정리). 한글 파일명은 latin1 해석을 바로잡아 `fileName` 에 저장 (T-120) |
 | GET | :id | admin, editor, viewer | 파싱 세션 조회 |
 | PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14) |
-| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120). Body 의 **`effectiveDate`(YYYY-MM-DD)는 필수**(T-123) — 가져오는 본문이 실제로 시행된 날이며 첫 버전과 규정 단위 시행일에 들어간다. 없거나 없는 날짜면 아무것도 만들지 않고 400 |
+| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120). Body 의 **`effectiveDate`(YYYY-MM-DD)는 필수**(T-123) — 가져오는 본문이 실제로 시행된 날이며 첫 버전과 규정 단위 시행일에 들어간다. 없거나 없는 날짜면 아무것도 만들지 않고 400 본문에 등록된 변수의 표식이 있으면 400(바로 시행하는 본문이라, T-109) |
 
 ## admin (`/api/admin`)
 
@@ -188,7 +195,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | POST | import/policies/validate | admin | **사전 검사**(200). 넣지 않고 문제를 전부 모아 돌려준다. 응답 `{issues[], canImport, summary}` (T-13) |
-| POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues`. 규정마다 `effectiveDate`(YYYY-MM-DD) — `publish: true` 조문이 하나라도 있으면 **필수**이고 그 시행본과 규정 단위 시행일에 들어간다(T-123, "오늘"로 채우지 않는다) |
+| POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues`. 규정마다 `effectiveDate`(YYYY-MM-DD) — `publish: true` 조문이 하나라도 있으면 **필수**이고 그 시행본과 규정 단위 시행일에 들어간다(T-123, "오늘"로 채우지 않는다) 바로 시행(`publish: true`)하는 조문에 변수 표식이 남아 있으면 400 — 초안으로 가져와 검토를 요청한다(T-109) |
 
 > **사전 검사가 보는 것**: 코드 중복(기존/파일 안), 빈 코드·제목, 길이 초과, 장·조 번호 형식 → 오류. 장 없음, 빈 본문, 조 번호 겹침·건너뜀 → 경고. **플랜 규정 상한**도 여기서 본다 — 예전에는 일괄 가져오기가 상한을 통과해 Starter(5건)가 한 번에 100건을 넣을 수 있었다.
 
@@ -314,7 +321,7 @@
 | PATCH | :id | admin·editor | **손질 — 새 판**(T-107). `{ candidateContent, note, expectedRevision, expectedLockVersion }` — 수정 사유 필수(빈칸 400), 바뀐 것이 없으면 400, 화면이 본 판·잠금 버전이 지금과 다르면 **409**(`{ message, revision, lockVersion }` — 그 사이 누가 고쳤거나 검토를 요청했다). 비교 정보를 다시 만들어 규칙이 낸 문구가 그 자리에 그대로 남은 곳만 규칙 근거로 잇고, 사람이 고친 곳은 근거 없는 변경(검토 대상)으로 남긴다. 검토 중(반려된) 후보를 고치면 **작성으로 되돌린다** — 새 판으로 다시 검토를 요청해야 한다(요청 기록은 이력에 남는다). 승인된 후보는 400. 감사 `amendment.edit`(판 번호·전후 본문 해시·사유, 본문 자체는 판 테이블에만). 응답은 `GET :id` 와 같다 |
 | POST | :id/review | admin·editor | **검토 요청**(작성 → 검토, T-107). `{ expectedRevision, expectedLockVersion, reason? }` — 검토 대상 판을 기록한다. 본문이 기준 본문과 (공백 말고) 다르지 않으면 "개정 불필요" 판단이라 `reason` 필수(400). 작성 상태가 아니면 400, 판·잠금이 다르면 409. 기준 본문이 그 사이 바뀌었어도 막지 않는다(화면이 경고, 승인 때 T-108 이 다시 확인). 감사 `amendment.request_review`(요청 id·판·해시·사유) |
 | POST | :id/regenerate | admin·editor | **다시 만들기**(T-107) — 같은 변경·**그 조문만** 지금 기준 본문으로 후보를 만든다. `{ asOf? }`(T-108) — 승인하려던 시행일을 주면 그 날 시행 중인 본문이 기준 본문이 된다(409 `base_mismatch`·`history_changed` 뒤에 쓴다). 같은 기준 본문·발행 이력이면 있던 후보를 돌려준다. 옛 후보는 그대로(사람이 고친 것을 옮기지 않는다). `{ candidateId, created, unchanged(기준 본문이 그대로라 같은 후보), skipped, noSubstantiveChange, unresolvable }` |
-| POST | :id/approve | **admin** | **승인 → 후속 버전 발행**(T-108). `{ effectiveDate, changeNote, earlyReason?, expectedRevision, expectedLockVersion }`. 검토 중인 후보·검토를 요청한 **그 판**만(아니면 400/409). 사내 규정 시행일 필수·**소급 불가**(오늘 이후, 아니면 400), 법령 시행일보다 이르면 `earlyReason` 필수(400). 본문이 기준 본문과 (공백 말고) 같으면 400(개정 불필요는 반려). **조문 행을 잠그고** 다시 확인해 어긋나면 **409 `{ message, reason }`** — `undated_history`(시행일 미기록 시행본) · `repealed`(그 시행일에 조문이 폐지돼 있음 — 반려로 닫는다, T-126) · `base_mismatch`(그 시행일의 시행본이 기준 본문이 아님) · `later_version`(그보다 늦은 시행본) · `history_changed`(후보를 만든 뒤 다른 발행·폐지·시행일 보정 — 발행 이력 지문). 통과하면 한 트랜잭션: 같은 조문(**조문 식별자 유지**)의 후속 버전(번호 = 가장 큰 번호 + 1, `published`, 시행일, 개정 사유, 발행일 `publishedAt`, `changeEventId`, `sourceCandidateId`) 생성 · 옛 시행본은 내려감(archived, 폐지 시행일 없음) · 후보 `approved` · 상태 전환 기록 · 감사 `amendment.approve`(5요소 + 개정 당시 근거) · 알림(검토 요청자·후보 생성자에게 결과, 규정에 지정한 개정 알림 수신자에게 개정 시행 — 시행일이 미래면 "발행 · 시행 예정", 승인한 사람은 빼고 한 사람에 한 건). **같은 요청을 다시 보내면**(같은 판·시행일·사유) 새로 발행하지 않고 `alreadyApproved: true` 로 결과를 돌려준다 — 다른 시행일·사유면 409. 응답은 `GET :id` 와 같다(`decision`·`resultVersion` 포함) |
+| POST | :id/approve | **admin** | **승인 → 후속 버전 발행**(T-108). `{ effectiveDate, changeNote, earlyReason?, expectedRevision, expectedLockVersion }`. 검토 중인 후보·검토를 요청한 **그 판**만(아니면 400/409). 사내 규정 시행일 필수·**소급 불가**(오늘 이후, 아니면 400), 법령 시행일보다 이르면 `earlyReason` 필수(400). 본문이 기준 본문과 (공백 말고) 같으면 400(개정 불필요는 반려). **조문 행을 잠그고** 다시 확인해 어긋나면 **409 `{ message, reason }`** — `undated_history`(시행일 미기록 시행본) · `repealed`(그 시행일에 조문이 폐지돼 있음 — 반려로 닫는다, T-126) · `base_mismatch`(그 시행일의 시행본이 기준 본문이 아님) · `later_version`(그보다 늦은 시행본) · `history_changed`(후보를 만든 뒤 다른 발행·폐지·시행일 보정 — 발행 이력 지문). 통과하면 한 트랜잭션: 같은 조문(**조문 식별자 유지**)의 후속 버전(번호 = 가장 큰 번호 + 1, `published`, 시행일, 개정 사유, 발행일 `publishedAt`, `changeEventId`, `sourceCandidateId`) 생성 · 옛 시행본은 내려감(archived, 폐지 시행일 없음) · 후보 `approved` · 상태 전환 기록 · 감사 `amendment.approve`(5요소 + 개정 당시 근거) · 알림(검토 요청자·후보 생성자에게 결과, 규정에 지정한 개정 알림 수신자에게 개정 시행 — 시행일이 미래면 "발행 · 시행 예정", 승인한 사람은 빼고 한 사람에 한 건). **같은 요청을 다시 보내면**(같은 판·시행일·사유) 새로 발행하지 않고 `alreadyApproved: true` 로 결과를 돌려준다 — 다른 시행일·사유면 409. 응답은 `GET :id` 와 같다(`decision`·`resultVersion` 포함) 후보 본문에 변수 표식이 남아 있으면 400, 기준 본문의 변수 연결을 새 버전으로 옮긴다(T-109 — 후보 생성 때 값 반영은 2단계) |
 | POST | :id/reject | **admin** | **반려**(T-108). `{ reason, expectedRevision, expectedLockVersion }` — 검토 중인 후보만, 사유 필수(빈칸 400), 판·잠금이 다르면 409. 발행본은 그대로. 상태 전환 기록(반려자·시각·대상 판·사유)·감사 `amendment.reject`·알림(요청자·생성자). 반려된 후보를 고치면 작성으로 돌아간다 |
 
 > **viewer 에게는 열지 않는다.** 개정 초안은 확정 전 내부 문서다.
@@ -398,8 +405,10 @@
 **UpdateArticleCommentDto** — `isResolved?`(bool)
 
 ## variables
-**CreateVariableDto** — `key`(1~120, 예 `COMPANY_NAME`), `label`(1~200), `defaultValue?`(≤2000), `description?`(≤2000)
-**UpdateVariableDto** — `label?`(1~200), `defaultValue?`(≤2000), `description?`(≤2000)
+**CreateVariableDto** — `key`(1~120, 예 `DEPT_IN_CHARGE`), `label`(1~200), `description?`(≤2000), `value?`(첫 값, ≤2000), `validFrom?`(YYYY-MM-DD, 비우면 처음부터)
+**UpdateVariableDto** — `label?`(1~200), `description?`(≤2000)
+**UpsertValueDto** — `value?`, `validFrom?`·`validTo?`(YYYY-MM-DD, 빈 값·null 은 처음부터·끝 없음), `note?`(≤500), `confirmPeriod?`(bool)
+**CreateBindingDto** — `variableId`, `start`(≥0), `end`(≥1), `text`(1~500, 화면이 본 그 구간의 문구)
 
 ## templates
 **CreateTemplateDto** — `name`(≤120), `description?`(≤500), `isDefault?`(기본 false), `isActive?`(기본 true), `layoutJson`(객체, `rawHtml` 문자열 포함 가능), `cssText?`(기본 "")

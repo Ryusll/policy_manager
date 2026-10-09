@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { apiErrorMessage } from '../lib/apiError';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { policiesApi, versionsApi, filesApi, commentsApi, searchApi, type AsOfRepealedArticle } from '../api/policies';
@@ -92,6 +93,7 @@ import { ThreeWayComparePanel } from '../components/ThreeWayComparePanel';
 import { FavoriteButton } from '../components/FavoriteButton';
 import { LawLinksPanel } from '../components/LawLinksPanel';
 import { EffectiveDateFillNotice } from '../components/EffectiveDateFillNotice';
+import VariableBindingDialog from '../components/VariableBindingDialog';
 import { serviceToday } from '../lib/serviceDate';
 import { SpeechControls } from '../components/SpeechControls';
 import { buildPolicySpeech } from '../lib/speech';
@@ -562,6 +564,8 @@ export default function PolicyDetailPage() {
   const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [archiveTarget, setArchiveTarget] = useState<any>(null);
+  // 변수 연결 창(T-109) — 시행 중인 버전의 문구를 변수에 잇는다
+  const [bindingTarget, setBindingTarget] = useState<{ id: string; versionNum: number; content: string; articleId: string } | null>(null);
   const [versionActionMsg, setVersionActionMsg] = useState('');
   const [activeToggleTarget, setActiveToggleTarget] = useState<boolean | null>(null);
   const [approveNote, setApproveNote] = useState('');
@@ -1128,6 +1132,8 @@ export default function PolicyDetailPage() {
       qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
       qc.invalidateQueries({ queryKey: ['policy', id] });
     },
+    // 변수 표식의 값을 정할 수 없으면 서버가 까닭을 알려 준다(T-109)
+    onError: (err) => toast(apiErrorMessage(err, '검토를 요청하지 못했습니다.'), 'error'),
   });
 
   const approveMutation = useMutation({
@@ -3278,7 +3284,7 @@ export default function PolicyDetailPage() {
                             <button
                               type="button"
                               onClick={() => {
-                                setApproveTargetId(v.id);
+                                setApproveTargetId(v.id); approveMutation.reset();
                                 setApproveNote('');
                               }}
                               className="text-[11px] text-green-800 font-medium hover:underline inline-flex items-center gap-1"
@@ -3355,7 +3361,7 @@ export default function PolicyDetailPage() {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setApproveTargetId(version.id);
+                                  setApproveTargetId(version.id); approveMutation.reset();
                                   setApproveNote('');
                                 }}
                                 className="text-xs text-green-700 hover:underline flex items-center gap-1"
@@ -3373,6 +3379,15 @@ export default function PolicyDetailPage() {
                                 <Undo2 size={12} /> 반려
                               </button>
                             </>
+                          )}
+                          {version.status === 'published' && (canEdit || version._count?.variableBindings > 0) && (
+                            <button
+                              type="button"
+                              onClick={() => setBindingTarget(version)}
+                              className="text-xs text-navy-700 hover:underline"
+                            >
+                              변수 연결{version._count?.variableBindings ? ` ${version._count.variableBindings}` : ''}
+                            </button>
                           )}
                           {version.status === 'published' && user?.role === 'admin' && (
                             <button
@@ -4991,6 +5006,11 @@ export default function PolicyDetailPage() {
                   비워두면 오늘로 기록됩니다. 이 날짜가 <strong>시점 조회</strong>의 기준이 됩니다.
                 </p>
               </div>
+              {approveMutation.isError && (
+                <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {apiErrorMessage(approveMutation.error, '승인하지 못했습니다.')}
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -5013,6 +5033,7 @@ export default function PolicyDetailPage() {
                   onClick={() => {
                     setApproveTargetId(null);
                     setApproveNote('');
+                    approveMutation.reset();
                   }}
                   className="btn-secondary"
                 >
@@ -5198,6 +5219,15 @@ export default function PolicyDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {bindingTarget && (
+        <VariableBindingDialog
+          version={bindingTarget}
+          articleId={selectedArticle?.id ?? bindingTarget.articleId}
+          canEdit={canEdit}
+          onClose={() => setBindingTarget(null)}
+        />
       )}
 
       {archiveTarget && (

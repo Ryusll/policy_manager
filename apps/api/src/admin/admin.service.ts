@@ -6,6 +6,7 @@ import { VariablesService } from '../variables/variables.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import { validateImport, normalizeImportChapters, type ValidateResult } from './import-validate';
 import { newChapterHeader } from '../policies/chapter-header';
+import { formatJo } from '../common/article-label';
 import { parseDateOnly } from '../common/date-only';
 
 @Injectable()
@@ -54,8 +55,20 @@ export class AdminService {
       });
     }
 
+    // 바로 시행하는 조문에 변수 표식({{KEY}})이 남아 있으면 안 된다(T-109) — 초안으로 가져와 검토를 요청하면
+    // 그날 값으로 바뀐다
+    await this.variablesService.assertNoMarkers(
+      this.prisma,
+      tenantId,
+      dto.policies.flatMap((p) =>
+        normalizeImportChapters(p).flatMap((ch) =>
+          (ch.articles || [])
+            .filter((ar) => ar.publish)
+            .map((ar) => ({ label: `${p.code} ${formatJo(ar.number)}`, content: ar.content ?? '' })),
+        ),
+      ),
+    );
     const createdPolicyIds: string[] = [];
-    const toSync: { versionId: string; content: string }[] = [];
 
     await this.prisma.$transaction(async (tx) => {
       for (const p of dto.policies) {
@@ -92,7 +105,7 @@ export class AdminService {
             });
             const content = ar.content ?? '';
             const status = ar.publish ? 'published' : 'draft';
-            const ver = await tx.articleVersion.create({
+            await tx.articleVersion.create({
               data: {
                 articleId: article.id,
                 versionNum: 1,
@@ -105,15 +118,10 @@ export class AdminService {
                 createdBy: userId,
               },
             });
-            toSync.push({ versionId: ver.id, content });
           }
         }
       }
     });
-
-    for (const s of toSync) {
-      await this.variablesService.syncVariableUsagesFromContent(tenantId, s.versionId, s.content);
-    }
 
     await this.audit.log({
       tenantId,
