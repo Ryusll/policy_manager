@@ -113,16 +113,16 @@ export class UsersService {
     const problem = passwordProblem(dto.newPassword, dto.currentPassword);
     if (problem) throw new BadRequestException(problem);
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      // refreshToken 을 비워 다른 기기의 세션이 갱신되지 못하게 한다(접근 토큰 만료 후 로그인 화면)
-      // 본인이 고른 비밀번호가 됐으니 강제 변경 표시를 끈다(T-122)
-      data: {
-        passwordHash: await bcrypt.hash(dto.newPassword, 10),
-        refreshToken: null,
-        mustChangePassword: false,
-      },
-    });
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        // 본인이 고른 비밀번호가 됐으니 강제 변경 표시를 끈다(T-122)
+        data: { passwordHash, refreshToken: null, mustChangePassword: false },
+      }),
+      // 모든 기기의 세션을 끝낸다 — 옛 비밀번호로 들어와 있던 곳은 접근 토큰이 만료되면(15분) 다시 로그인해야 한다(T-137)
+      this.prisma.authSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } }),
+    ]);
     await this.audit.log({
       tenantId,
       userId,
@@ -147,15 +147,16 @@ export class UsersService {
     const problem = passwordProblem(dto.newPassword);
     if (problem) throw new BadRequestException(problem);
 
-    await this.prisma.user.update({
-      where: { id: targetId },
-      // 관리자가 정한 임시 비밀번호다 — 다음 로그인 때 본인이 바꾸게 한다(T-122)
-      data: {
-        passwordHash: await bcrypt.hash(dto.newPassword, 10),
-        refreshToken: null,
-        mustChangePassword: true,
-      },
-    });
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: targetId },
+        // 관리자가 정한 임시 비밀번호다 — 다음 로그인 때 본인이 바꾸게 한다(T-122)
+        data: { passwordHash, refreshToken: null, mustChangePassword: true },
+      }),
+      // 그 사람의 모든 기기 세션을 끝낸다(T-137)
+      this.prisma.authSession.updateMany({ where: { userId: targetId, revokedAt: null }, data: { revokedAt: new Date() } }),
+    ]);
     await this.audit.log({
       tenantId,
       userId: actorUserId,

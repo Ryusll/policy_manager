@@ -12,7 +12,8 @@ export default function LoginPage() {
   const { t, locale, setLocale } = useI18n();
   const navigate = useNavigate();
   const { setAuth } = useAuthStore();
-  const [form, setForm] = useState({ email: '', password: '', tenantSlug: 'demo' });
+  // 자동 로그인은 기본 꺼짐 — 여러 사람이 쓰는 PC 에서 다음 사람이 그대로 들어오지 않게(T-137)
+  const [form, setForm] = useState({ email: '', password: '', tenantSlug: 'demo', remember: false });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { data: signupOptions } = useQuery({
@@ -27,7 +28,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const data = await authApi.login(form);
-      setAuth(data.user, data.accessToken, data.refreshToken);
+      setAuth(data.user, data.accessToken, data.refreshToken, data.remember === true);
       navigate('/');
     } catch (err: any) {
       // 비밀번호 없는 계정(예전 구글 로그인으로 만든 것)은 관리자 재설정으로 안내한다(T-136)
@@ -134,6 +135,20 @@ export default function LoginPage() {
                   required
                 />
               </div>
+
+              <label className="flex items-start gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  data-testid="login-remember"
+                  checked={form.remember}
+                  onChange={(e) => setForm({ ...form, remember: e.target.checked })}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-700 focus:ring-navy-500"
+                />
+                <span className="text-sm text-gray-700">
+                  {t('login.remember')}
+                  <span className="block text-xs text-gray-500 mt-0.5">{t('login.rememberHint')}</span>
+                </span>
+              </label>
 
               {error && (
                 <div className="bg-red-50 border border-red-300 text-red-700 px-3 py-2 rounded text-sm">

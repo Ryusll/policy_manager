@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength, IsOptional, IsNotEmpty } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional, IsNotEmpty, IsBoolean } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
@@ -22,6 +22,12 @@ export class LoginDto {
   )
   @IsString()
   tenantSlug?: string;
+
+  /** 자동 로그인 — 30일 유지(브라우저를 껐다 켜도). 아니면 브라우저를 닫을 때까지, 최대 12시간(T-137) */
+  @ApiProperty({ required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  remember?: boolean;
 }
 
 export class RefreshTokenDto {

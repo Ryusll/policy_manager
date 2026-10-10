@@ -16,11 +16,11 @@
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | login | Public | 이메일/비밀번호 로그인. 응답 `user.mustChangePassword` 가 true 면 화면은 비밀번호 변경부터 시킨다(T-122). 비밀번호가 없는 계정(예전 구글 로그인)은 401 `code: PASSWORD_NOT_SET` (T-136) |
+| POST | login | Public | 이메일/비밀번호 로그인. 응답 `user.mustChangePassword` 가 true 면 화면은 비밀번호 변경부터 시킨다(T-122). 비밀번호가 없는 계정(예전 구글 로그인)은 401 `code: PASSWORD_NOT_SET` (T-136). 요청 `remember?`(boolean, **자동 로그인** — 30일, 기본 false 는 12시간), 응답에 `remember` (T-137). 로그인마다 이 기기의 세션을 하나 연다 |
 | POST | register | Public | 테넌트 + 최초 admin 계정 생성. **공개 회원가입이 닫힌 서버(운영 기본)에서는 403 `code: SIGNUP_CLOSED`** — 고객사는 아스트룸이 `POST /platform-admin/tenants` 로 개설한다. 개발·CI 만 `ALLOW_PUBLIC_SIGNUP=true` (T-122) |
 | GET | options | Public | 로그인 화면 설정 `{ publicSignup }` — 회원가입 링크를 보일지 (T-122) |
-| POST | refresh | Public | refreshToken으로 재발급. 서명·만료를 검증하고 **매번 새 토큰으로 회전**한다. 잘못된 토큰은 401, 빈 값은 400 |
-| POST | logout | JWT | refreshToken 무효화 |
+| POST | refresh | Public | refreshToken으로 재발급. 서명·만료를 검증하고 **매번 새 토큰으로 회전**한다 — 응답 `{accessToken, refreshToken, remember}`, 화면은 둘 다 저장해야 한다. 세션이 끝났거나(로그아웃·비밀번호 변경·만료) 이미 쓴 토큰이면 401, 빈 값은 400. 세션 만료는 갱신할 때마다 다시 늘어난다. T-137 전 토큰(세션 id 없음)은 한 번만 세션으로 옮긴다 (T-137) |
+| POST | logout | JWT | **이 기기의 세션만** 끝낸다(다른 기기는 그대로). 세션 id 가 없는 옛 토큰이면 그 사람의 세션을 모두 끝낸다 (T-137) |
 | POST | me | JWT | 현재 로그인 사용자 정보 |
 
 > **구글 로그인은 없앴다(T-136, 2026-10-10)** — `GET /auth/google`·`GET /auth/google/callback` 은 404 다. 비밀번호 없이 구글로만 만든 예전 계정의 로그인은 401 `code: PASSWORD_NOT_SET` 이고, 회사 관리자가 `POST /users/:id/password` 로 비밀번호를 정해 주면 들어온다(첫 로그인 때 변경).

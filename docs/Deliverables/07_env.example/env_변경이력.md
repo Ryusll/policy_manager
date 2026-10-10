@@ -10,6 +10,8 @@
 | ~~`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`~~ | **삭제(T-136)** — 구글 로그인을 없앴다. 넣어 두어도 쓰지 않는다 | — |
 | ~~`GOOGLE_CALLBACK_URL`~~ | **삭제(T-136)** | — |
 | `VITE_PUBLIC_COMPANY_LEGAL_NAME` / `VITE_PUBLIC_COMPANY_REG_NO` | 웹 빌드 시 법인명·사업자등록번호 표시 | 선택 |
+| `AUTH_REMEMBER_TTL` / `AUTH_SESSION_TTL` | 로그인 세션 수명(T-137) — 자동 로그인 30일(`30d`) / 아니면 12시간(`12h`). 쓸 때마다 다시 늘어난다. 형식이 틀리면 기본값 | 선택 |
+| ~~`JWT_REFRESH_EXPIRES_IN`~~ | **T-137 부터 쓰지 않는다** — 갱신 토큰 수명은 위 세션 수명을 따른다(compose 에 남아 있어도 무해) | — |
 
 > 참고: `docker-compose.yml`에는 이 외에도 `JWT_SECRET`, `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` 등이 직접 정의되어 있음 (`.env.example`에는 없음). 관련 위험은 [15_보안검토서](../15_보안검토서/보안_검토서.md) 참고.
 

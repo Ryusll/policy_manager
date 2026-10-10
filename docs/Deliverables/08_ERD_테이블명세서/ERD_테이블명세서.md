@@ -50,7 +50,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | role | enum Role | admin/editor/viewer, 기본 viewer |
 | platformRole | enum PlatformRole | none/global_admin |
 | oauthProvider / oauthSub | string? | `@@unique([oauthProvider, oauthSub])`. 예전 구글 로그인 연결 기록 — T-136 이후 쓰지 않는다(열은 남김) |
-| refreshToken | string? | |
+| refreshToken | string? | T-137 전 방식(사용자당 하나). 배포 전에 받은 토큰을 세션으로 한 번 옮기는 데만 쓰고 옮기면 비운다 |
 
 ### Policy (`policies`)
 | 필드 | 타입 | 설명 |
@@ -167,6 +167,9 @@ tenantId FK, userId FK, kind(기본 "policy_revision", 법령 개정 후보 알�
 
 ### AuditLog (`audit_logs`)
 tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json).
+
+### AuthSession (`auth_sessions`) — T-137 로그인 세션(기기마다 하나)
+userId FK(cascade), tokenHash(지금 유효한 갱신 토큰의 sha256 — 원문은 저장하지 않는다, 갱신마다 바뀜), remember(자동 로그인), expiresAt(갱신마다 다시 늘어남 — 30일/12시간), lastUsedAt, userAgent(≤300), revokedAt(로그아웃·비밀번호 변경), createdAt. `@@index([userId])`. 끝난 세션은 그 사람이 다시 로그인할 때 지운다
 
 ### AiQaLog (`ai_qa_logs`) — T-130 규정 질문 기록
 tenantId FK(cascade), userId FK?(SetNull), question(text), answerable(근거가 남아 답을 내보냈는가), answer(json? — 화면에 낸 답 블록, 답하지 않았으면 null), citedArticleIds(text[] — 근거로 보여 준 조문 행), contextRowCount(AI 에 본문을 준 행 수), aiCalled(한도에 세는가 — AI 를 부르기 전에 true 로 만들고, AI 를 부르지 않고 끝난 질문만 false 로 돌려준다), model?, inputTokens·outputTokens·cacheReadTokens(사용량·비용 집계), failure?(끝까지 가지 못한 사유 — AI 호출 실패·거절·끊긴 응답, 그래도 셈). 인덱스: `[tenantId, createdAt]`, `[tenantId, userId, createdAt]`(직원별 월 한도). 마이그레이션 `20261009230000_ai_qa`, `20261010040000_ai_qa_failure`.

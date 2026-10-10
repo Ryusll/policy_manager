@@ -4,6 +4,8 @@ export interface LoginPayload {
   email: string;
   password: string;
   tenantSlug?: string;
+  /** 자동 로그인 — 30일 유지(T-137) */
+  remember?: boolean;
 }
 
 export interface RegisterPayload {

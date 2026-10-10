@@ -58,6 +58,8 @@ export const messages: Record<Locale, Msg> = {
     'login.invalidCredentials':
       '이메일·비밀번호·기관 코드를 확인하세요. DB가 비어 있으면 API에서 시드(seed)를 실행해야 합니다.',
     'login.passwordNotSet': '비밀번호가 설정되지 않은 계정입니다. 회사 관리자에게 비밀번호 재설정을 요청하세요.',
+    'login.remember': '자동 로그인',
+    'login.rememberHint': '30일 동안 로그인 상태를 유지합니다. 여러 사람이 쓰는 PC에서는 켜지 마세요.',
     'login.tenantHint':
       '같은 기관 코드로 로그인한 사용자는 규정·검색 결과가 공유됩니다. 데모(demo)는 모두 같은 샌드박스입니다. 별도 공간이 필요하면 회원가입으로 새 기관을 만드세요.',
     'login.noAccount': '아직 계정이 없으신가요?',
@@ -461,6 +463,8 @@ export const messages: Record<Locale, Msg> = {
     'login.invalidCredentials':
       'Check email, password, and organization code. If the database is empty, run the API seed.',
     'login.passwordNotSet': 'No password is set for this account. Ask your company admin to reset it.',
+    'login.remember': 'Keep me signed in',
+    'login.rememberHint': 'Stay signed in for 30 days. Do not use this on shared computers.',
     'login.tenantHint':
       'Users with the same organization code share policies and search results. The demo tenant is a shared sandbox. Create a new organization via sign-up for a private space.',
     'login.noAccount': 'No account yet?',

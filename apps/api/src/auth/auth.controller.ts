@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Request, HttpCode, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Get, Body, Request, HttpCode, ForbiddenException, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshTokenDto, RegisterDto } from './auth.dto';
@@ -14,8 +14,8 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   @ApiOperation({ summary: 'Login' })
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Headers('user-agent') userAgent?: string) {
+    return this.authService.login(dto, { userAgent });
   }
 
   /** 로그인 화면이 회원가입 링크를 보일지 정한다 (T-122) */
@@ -52,9 +52,9 @@ export class AuthController {
   @AllowDuringPasswordChange()
   @Post('logout')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Logout' })
+  @ApiOperation({ summary: 'Logout — 이 기기의 세션만 끝낸다 (T-137)' })
   logout(@Request() req: any) {
-    return this.authService.logout(req.user.id);
+    return this.authService.logout(req.user.id, req.user.sessionId);
   }
 
   @AllowDuringPasswordChange()

@@ -26,6 +26,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: user.role,
       platformRole: (user as any).platformRole || 'none',
       mustChangePassword: user.mustChangePassword,
+      /** 이 요청을 보낸 기기의 세션 — 로그아웃이 이 세션만 끝낸다(T-137) */
+      sessionId: (payload?.sid as string | undefined) ?? null,
       tenantId: user.tenantId,
       tenantSlug: user.tenant.slug,
       tenantName: user.tenant.name,
