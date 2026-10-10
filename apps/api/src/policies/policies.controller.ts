@@ -31,6 +31,8 @@ import {
   policyUploadFilePath,
 } from './upload-path';
 import { buildStoredName, originalNameFromStored } from './upload-name';
+import { PolicyImportService } from './policy-import.service';
+import { ImportPolicyDocumentDto, POLICY_IMPORT_MEDIA_TYPE } from './policy-import.dto';
 
 @ApiTags('policies')
 @ApiBearerAuth()
@@ -41,6 +43,7 @@ export class PoliciesController {
     private policyPdfService: PolicyPdfService,
     private policyHwpxService: PolicyHwpxService,
     private audit: AuditService,
+    private policyImport: PolicyImportService,
   ) {}
 
   /**
@@ -85,6 +88,18 @@ export class PoliciesController {
   @ApiOperation({ summary: '규정 가져오기 이력 기록' })
   createImportLog(@Request() req: any, @Body() dto: CreatePolicyImportLogDto) {
     return this.policiesService.createImportLog(req.user.tenantId, req.user.id, dto);
+  }
+
+  /**
+   * 텍스트 가져오기 — 규정·장·조문·첫 버전·가져오기 이력·감사를 한 번에(T-135). 편집자는 초안으로, 관리자는 시행일로 바로 시행.
+   * 긴 원문은 JSON 기본 한도(100kb)를 넘으므로 `application/vnd.policy-import+json` 으로 보내면 20MB 까지 받는다(PoliciesModule)
+   */
+  @Post('import')
+  @Roles('admin', 'editor')
+  @ApiConsumes(POLICY_IMPORT_MEDIA_TYPE, 'application/json')
+  @ApiOperation({ summary: '텍스트 가져오기 — 한 번에 저장' })
+  importDocument(@Request() req: any, @Body() dto: ImportPolicyDocumentDto) {
+    return this.policyImport.importDocument(req.user.tenantId, req.user, dto);
   }
 
   @Post(':id/appendices')

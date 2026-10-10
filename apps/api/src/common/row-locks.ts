@@ -1,10 +1,11 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { PlanTier, Prisma } from '@prisma/client';
 
 /**
  * 행 잠금 — 쓰기 경로들이 같은 순서·같은 세기로 줄 서게 한다(T-131). 이 파일 밖에서 `FOR UPDATE` 를 쓰지 않는다(시험이 본다).
  *
- * **순서는 규정 → 조문(id 순) → 재파싱 검토 행 → 원문 세션.** 조문을 잡은 채 규정을 기다리는 경로가 하나라도 있으면, 규정을 잡고
+ * **순서는 회사 → 규정 → 조문(id 순) → 재파싱 검토 행 → 원문 세션.** 회사 행은 규정을 새로 만드는 쓰기만 잡는다(플랜 상한, T-135).
+ * 조문을 잡은 채 규정을 기다리는 경로가 하나라도 있으면, 규정을 잡고
  * 조문을 기다리는 경로(계층 쓰기·재파싱 묶음)와 서로 기다리다 멈춘다(40P01 → 500). 규정 행을 고칠 수도 있는 경로(첫 시행이면
  * 규정 시행일을 채우는 한꺼번에 시행·시행일 보정)도 규정부터 잡는다. 판단에 쓰는 값은 잠근 뒤 다시 읽는다 — 잠그기 전에 읽은 값으로
  * 쓰면 그 사이 커밋된 쓰기를 덮는다.
@@ -31,6 +32,7 @@ export const LONG_LOCK_WAIT_MS = 30_000;
 
 export const LOCK_BUSY_MESSAGE = '다른 작업이 같은 규정을 고치는 중입니다 — 잠시 뒤 다시 시도하세요.';
 export const VARIABLE_BUSY_MESSAGE = '다른 작업이 이 변수를 쓰는 중입니다 — 잠시 뒤 다시 시도하세요.';
+export const TENANT_BUSY_MESSAGE = '다른 사람이 규정을 등록하는 중입니다 — 잠시 뒤 다시 시도하세요.';
 
 /**
  * 잠금을 정해진 시간 안에 못 잡았다 — 409(잠시 뒤 다시). 어느 잠금을 얼마나 기다렸는지 들고 있어 전역 필터가 경고로 남긴다
@@ -71,6 +73,22 @@ async function acquire<T>(tx: Tx, label: string, waitMs: number, lock: () => Pro
   }
   await tx.$executeRaw`SELECT set_config('statement_timeout', ${prev}, true)`;
   return result;
+}
+
+/**
+ * 회사 행(맨 앞 순서) — 규정을 새로 만드는 쓰기끼리 줄 세운다. 잠근 뒤 센 규정 수로 플랜 상한을 본다(`policies/policy-slots`).
+ * 계정 쪽 회사 행 잠금(users.service)과도 같은 줄이다
+ */
+export async function lockTenantRow(tx: Tx, tenantId: string, waitMs = LOCK_WAIT_MS): Promise<{ plan: PlanTier }> {
+  const rows = await acquire(
+    tx,
+    'tenant',
+    waitMs,
+    () => tx.$queryRaw<{ plan: PlanTier }[]>`SELECT plan FROM tenants WHERE id = ${tenantId} FOR NO KEY UPDATE`,
+    TENANT_BUSY_MESSAGE,
+  );
+  if (!rows.length) throw new NotFoundException('Tenant not found');
+  return rows[0];
 }
 
 /** 규정 행 — 기다리는 사이 지워졌으면 404 */

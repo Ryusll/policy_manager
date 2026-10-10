@@ -10,7 +10,7 @@
 - `@Roles(...)`는 테넌트 내 역할(admin/editor/viewer), `@PlatformRoles('global_admin')`은 SaaS 운영자 전용, `@MinPlan('pro')`는 플랜 하한(PlanGuard)
 - 레이트리밋: 100 req/min (`ThrottlerGuard`)
 - 요청 바디는 전역 `ValidationPipe`(whitelist, forbidNonWhitelisted, transform) 적용 — DTO에 없는 필드는 자동 거부
-- **잠금 대기(T-131)**: 규정·조문을 고치는 쓰기는 규정 → 조문(id 순) → 재파싱 검토 → 원문 순서로 잠근다. 다른 쓰기가 같은 규정·조문을 잡고 있어 3초(재파싱 묶음·한꺼번에 시행·시행일 보정·조 재정렬·규정 삭제는 30초) 안에 잠금을 못 잡으면 **409 `다른 작업이 같은 규정을 고치는 중입니다 — 잠시 뒤 다시 시도하세요.`** — 같은 요청을 다시 보내면 된다. 교착이 나도 같은 409, 트랜잭션을 시작하지 못하면(커넥션 부족) **503**(전역 `LockBusyFilter` — 기다림 409 는 어느 잠금인지 경고 로그, 교착은 오류 로그). 변수 값 고치기는 `다른 작업이 이 변수를 쓰는 중입니다`. 의견·즐겨찾기·개정 후보 넣기는 이 잠금에 막히지 않는다
+- **잠금 대기(T-131)**: 규정·조문을 고치는 쓰기는 규정 → 조문(id 순) → 재파싱 검토 → 원문 순서로 잠근다. 규정을 새로 만드는 쓰기(새 규정·가져오기 확정·텍스트 가져오기·일괄 등록)는 그 앞에 회사 행을 잠그고 플랜 상한·코드 중복을 센다(T-135) — 3초 안에 못 잡으면 409 `다른 사람이 규정을 등록하는 중입니다 — 잠시 뒤 다시 시도하세요.` 다른 쓰기가 같은 규정·조문을 잡고 있어 3초(재파싱 묶음·한꺼번에 시행·시행일 보정·조 재정렬·규정 삭제는 30초) 안에 잠금을 못 잡으면 **409 `다른 작업이 같은 규정을 고치는 중입니다 — 잠시 뒤 다시 시도하세요.`** — 같은 요청을 다시 보내면 된다. 교착이 나도 같은 409, 트랜잭션을 시작하지 못하면(커넥션 부족) **503**(전역 `LockBusyFilter` — 기다림 409 는 어느 잠금인지 경고 로그, 교착은 오류 로그). 변수 값 고치기는 `다른 작업이 이 변수를 쓰는 중입니다`. 의견·즐겨찾기·개정 후보 넣기는 이 잠금에 막히지 않는다
 
 ## auth (`/api/auth`)
 
@@ -43,9 +43,10 @@
 |---|---|---|---|
 | GET | (root) | admin, editor | 규정 목록(검색·필터) |
 | GET | import-logs | admin, editor | 가져오기 이력 |
+| POST | import | admin, editor | **텍스트 가져오기 — 한 번에 저장**(T-135). 규정 목록의 "기존 규정 가져오기"(TXT·DOCX·붙여넣기)가 화면에서 나눈 장·조문을 한 요청으로 보낸다. 규정·장·조문·첫 버전·가져오기 이력·감사 기록을 트랜잭션 하나로 — 중간에 실패하면 아무것도 남지 않는다(예전에는 화면이 규정·장·조문·한꺼번에 시행·시행일·이력 API 를 차례로 불러 반쪽 규정이 남을 수 있었다). **편집자**는 초안으로만(보낸 시행일은 쓰지 않는다 — 관리자가 상세 화면에서 한꺼번에 시행), **관리자**는 `effectiveDate`(YYYY-MM-DD, 필수 — 없으면 400)로 바로 시행: 승인자·승인/발행 시각·시행 사유 `기존 규정 가져오기 자동 게시`·규정 시행일, 본문에 변수 표식이 남았으면 400(한꺼번에 시행과 같다), 감사 `version.bulk_publish`. 본문이 빈 조 제목 행은 버전을 만들지 않는다. 플랜 상한 403·코드 중복 409 는 회사 행을 잠근 뒤 센다. 긴 원문은 JSON 기본 한도(100kb)를 넘으므로 `Content-Type: application/vnd.policy-import+json` 으로 보내면 20MB 까지 받는다(이 경로만 — `application/json` 은 그대로 100kb). 응답: 만든 규정 + `articleCount`(만든 조문 행)·`published`(바로 시행한 버전 수) |
 | POST | import-logs | admin, editor | 가져오기 이력 기록 |
 | GET | :id | admin, editor | 규정 상세. 조문은 **조 → 가지(`branchNumber`, 제3조의2) → 조 본문 → 항 → 목** 순. 조문마다 `versions` — **오늘(한국 날짜) 시행 중인 버전 1건**(T-127: 시점 조회와 같은 규칙에 시행일 없는 예전 시행본도 현재로 본다. 미래 시행일로 개정을 승인했으면 지금 본문은 `archived` 일 수 있고 `phase: 'in_force'` 가 붙는다. 오늘 시행 중인 본문이 없으면 `[]`)·`currentState`(`in_force`·`repealed`·`scheduled`(시행일 전인 버전만 있음)·`none`)·폐지 상태면 `repealedOn`(YYYY-MM-DD)·`scheduledVersions`(승인됐지만 시행일 전인 버전 — 시행일마다 가장 늦은 판 1건, 이른 날부터, `phase: 'scheduled'`, `versions[0]` 과 같은 날짜 3종 모양. 승인된 문구라 열람자에게도 보낸다)와 `_count.comments`(**처리 안 된** 의견 수). 계층은 **오늘 시점 조회와 같이** 조립한다(시행 예정 버전이 있는 조문은 오늘 버전의 얼린 계층으로 오늘의 자리·장, T-110 ②) — 조문마다 지금 행의 자리 `liveChapterId`·`liveSectionId`·`liveNumber`·`liveBranchNumber`·`liveClauseNumber`·`liveItemNumber`·`liveTitle` 과 오늘 자리가 지금 행과 다른지 `displaced` 를 함께 싣는다(조문 수정·삭제는 지금 행의 장으로). 지금은 없는 장(그 뒤 지워진 장을 그때 번호·제목으로 다시 세운 것)은 `virtual: true`. 규정에 `current`: `{ date(기준일), scheduledCount(시행 예정 개정이 있는 조문 수), nextScheduledDate, structureChanges(오늘 자리가 지금 행과 다른 조문·장 수 — 미래 시행 재파싱 묶음이 옮긴 동안 0보다 크고, 화면은 그동안 구조 편집을 막는다), scheduledArticles }` — `scheduledArticles` 는 시행 예정인데 오늘 그 자리를 시행 중인 다른 조문이 쓰고 있어 본문 목록에서 뺀 조문(`id`·번호·`title`·`liveChapterId`·`effectiveDate`). **admin·editor 에게만** 조문마다 `pendingVersion`(시행본 유무와 무관한 최신 초안·검토중 버전, 없으면 null)을 더한다 — 시행본이 없는 조문은 화면이 이것을 "초안 · 시행 전"으로 보인다. 열람자에게는 보내지 않는다 (T-117). 조문마다 `versions[0]` 에 `lawChange`(아래 버전 목록과 같은 모양 — 연혁 탭의 날짜 3종, T-111) |
-| POST | (root) | admin, editor | 규정 생성 |
+| POST | (root) | admin, editor | 규정 생성. 회사 행을 잠근 뒤 플랜 상한(403)·코드 중복(409 `규정 코드가 이미 있습니다: …` — 예전 영어 문구 `Code … is already in use`)을 센다(T-135 — 동시에 들어온 요청이 마지막 한 자리를 함께 가져가지 않고, 같은 코드로 동시에 만들면 뒤는 500 이 아니라 409). 감사 기록도 같은 트랜잭션 |
 | PUT | :id | admin, editor | 규정 수정(개정일·시행일·알림 설정 포함). 규정 행을 잠그고 메타데이터(부서·분류·개정 알림)를 다시 읽어 고친다(T-131 — 동시에 고친 키를 지우지 않는다). 긴 작업(묶음 승인 등)이 잡고 있으면 30초까지 기다렸다 저장, 넘으면 409 |
 | DELETE | :id | admin | 규정 삭제. 규정을 처음부터 지우기 잠금(FOR UPDATE)으로 잡고 지울 조문(id 순)을 잡은 뒤 지운다(T-131 — 조문 즐겨찾기 넣기와 엇갈려 멈추지 않게). 지우는 동안 기다린 쓰기는 404 |
 | POST | :id/chapters | admin, editor | 장 생성 |
@@ -182,7 +183,7 @@
 | POST | upload | admin, editor | PDF 업로드 → 텍스트 추출(Python pdfplumber/pymupdf) → 조항 트리. 최대 30MB. 파싱에 성공하면 **원문 PDF를 세션 이름(`<세션id>.pdf`)으로 보관**해 `extractMeta.sourceFile` 에 적는다(등록 시 첨부로 옮김, 미등록은 일주일 뒤 정리). 한글 파일명은 latin1 해석을 바로잡아 `fileName` 에 저장 (T-120) |
 | GET | :id | admin, editor, viewer | 파싱 세션 조회 |
 | PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14). 반영·새 규정 등록에 이미 쓴 원문이면 409 — 반영이 원문을 잡고 있으면 끝날 때까지 기다렸다가 판정한다(T-131) |
-| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120). Body 의 **`effectiveDate`(YYYY-MM-DD)는 필수**(T-123) — 가져오는 본문이 실제로 시행된 날이며 첫 버전과 규정 단위 시행일에 들어간다. 없거나 없는 날짜면 아무것도 만들지 않고 400 본문에 등록된 변수의 표식이 있으면 400(바로 시행하는 본문이라, T-109) |
+| POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120). Body 의 **`effectiveDate`(YYYY-MM-DD)는 필수**(T-123) — 가져오는 본문이 실제로 시행된 날이며 첫 버전과 규정 단위 시행일에 들어간다. 없거나 없는 날짜면 아무것도 만들지 않고 400 본문에 등록된 변수의 표식이 있으면 400(바로 시행하는 본문이라, T-109). **한 번에 저장**(T-135) — 규정·장·절·조문·첫 버전(만든 사람 `createdBy` 포함)·부칙·감사 기록·원문 사용 표시를 트랜잭션 하나로 넣는다. 중간에 실패하면 아무것도 남지 않고 같은 원문으로 다시 확정하면 된다. 이미 반영·등록에 쓴 원문이면 409 `이 원문은 이미 다른 반영이나 새 규정 등록에 썼습니다 — 원문을 다시 가져오세요.`(예전 400 `이미 커밋된 세션입니다.`), 확정하는 사이 미리보기를 고쳤으면 409 `등록하는 사이 원문 미리보기가 바뀌었습니다 — 미리보기를 다시 확인하고 등록하세요.`, 플랜 상한 403·코드 중복 409 는 회사 행을 잠근 뒤 센다. 원문 PDF 는 저장 전에 새 규정의 첨부 자리로 복사해 두고 원본은 확정 뒤에 지운다 — 복사하지 못하면 500 `원문 PDF를 첨부하지 못해 등록하지 않았습니다 — 잠시 뒤 다시 시도하세요.`(원본은 남는다). 감사 기록(`policy.create`·`chapter.create`·`section.create`·`policy.file.upload`)의 `details.sessionId` 로 어느 원문으로 만들었는지 남는다 |
 | POST | :id/reparse | admin, editor | **기존 규정과 비교(T-110 ①, 재파싱)** `{ policyId }` — 이 원문을 고른 규정의 조문과 계층·내용 지문 두 축으로 맞춘 **재파싱 검토**를 만든다(201, 응답은 `GET /reparse-reviews/:id` 와 같다). 규정 데이터는 바꾸지 않는다. 같은 원문·같은 규정의 열린 검토는 지나간 것(`superseded`)이 되고 사람이 정한 결정은 같은 항목(종류·재파싱 행·기존 조문·후보가 같고 결정 규칙에 맞을 때)으로 옮겨 온다. 미리보기가 준비되지 않았거나 이미 새 규정으로 등록한 원문이면 400, 다른 회사의 원문·규정이면 404. 감사 `reparse.compare`. 잠근 뒤(규정 → 열린 검토 → 원문, T-131) 다시 본다 — 그 사이 원문을 반영·등록에 썼으면 409 `원문을 다시 가져와`, 원문 트리·규정 상태가 바뀌었으면 409 `다시 비교`. 앞 검토는 그때 열려 있는 것만 지나감으로 돌린다 |
 
 ## reparse-reviews — 재파싱 검토 (T-110 ①) — 화면: `/policies/:id/reparse/:reviewId`
@@ -204,7 +205,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | POST | import/policies/validate | admin | **사전 검사**(200). 넣지 않고 문제를 전부 모아 돌려준다. 응답 `{issues[], canImport, summary}` (T-13) |
-| POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues`. 규정마다 `effectiveDate`(YYYY-MM-DD) — `publish: true` 조문이 하나라도 있으면 **필수**이고 그 시행본과 규정 단위 시행일에 들어간다(T-123, "오늘"로 채우지 않는다) 바로 시행(`publish: true`)하는 조문에 변수 표식이 남아 있으면 400 — 초안으로 가져와 검토를 요청한다(T-109) |
+| POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues`. 규정마다 `effectiveDate`(YYYY-MM-DD) — `publish: true` 조문이 하나라도 있으면 **필수**이고 그 시행본과 규정 단위 시행일에 들어간다(T-123, "오늘"로 채우지 않는다) 바로 시행(`publish: true`)하는 조문에 변수 표식이 남아 있으면 400 — 초안으로 가져와 검토를 요청한다(T-109). 저장할 때 회사 행을 잠근 뒤 상한·코드 중복을 다시 본다(T-135 — 사전 검사 뒤 다른 요청이 자리·코드를 가져갔으면 403·409). 감사 기록(`admin.import_policies`)도 같은 트랜잭션 |
 
 > **사전 검사가 보는 것**: 코드 중복(기존/파일 안), 빈 코드·제목, 길이 초과, 장·조 번호 형식 → 오류. 장 없음, 빈 본문, 조 번호 겹침·건너뜀 → 경고. **플랜 규정 상한**도 여기서 본다 — 예전에는 일괄 가져오기가 상한을 통과해 Starter(5건)가 한 번에 100건을 넣을 수 있었다.
 
@@ -384,6 +385,7 @@
 **UpdateArticleDto** — `number?`(≥1), `sectionId?`(절 이동. `null`이면 절에서 분리), `title?`, `clauseNumber?`(null로 비우기), `itemNumber?`(null로 비우기), has* 플래그, related*Note(≤8000)
 **CreatePolicyAppendixDto** — `kind`(supplementary=부칙|annex=별표|form=서식), `title`(≤500), `body`(≤500000), `sortOrder?`(≥0)
 **UpdatePolicyAppendixDto** — 위 필드 전부 optional
+**ImportPolicyDocumentDto**(T-135) — `code`(1~80), `title`(1~500), `description?`(≤4000), `department?`·`category?`(≤100), `effectiveDate?`(관리자 필수), `chapters`(1~1000)[`number`(≥1), `title?`(≤300), `suppressHeader?`, `articles`(≤20000)[`number`(≥1), `branchNumber?`·`clauseNumber?`·`itemNumber?`(≥1), `title?`(≤500), `content?`(≤200000)]], `log?`{`sourceName?`(≤100), `parseProfile?`(mixed|korean|english), `articleCount?`(원문에서 나눈 조 수 — 항·목으로 펼치기 전), `cleanupOptions?`(JSON)}
 **CreatePolicyImportLogDto** — `policyId?`, `sourceName?`, `parseProfile?`(mixed|korean|english), `chapterCount?`(≥0), `articleCount?`(≥0), `cleanupOptions?`(JSON), `status?`, `message?`
 **CreateRevisionReasonDto** — `kind?`(enactment=제정|amendment=일부개정|full_amendment=전부개정|repeal=폐지, 기본 amendment), `label`(≤200, 예 "제3차 일부개정"), `reason`(≤100000), `summary?`(≤100000), `promulgatedDate?`(YYYY-MM-DD), `effectiveDate?`(YYYY-MM-DD)
 **UpdateRevisionReasonDto** — 위 필드 전부 optional

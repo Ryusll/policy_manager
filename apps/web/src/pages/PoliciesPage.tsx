@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { policiesApi, versionsApi } from '../api/policies';
+import { policiesApi } from '../api/policies';
 import { Plus, FileText, FileUp, Trash2, Search, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
@@ -127,8 +127,7 @@ export default function PoliciesPage() {
       splitMode?: ImportSplitMode;
       splitDelimiter?: string;
     }) => {
-      const policy = await policiesApi.create(payload);
-      if (mode !== 'import') return policy;
+      if (mode !== 'import') return policiesApi.create(payload);
 
       const parsed = parsePolicyTextWithSplitMode(
         rawText || '',
@@ -156,46 +155,41 @@ export default function PoliciesPage() {
       const chaptersForCreate: { number: number; title?: string; articles: HierarchyArticleRow[] }[] =
         cleanupOptions.inferHierarchy ? expandChaptersWithHierarchy(chaptersToCreate) : chaptersToCreate;
 
-      for (const chapter of chaptersForCreate) {
-        // 원문에 장 표기가 없어 파서가 만든 장(auto)은 숨김 장으로 등록한다.
-        // 없는 "제1장 총칙"을 임의로 만들어 붙이지 않기 위함 (SRS POLICY-6)
-        const isAutoChapter = (chapter as { auto?: boolean }).auto === true;
-        const createdChapter = await policiesApi.createChapter(policy.id, {
-          number: chapter.number,
-          title: isAutoChapter ? '' : chapter.title || '본문',
-          suppressHeader: isAutoChapter,
-        });
-        for (const article of chapter.articles) {
-          const isJoRoot = article.clauseNumber == null && article.itemNumber == null;
-          await policiesApi.createArticle(policy.id, createdChapter.id, {
-            number: article.number,
-            ...(article.branch ? { branchNumber: article.branch } : {}),
-            // 항·목 행은 제목 없이 본문만 등록한다(조 제목과 중복 방지)
-            title: isJoRoot ? article.title || '조문' : '',
-            content: article.content || '',
-            ...(article.clauseNumber != null ? { clauseNumber: article.clauseNumber } : {}),
-            ...(article.itemNumber != null ? { itemNumber: article.itemNumber } : {}),
-          });
-        }
-      }
-      // 기존 규정을 옮겨 오는 것이라 이미 시행 중인 내용이다 — PDF 가져오기처럼 바로 시행한다.
-      // 그러지 않으면 조문이 전부 초안으로 남아 전문 보기에 "시행중 버전이 없습니다"만 뜬다.
-      // 시행 승인은 관리자 권한이라, 편집자가 가져오면 초안으로 두고 관리자가 상세 화면에서 한꺼번에 시행한다.
-      // 시행일은 "오늘"이 아니라 그 본문이 실제로 시행된 날이다 — 오늘로 두면 과거 시점 조회가 틀어진다(PAT-02).
-      if (user?.role === 'admin' && effectiveDate) {
-        await versionsApi.publishDrafts(policy.id, { changeNote: '기존 규정 가져오기 자동 게시', effectiveDate });
-        await policiesApi.update(policy.id, { effectiveDate });
-      }
-      await policiesApi.createImportLog({
-        policyId: policy.id,
-        sourceName: mode === 'import' ? 'manual-import' : 'manual',
-        parseProfile,
-        chapterCount: chaptersToCreate.length,
-        articleCount: chaptersToCreate.reduce((acc, chapter) => acc + chapter.articles.length, 0),
-        cleanupOptions,
-        status: 'success',
+      // 한 번에 저장한다(T-135) — 예전에는 규정·장·조문·한꺼번에 시행·규정 시행일·가져오기 이력을 차례로 불러, 중간에 하나라도
+      // 실패하면 반쪽 규정이 남았다. 관리자가 가져오면 시행일로 바로 시행되고(이미 시행 중인 내용이다), 편집자가 가져오면 초안으로
+      // 남아 관리자가 상세 화면에서 한꺼번에 시행한다 — 서버가 역할로 정한다. 시행일은 "오늘"이 아니라 그 본문이 실제로 시행된 날(PAT-02)
+      return policiesApi.importDocument({
+        ...payload,
+        effectiveDate: user?.role === 'admin' ? effectiveDate : undefined,
+        chapters: chaptersForCreate.map((chapter) => {
+          // 원문에 장 표기가 없어 파서가 만든 장(auto)은 숨김 장으로 등록한다.
+          // 없는 "제1장 총칙"을 임의로 만들어 붙이지 않기 위함 (SRS POLICY-6)
+          const isAutoChapter = (chapter as { auto?: boolean }).auto === true;
+          return {
+            number: chapter.number,
+            title: isAutoChapter ? '' : chapter.title || '본문',
+            suppressHeader: isAutoChapter,
+            articles: chapter.articles.map((article) => {
+              const isJoRoot = article.clauseNumber == null && article.itemNumber == null;
+              return {
+                number: article.number,
+                ...(article.branch ? { branchNumber: article.branch } : {}),
+                // 항·목 행은 제목 없이 본문만 등록한다(조 제목과 중복 방지)
+                title: isJoRoot ? article.title || '조문' : '',
+                content: article.content || '',
+                ...(article.clauseNumber != null ? { clauseNumber: article.clauseNumber } : {}),
+                ...(article.itemNumber != null ? { itemNumber: article.itemNumber } : {}),
+              };
+            }),
+          };
+        }),
+        log: {
+          sourceName: 'manual-import',
+          parseProfile,
+          articleCount: chaptersToCreate.reduce((acc, chapter) => acc + chapter.articles.length, 0),
+          cleanupOptions,
+        },
       });
-      return policy;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['policies'] });

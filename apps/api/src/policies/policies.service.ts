@@ -19,7 +19,7 @@ import {
 } from '../common/as-of';
 import { buildCurrentChapters, currentStateOf, type CurrentState } from './current-view';
 import { AuditService } from '../audit/audit.service';
-import { maxPoliciesForPlan } from '../common/plan-limits';
+import { claimPolicySlots } from './policy-slots';
 import { buildPolicyForest } from './policy-hierarchy';
 import {
   applyChapterHeaderPatch,
@@ -703,14 +703,6 @@ export class PoliciesService {
     const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) throw new NotFoundException('Tenant not found');
 
-    const count = await this.prisma.policy.count({ where: { tenantId } });
-    const max = maxPoliciesForPlan(tenant.plan);
-    if (count >= max) {
-      throw new ForbiddenException(
-        `현재 플랜(${tenant.plan})에서 등록 가능한 규정은 최대 ${max}건입니다.`,
-      );
-    }
-
     if (dto.templateId) {
       if (tenant.plan === 'starter') {
         throw new ForbiddenException('Policy template assignment requires pro plan or higher');
@@ -721,33 +713,34 @@ export class PoliciesService {
       if (!template) throw new NotFoundException('Template not found');
     }
 
-    const existing = await this.prisma.policy.findUnique({
-      where: { tenantId_code: { tenantId, code: dto.code } },
-    });
-    if (existing) {
-      throw new ConflictException('Code ' + dto.code + ' is already in use');
-    }
     const { department, category, ...baseDto } = dto as any;
     const metadata = {
       ...(department?.trim() ? { department: department.trim() } : {}),
       ...(category?.trim() ? { category: category.trim() } : {}),
     };
-    const created = await this.prisma.policy.create({
-      data: {
-        tenantId,
-        ...baseDto,
-        metadata: Object.keys(metadata).length ? (metadata as any) : undefined,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      // 플랜 상한·코드 중복은 회사 행을 잠근 뒤 센다(T-135) — 잠그지 않고 세면 마지막 한 자리에 둘이 들어간다
+      await claimPolicySlots(tx, tenantId, [dto.code]);
+      const created = await tx.policy.create({
+        data: {
+          tenantId,
+          ...baseDto,
+          metadata: Object.keys(metadata).length ? (metadata as any) : undefined,
+        },
+      });
+      await this.audit.log(
+        {
+          tenantId,
+          userId,
+          action: 'policy.create',
+          entityType: 'Policy',
+          entityId: created.id,
+          details: { code: created.code },
+        },
+        tx,
+      );
+      return created;
     });
-    await this.audit.log({
-      tenantId,
-      userId,
-      action: 'policy.create',
-      entityType: 'Policy',
-      entityId: created.id,
-      details: { code: created.code },
-    });
-    return created;
   }
 
   async update(tenantId: string, id: string, dto: UpdatePolicyDto, userId: string) {

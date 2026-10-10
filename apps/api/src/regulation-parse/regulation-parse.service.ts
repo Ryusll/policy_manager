@@ -3,14 +3,13 @@ import {
   BadRequestException,
   ConflictException,
   NotFoundException,
-  ForbiddenException,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { spawnSync } from 'child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { PoliciesService } from '../policies/policies.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { AuditService } from '../audit/audit.service';
 import { VariablesService } from '../variables/variables.service';
@@ -18,14 +17,17 @@ import { formatJo } from '../common/article-label';
 import { policyUploadDir } from '../policies/upload-path';
 import { buildStoredName, decodeMultipartFilename } from '../policies/upload-name';
 import { regulationParseSourcePath } from './regulation-parse-paths';
-import { maxPoliciesForPlan } from '../common/plan-limits';
 import { parseDateOnly } from '../common/date-only';
+import { lockParseSessionRow } from '../common/row-locks';
+import { claimPolicySlots } from '../policies/policy-slots';
 import {
   buildRegulationTreeFromLines,
   RegulationArticleNode,
   RegulationParseLine,
 } from './regulation-tree.builder';
 import { buildCommitPlan } from './commit-rows';
+import { buildNewPolicyRecords, insertNewPolicy, newPolicyAudits } from '../policies/new-policy-records';
+import type { AuditEntry } from '../audit/audit.service';
 
 interface PdfExtractJson {
   ok: boolean;
@@ -36,6 +38,11 @@ interface PdfExtractJson {
   fallback_error?: string;
   fallback_from?: string;
 }
+
+/** 원문을 이미 다른 반영·새 규정 등록에 썼다 — 재파싱 반영(T-110)이 원문을 쓸 때와 같은 문구 */
+const SESSION_USED_MESSAGE = '이 원문은 이미 다른 반영이나 새 규정 등록에 썼습니다 — 원문을 다시 가져오세요.';
+/** 저장 전에 새 규정 첨부 자리로 복사해 둔 원문 PDF(T-135) */
+type StagedPdf = { src: string; dest: string; dir: string; storedName: string; fileName: string; size: number };
 
 function assertTree(roots: unknown): RegulationArticleNode[] {
   if (!Array.isArray(roots)) {
@@ -63,7 +70,6 @@ export class RegulationParseService {
 
   constructor(
     private prisma: PrismaService,
-    private policiesService: PoliciesService,
     private lawGoKrService: LawGoKrService,
     private audit: AuditService,
     private variables: VariablesService,
@@ -216,35 +222,45 @@ export class RegulationParseService {
   }
 
   /**
-   * 가져온 원문 PDF를 규정 첨부파일로 옮긴다 — 상세 화면의 "원문 PDF"로 바로 보이고,
-   * 웹 본문과 나란히 놓고 대조할 수 있다. 실패해도 규정 등록은 그대로 둔다(첨부는 나중에 올릴 수 있다).
+   * 가져온 원문 PDF를 새 규정의 첨부 자리로 **저장 전에** 복사해 둔다(T-135) — 상세 화면의 "원문 PDF"로 바로 보이고, 웹 본문과
+   * 나란히 놓고 대조할 수 있다. 규정 id 를 미리 정해 두므로 바로 그 자리에 놓는다(규정 행이 생기기 전에는 첨부 목록·내려받기가 규정을
+   * 찾지 못해 보이지 않는다). 복사하지 못하면 확정하지 않는다 — 예전에는 등록만 되고 첨부가 빠진 채 오류를 삼켰다.
+   * 원문이 없는 세션(법제처 가져오기, 보관에 실패했거나 오래돼 청소된 원문)은 첨부 없이 등록한다(예전과 같다).
+   * 원본은 확정이 끝난 뒤에 지운다 — 저장이 실패하면 이 복사본만 지우고 원본으로 다시 시도한다.
    */
-  private async attachSourcePdf(
+  private stageSourcePdf(
     tenantId: string,
-    userId: string,
     policyId: string,
-    sourceFile: unknown,
-    fileName: string | null,
-  ) {
-    const src = regulationParseSourcePath(tenantId, sourceFile);
-    if (!src || !existsSync(src)) return;
+    session: { id: string; extractMeta: unknown; fileName: string | null },
+  ): StagedPdf | null {
+    const src = regulationParseSourcePath(tenantId, (session.extractMeta as { sourceFile?: unknown } | null)?.sourceFile);
+    if (!src) return null;
+    if (!existsSync(src)) {
+      this.log.warn(`원문 PDF가 없어 첨부 없이 등록합니다 [${session.id}]`);
+      return null;
+    }
+    const dir = policyUploadDir(tenantId, policyId);
+    const fileName = session.fileName || '원문.pdf';
+    const storedName = buildStoredName(fileName);
+    const dest = join(dir, storedName);
     try {
-      const dir = policyUploadDir(tenantId, policyId);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      const storedName = buildStoredName(fileName || '원문.pdf');
-      copyFileSync(src, join(dir, storedName));
-      const size = statSync(src).size;
-      unlinkSync(src);
-      await this.audit.log({
-        tenantId,
-        userId,
-        action: 'policy.file.upload',
-        entityType: 'Policy',
-        entityId: policyId,
-        details: { fileName: fileName || '원문.pdf', storedName, size, source: 'regulation-parse' },
-      });
+      mkdirSync(dir, { recursive: true });
+      copyFileSync(src, dest);
+      return { src, dest, dir, storedName, fileName, size: statSync(dest).size };
     } catch (e: any) {
-      this.log.warn(`원문 PDF를 첨부하지 못했습니다 [${policyId}]: ${e?.message || e}`);
+      this.log.error(`원문 PDF를 첨부 자리로 복사하지 못했습니다 [${session.id}]: ${e?.message || e}`);
+      this.discardStagedPdf({ dest, dir });
+      throw new InternalServerErrorException('원문 PDF를 첨부하지 못해 등록하지 않았습니다 — 잠시 뒤 다시 시도하세요.');
+    }
+  }
+
+  /** 저장하지 못한 확정의 복사본만 지운다(새 규정 자리라 다른 파일은 없다) */
+  private discardStagedPdf(pdf: Pick<StagedPdf, 'dest' | 'dir'>) {
+    try {
+      if (existsSync(pdf.dest)) unlinkSync(pdf.dest);
+      if (existsSync(pdf.dir) && !readdirSync(pdf.dir).length) rmdirSync(pdf.dir);
+    } catch (e: any) {
+      this.log.warn(`복사해 둔 원문 PDF를 지우지 못했습니다 [${pdf.dest}]: ${e?.message || e}`);
     }
   }
 
@@ -306,6 +322,13 @@ export class RegulationParseService {
     return this.prisma.regulationParseSession.findUniqueOrThrow({ where: { id } });
   }
 
+  /**
+   * 원문 미리보기로 새 규정을 등록한다 — 규정·장·절·조문·첫 버전·부칙·감사 기록·원문 사용 표시를 **트랜잭션 하나**로(T-135).
+   *
+   * 예전에는 서비스 함수로 하나씩 저장해 중간에 실패하면 반쪽 규정이 남았고, 같은 원문을 동시에 두 번 확정하면 규정이 둘 생겼다.
+   * 이제 무거운 일(트리 변환·검사·행 만들기·원문 PDF 복사)은 밖에서 끝내고, 안에서는 회사 → 원문 세션 순으로 잠근 뒤 다시 보고
+   * 넣기만 한다. 회사 잠금 아래에서 플랜 상한·코드 중복을 다시 세므로 다른 경로(새 규정·일괄 등록)와도 마지막 자리를 다투지 않는다.
+   */
   async commit(
     tenantId: string,
     userId: string,
@@ -318,9 +341,7 @@ export class RegulationParseService {
       throw new BadRequestException('시행일(YYYY-MM-DD)을 입력하세요 — 가져오는 본문이 시행된 날짜입니다.');
     }
     const session = await this.findOne(tenantId, id);
-    if (session.committedPolicyId) {
-      throw new BadRequestException('이미 커밋된 세션입니다.');
-    }
+    if (session.committedPolicyId) throw new ConflictException(SESSION_USED_MESSAGE);
     if (session.status !== 'ready' || !session.parseTree) {
       throw new BadRequestException('미리보기가 준비된 세션만 커밋할 수 있습니다.');
     }
@@ -329,120 +350,97 @@ export class RegulationParseService {
       throw new BadRequestException('조항 트리가 비어 있습니다.');
     }
 
-    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
-    if (!tenant) throw new NotFoundException('Tenant not found');
-    const count = await this.prisma.policy.count({ where: { tenantId } });
-    const max = maxPoliciesForPlan(tenant.plan);
-    if (count >= max) {
-      throw new ForbiddenException(
-        `현재 플랜(${tenant.plan})에서 등록 가능한 규정은 최대 ${max}건입니다.`,
-      );
-    }
-
     // 트리를 장·절·조·항·목 구조로 변환한다(T-88·T-89). 예전엔 전부 조로 평탄화했다.
     const plan = buildCommitPlan(tree.roots);
     if (!plan.rows.length) {
       throw new BadRequestException('커밋할 조문이 없습니다.');
     }
-    // 바로 시행하는 본문이라 변수 표식이 남아 있으면 안 된다(T-109)
-    await this.variables.assertNoMarkers(
-      this.prisma,
-      tenantId,
-      plan.rows.map((r) => ({ label: formatJo(r.number, r.branchNumber ?? null), content: r.content })),
-    );
     const isLawGoKr = (session.extractMeta as { source?: string } | null)?.source === 'lawgokr';
-    const policy = await this.policiesService.create(
-      tenantId,
-      {
-        code: dto.code.trim(),
-        title: dto.title.trim(),
-        description: dto.description?.trim() || preambleAsDescription(plan.preamble, dto.title),
-      },
-      userId,
-    );
-    // 새 규정이라 규정 단위 시행일은 비어 있다 — 가져오기 시행일로 채운다
-    await this.prisma.policy.update({ where: { id: policy.id }, data: { effectiveDate: effective } });
-
-    // 원문의 장·절을 실제 Chapter/Section 으로 만든다. 장 표기가 없는 문서면
-    // buildCommitPlan 이 숨김 장 한 개(`본문`)만 넣어 주므로 예전과 같은 결과가 된다.
-    const chapterIds: string[] = [];
-    const sectionIds: (string | null)[][] = [];
-    for (const ch of plan.chapters) {
-      const created = await this.policiesService.createChapter(
-        tenantId,
-        policy.id,
-        { number: ch.number, title: ch.title, suppressHeader: ch.suppressHeader },
-        userId,
-      );
-      chapterIds.push(created.id);
-      const ids: (string | null)[] = [];
-      for (const sec of ch.sections) {
-        const createdSection = await this.policiesService.createSection(
-          tenantId,
-          policy.id,
-          created.id,
-          { number: sec.number, title: sec.title },
-          userId,
-        );
-        ids.push(createdSection.id);
-      }
-      sectionIds.push(ids);
-    }
-
-    const changeNote = isLawGoKr ? '법제처 가져오기 커밋 자동 게시' : 'PDF 파싱 커밋 자동 게시';
-    for (const row of plan.rows) {
-      const chapterId = chapterIds[row.chapterIndex];
-      const sectionId =
-        row.sectionIndex == null ? undefined : sectionIds[row.chapterIndex]?.[row.sectionIndex] ?? undefined;
-      const createdArticle = await this.policiesService.createArticle(tenantId, policy.id, chapterId, {
-        number: row.number,
-        ...(row.branchNumber ? { branchNumber: row.branchNumber } : {}),
-        title: row.title,
-        content: row.content,
-        clauseNumber: row.clauseNumber ?? undefined,
-        itemNumber: row.itemNumber ?? undefined,
-        sectionId: sectionId ?? undefined,
-      });
-      await this.prisma.articleVersion.updateMany({
-        where: { articleId: createdArticle.id, versionNum: 1, status: 'draft' },
-        data: {
-          status: 'published',
-          approvedBy: userId,
-          approvedAt: new Date(),
-          publishedAt: new Date(), // 발행일(T-108) — 시행일과 다르다
-          effectiveDate: effective,
-          changeNote,
-        },
-      });
-    }
-
-    // 부칙·별표·서식은 조문이 아니라 규정의 부칙·별표 탭으로 보낸다
-    for (const [sortOrder, appendix] of plan.appendices.entries()) {
-      await this.policiesService.createAppendix(tenantId, policy.id, {
-        kind: appendix.kind,
-        title: appendix.title.slice(0, 200),
-        body: appendix.body,
-        sortOrder,
-      });
-    }
-
-    await this.attachSourcePdf(
+    const records = buildNewPolicyRecords(plan, {
       tenantId,
       userId,
-      policy.id,
-      (session.extractMeta as { sourceFile?: unknown } | null)?.sourceFile,
-      session.fileName,
-    );
-
-    await this.prisma.regulationParseSession.update({
-      where: { id },
-      data: {
-        committedPolicyId: policy.id,
-        status: 'committed',
-      },
+      code: dto.code,
+      title: dto.title,
+      description: dto.description?.trim() || preambleAsDescription(plan.preamble, dto.title),
+      effective,
+      changeNote: isLawGoKr ? '법제처 가져오기 커밋 자동 게시' : 'PDF 파싱 커밋 자동 게시',
+      now: new Date(),
     });
+    const policyId = records.policy.id;
+    const pdf = this.stageSourcePdf(tenantId, policyId, session);
+    const audits: AuditEntry[] = [
+      ...newPolicyAudits(records, { tenantId, userId, details: { sessionId: id } }),
+      ...(pdf
+        ? [
+            {
+              tenantId,
+              userId,
+              action: 'policy.file.upload',
+              entityType: 'Policy',
+              entityId: policyId,
+              details: { fileName: pdf.fileName, storedName: pdf.storedName, size: pdf.size, source: 'regulation-parse', sessionId: id },
+            },
+          ]
+        : []),
+    ];
 
-    return { policyId: policy.id, sessionId: id, articleCount: plan.rows.length };
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          await claimPolicySlots(tx, tenantId, [records.policy.code]);
+          await lockParseSessionRow(tx, id);
+          // 잠근 뒤 다시 본다 — 그 사이 다른 확정·재파싱 반영이 원문을 썼거나 미리보기를 고쳤으면 읽어 둔 트리로 만들지 않는다
+          const fresh = await tx.regulationParseSession.findFirst({
+            where: { id, tenantId },
+            select: { status: true, committedPolicyId: true, parseTree: true },
+          });
+          if (!fresh) throw new NotFoundException('Parse session not found');
+          if (fresh.committedPolicyId || fresh.status === 'committed') throw new ConflictException(SESSION_USED_MESSAGE);
+          if (fresh.status !== 'ready' || JSON.stringify(fresh.parseTree) !== JSON.stringify(session.parseTree)) {
+            throw new ConflictException('등록하는 사이 원문 미리보기가 바뀌었습니다 — 미리보기를 다시 확인하고 등록하세요.');
+          }
+          // 바로 시행하는 본문이라 변수 표식이 남아 있으면 안 된다(T-109)
+          await this.variables.assertNoMarkers(
+            tx,
+            tenantId,
+            plan.rows.map((r) => ({ label: formatJo(r.number, r.branchNumber ?? null), content: r.content })),
+          );
+
+          await insertNewPolicy(tx, records);
+          await this.audit.logMany(audits, tx);
+
+          const used = await tx.regulationParseSession.updateMany({
+            where: { id, tenantId, status: 'ready', committedPolicyId: null },
+            data: { committedPolicyId: policyId, status: 'committed' },
+          });
+          if (used.count !== 1) throw new ConflictException(SESSION_USED_MESSAGE);
+        },
+        { maxWait: 10_000, timeout: 60_000 },
+      );
+    } catch (e) {
+      // 확정 응답만 잃었을 수 있다 — 새 규정이 있으면 저장은 끝난 것이다(복사본을 지우면 그 규정의 원문이 사라진다).
+      // 확인조차 못 하면 복사본을 남긴다(지우는 쪽이 더 나쁘다)
+      const saved = await this.prisma.policy.findUnique({ where: { id: policyId }, select: { id: true } }).then(
+        (row) => !!row,
+        () => null,
+      );
+      if (saved !== true) {
+        if (pdf && saved === false) this.discardStagedPdf(pdf);
+        throw e;
+      }
+      this.log.warn(`확정 응답을 잃었지만 저장은 끝났습니다 [${id} → ${policyId}]: ${(e as Error)?.message || e}`);
+    }
+
+    if (pdf) {
+      try {
+        unlinkSync(pdf.src);
+      } catch (e: any) {
+        // 첨부는 이미 새 자리에 있다 — 남은 원본은 업로드 때 청소(7일)가 지운다
+        this.log.warn(`등록한 원문 PDF의 원본을 지우지 못했습니다 [${id}]: ${e?.message || e}`);
+      }
+    }
+
+    return { policyId, sessionId: id, articleCount: plan.rows.length };
   }
 }
 

@@ -1,6 +1,24 @@
 import client from './client';
 
 /** 규정 체계도 노드 (T-71). 규정 > 세칙 > 지침을 자기참조 트리로 표현한다. */
+/** 텍스트 가져오기 한 번에 저장(T-135) — 화면에서 나눈 장·조문 */
+export type PolicyImportDocument = {
+  code: string;
+  title: string;
+  description?: string;
+  department?: string;
+  category?: string;
+  /** 관리자만 — 가져오는 본문이 실제로 시행된 날(YYYY-MM-DD). 편집자가 가져오면 초안으로 남는다 */
+  effectiveDate?: string;
+  chapters: {
+    number: number;
+    title: string;
+    suppressHeader: boolean;
+    articles: { number: number; branchNumber?: number; clauseNumber?: number; itemNumber?: number; title: string; content: string }[];
+  }[];
+  log: { sourceName: string; parseProfile: string; articleCount: number; cleanupOptions: Record<string, unknown> };
+};
+
 export type ThreeWayArticle = {
   id: string;
   number: number;
@@ -91,6 +109,14 @@ export const policiesApi = {
     client.put('/policies/' + policyId + '/appendices/' + appendixId, data).then((r) => r.data),
   deleteAppendix: (policyId: string, appendixId: string) =>
     client.delete('/policies/' + policyId + '/appendices/' + appendixId),
+  /**
+   * 텍스트 가져오기 — 규정·장·조문·첫 버전·가져오기 이력을 한 번에(T-135). 긴 원문도 한 요청에 담도록 전용 형식으로 보낸다
+   * (서버는 이 형식만 JSON 기본 한도보다 크게 받는다)
+   */
+  importDocument: (data: PolicyImportDocument) =>
+    client
+      .post('/policies/import', JSON.stringify(data), { headers: { 'Content-Type': 'application/vnd.policy-import+json' } })
+      .then((r) => r.data as { id: string; articleCount: number; published: number }),
   listImportLogs: () => client.get('/policies/import-logs').then((r) => r.data),
   createImportLog: (data: any) => client.post('/policies/import-logs', data).then((r) => r.data),
 

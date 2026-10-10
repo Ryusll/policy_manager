@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { BASE, api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { brief, expect409, sleepTrigger, sql, stillSleeping, waitForBlockedBy, waitForSleep } from './race';
 
 /**
  * 잠금 순서·세기·기다림 (T-131 — T-110 재파싱 묶음 뒤 보강).
@@ -25,64 +25,6 @@ import { BASE, api, createTenant, createPolicyWithArticle, waitForApi } from './
 
 const FIXTURE = join(__dirname, '..', 'fixtures', 'regulation-sample.pdf');
 const BUSY = '다른 작업이 같은 규정을 고치는 중입니다';
-
-function sql(statement: string): string {
-  return execSync(`docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -v ON_ERROR_STOP=1 -f -'`, {
-    encoding: 'utf8',
-    input: statement,
-  }).trim();
-}
-
-/** 조건에 맞는 행에서 잠시 멈추는 시험용 트리거. 멈춘 동안은 application_name 으로 알아볼 수 있다. 지우는 함수를 돌려준다 */
-function sleepTrigger(name: string, table: string, when: 'BEFORE' | 'AFTER', event: 'INSERT' | 'UPDATE' | 'DELETE', condition: string, seconds: number) {
-  const fn = `t131_${name}`;
-  sql(`
-    CREATE OR REPLACE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $f$
-    BEGIN
-      IF ${condition} THEN
-        PERFORM set_config('application_name', '${fn}', true);
-        PERFORM pg_sleep(${seconds});
-      END IF;
-      RETURN COALESCE(NEW, OLD);
-    END $f$;
-    DROP TRIGGER IF EXISTS ${fn} ON ${table};
-    CREATE TRIGGER ${fn} ${when} ${event} ON ${table} FOR EACH ROW EXECUTE FUNCTION ${fn}();
-  `);
-  return () => sql(`DROP TRIGGER IF EXISTS ${fn} ON ${table}; DROP FUNCTION IF EXISTS ${fn}();`);
-}
-
-/**
- * 조건이 맞을 때까지 기다린다. 확인(psql)이 동기라 확인하는 동안에는 방금 만든 요청이 나가지 못한다 — 먼저 한 번 양보하고, 전체를
- * 시간으로 묶는다(시험 제한 30초 안)
- */
-const poll = async (what: string, check: () => boolean) => {
-  const until = Date.now() + 15_000;
-  while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 100));
-    if (check()) return;
-  }
-  throw new Error(what);
-};
-/** 트리거가 실제로 멈춰 있을 때까지 — 다른 요청을 그 사이에 넣으려고 */
-const waitForSleep = (name: string) =>
-  poll(`트리거 t131_${name} 가 멈추지 않았다 — 앞 요청이 그 자리에 오지 않았다`, () =>
-    Number(sql(`SELECT count(*) FROM pg_stat_activity WHERE application_name = 't131_${name}' AND wait_event = 'PgSleep';`)) > 0);
-const stillSleeping = (name: string) =>
-  Number(sql(`SELECT count(*) FROM pg_stat_activity WHERE application_name = 't131_${name}' AND wait_event = 'PgSleep';`)) > 0;
-/** 뒤에 보낸 요청이 멈춘 트랜잭션에 실제로 막혔을 때까지 — 겹침이 일어났다는 증거 */
-const waitForBlockedBy = (name: string) =>
-  poll(`t131_${name} 가 다른 요청을 막지 않았다 — 겹침이 일어나지 않았다`, () =>
-    Number(
-      sql(
-        `SELECT count(*) FROM pg_stat_activity w WHERE (SELECT h.pid FROM pg_stat_activity h WHERE h.application_name = 't131_${name}' LIMIT 1) = ANY (pg_blocking_pids(w.pid));`,
-      ),
-    ) > 0);
-const brief = (res: { status: number; body: any }) => JSON.stringify({ status: res.status, message: res.body?.message, state: res.body?.status });
-/** 409 가 상태 충돌인지(기대한 문구), 기다림 한도인지(BUSY) 가른다 — 둘 다 409 라 숫자만 보면 잠금 순서 버그를 놓친다 */
-const expect409 = (res: { status: number; body: any }, text: string) => {
-  expect(res.status, brief(res)).toBe(409);
-  expect(String(res.body?.message), brief(res)).toContain(text);
-};
 
 let seq = 0;
 const node = (articleNumber: string, articleTitle: string, content: string, children: any[] = []) => ({

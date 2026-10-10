@@ -166,7 +166,7 @@ NotificationGroupMember: 복합 PK `[groupId, userId]`, N:M 매핑 테이블.
 tenantId FK, userId FK, kind(기본 "policy_revision", 법령 개정 후보 알림은 "law_amendment" — T-106), title, body(text), policyId/articleId/versionId(참조용, FK 아님), link?(규정이 아닌 화면으로 가는 이동 경로, 예 `/laws/:id?change=` — T-106), readAt. 인덱스: `[userId, readAt, createdAt]`, `[tenantId, createdAt]`.
 
 ### AuditLog (`audit_logs`)
-tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json).
+tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json). 저장과 같은 트랜잭션에 쓰는 경로가 있다 — 가져오기 확정·새 규정·일괄 등록은 본문과 함께 확정·롤백된다(T-135). 가져오기 확정이 남긴 기록은 `details.sessionId`(원문 세션)로 묶인다.
 
 ### AuthSession (`auth_sessions`) — T-137 로그인 세션(기기마다 하나)
 userId FK(cascade), tokenHash(지금 유효한 갱신 토큰의 sha256 — 원문은 저장하지 않는다, 갱신마다 바뀜), remember(자동 로그인), expiresAt(갱신마다 다시 늘어남 — 30일/12시간), lastUsedAt, userAgent(≤300), revokedAt(로그아웃·비밀번호 변경), createdAt. `@@index([userId])`. 끝난 세션은 그 사람이 다시 로그인할 때 지운다
@@ -175,10 +175,10 @@ userId FK(cascade), tokenHash(지금 유효한 갱신 토큰의 sha256 — 원�
 tenantId FK(cascade), userId FK?(SetNull), question(text), answerable(근거가 남아 답을 내보냈는가), answer(json? — 화면에 낸 답 블록, 답하지 않았으면 null), citedArticleIds(text[] — 근거로 보여 준 조문 행), contextRowCount(AI 에 본문을 준 행 수), aiCalled(한도에 세는가 — AI 를 부르기 전에 true 로 만들고, AI 를 부르지 않고 끝난 질문만 false 로 돌려준다), model?, inputTokens·outputTokens·cacheReadTokens(사용량·비용 집계), failure?(끝까지 가지 못한 사유 — AI 호출 실패·거절·끊긴 응답, 그래도 셈). 인덱스: `[tenantId, createdAt]`, `[tenantId, userId, createdAt]`(직원별 월 한도). 마이그레이션 `20261009230000_ai_qa`, `20261010040000_ai_qa_failure`.
 
 ### PolicyImportLog (`policy_import_logs`)
-tenantId FK, userId FK?, policyId FK?, sourceName, parseProfile, chapterCount, articleCount, cleanupOptions(json), status, message. 인덱스: `[tenantId, createdAt]`.
+tenantId FK, userId FK?, policyId FK?, sourceName, parseProfile, chapterCount, articleCount, cleanupOptions(json), status, message. 인덱스: `[tenantId, createdAt]`. 텍스트 가져오기(`POST /policies/import`)는 규정과 같은 트랜잭션에 남긴다(T-135) — 실패한 가져오기는 이력도 없다. `articleCount` 는 원문에서 나눈 조 수(항·목으로 펼치기 전).
 
 ### RegulationParseSession (`regulation_parse_sessions`)
-tenantId FK, userId FK?, fileName, mimeType, status(기본 "pending"), extractedText(text), extractMeta(json), parseTree(json), errorMessage, committedPolicyId FK? → Policy(관계명 CommittedParsePolicy). 인덱스: `[tenantId, createdAt]`.
+tenantId FK, userId FK?, fileName, mimeType, status(기본 "pending"), extractedText(text), extractMeta(json), parseTree(json), errorMessage, committedPolicyId FK? → Policy(관계명 CommittedParsePolicy). 인덱스: `[tenantId, createdAt]`. 원문은 한 번만 쓴다 — 새 규정 확정(T-135)과 재파싱 반영(T-110)이 행을 잠근 뒤 `status=ready`·`committedPolicyId=null` 일 때만 `committed` 로 바꾼다.
 
 ### TenantBranding (`tenant_branding`)
 테넌트당 1행(PK = `tenantId`). brandMark, logoDataUrl(data URL, 350KB 상한), logoWidth·logoHeight, updatedBy. Tenant 삭제 시 Cascade.
