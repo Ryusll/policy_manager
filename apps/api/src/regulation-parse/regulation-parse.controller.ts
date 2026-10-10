@@ -65,8 +65,12 @@ export class RegulationParseController {
     return this.regulationParseService.createFromLawGoKr(req.user.tenantId, req.user.id, dto.mst);
   }
 
+  /**
+   * 등록 전 원문(추출 본문·트리)은 가져오는 사람(관리자·편집자)만 본다(T-142) — 아직 승인되지 않은 문구다. 예전에는 열람자도
+   * 세션 id 만 알면 읽을 수 있었다(화면은 가져오기 화면뿐이라 열람자가 쓸 일은 없었다)
+   */
   @Get(':id')
-  @Roles('admin', 'editor', 'viewer')
+  @Roles('admin', 'editor')
   @ApiOperation({ summary: '파싱 세션 조회 (트리 미리보기 JSON)' })
   async getOne(@Request() req: any, @Param('id', ParseUUIDPipe) id: string) {
     return this.regulationParseService.findOne(req.user.tenantId, id);

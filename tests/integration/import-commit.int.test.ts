@@ -528,6 +528,14 @@ describe('T-135 텍스트 가져오기 — 한 번에 저장', () => {
     expect(left(marked)).toBe('0,0');
   });
 
+  it('열람자는 등록 전 원문 세션(추출 본문·미리보기)을 볼 수 없다(403) — 편집자는 본다 (T-142)', async () => {
+    const sid = await session(editor.token);
+    expect((await api(`/regulation-parse/${sid}`, { token: viewerToken })).status).toBe(403);
+    const seen = await api(`/regulation-parse/${sid}`, { token: editor.token });
+    expect(seen.status).toBe(200);
+    expect(seen.body.parseTree.roots.length).toBeGreaterThan(0);
+  });
+
   it('열람자는 가져올 수 없다(403)', async () => {
     const code = uniq('TW');
     expect((await importDoc(viewerToken, doc(code))).status).toBe(403);
