@@ -76,6 +76,16 @@ export class PoliciesController {
     return this.policiesService.findHierarchy(req.user.tenantId);
   }
 
+  // :id 보다 먼저 선언해야 한다 — 뒤에 두면 "scheduled-changes" 가 규정 id 로 잡힌다(T-134 와 같은 함정)
+  @Get('scheduled-changes')
+  @ApiOperation({
+    summary: '시행 예정 개정 — 대시보드 예고 (T-132 ⑤)',
+    description: '승인됐지만 시행일 전인 조문 개정을 규정·시행일별로 묶어 가까운 순으로. 승인된 문구라 열람자도 본다.',
+  })
+  findScheduledChanges(@Request() req: any, @Query('limit') limit?: string) {
+    return this.policiesService.findScheduledChanges(req.user.tenantId, Number(limit) || 10);
+  }
+
   @Get('import-logs')
   @Roles('admin', 'editor')
   @ApiOperation({ summary: '규정 가져오기 이력 조회' })

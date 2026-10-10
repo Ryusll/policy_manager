@@ -42,6 +42,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | (root) | admin, editor | 규정 목록(검색·필터) |
+| GET | scheduled-changes | JWT | **시행 예정 개정**(대시보드 "제·개정 예고", T-132 ⑤) — 승인됐지만 시행일 전인 조문 버전을 규정·시행일별로 묶어 가까운 순으로: `policyId`·`code`·`title`·`isActive`·`effectiveDate`(YYYY-MM-DD)·`articleCount`·`firstArticle`("제3조 수당"). Query: `limit`(기본 10, 최대 50). 승인된 문구라 열람자도 본다 |
 | GET | import-logs | admin, editor | 가져오기 이력 |
 | POST | import | admin, editor | **텍스트 가져오기 — 한 번에 저장**(T-135). 규정 목록의 "기존 규정 가져오기"(TXT·DOCX·붙여넣기)가 화면에서 나눈 장·조문을 한 요청으로 보낸다. 규정·장·조문·첫 버전·가져오기 이력·감사 기록을 트랜잭션 하나로 — 중간에 실패하면 아무것도 남지 않는다(예전에는 화면이 규정·장·조문·한꺼번에 시행·시행일·이력 API 를 차례로 불러 반쪽 규정이 남을 수 있었다). **편집자**는 초안으로만(보낸 시행일은 쓰지 않는다 — 관리자가 상세 화면에서 한꺼번에 시행), **관리자**는 `effectiveDate`(YYYY-MM-DD, 필수 — 없으면 400)로 바로 시행: 승인자·승인/발행 시각·시행 사유 `기존 규정 가져오기 자동 게시`·규정 시행일, 본문에 변수 표식이 남았으면 400(한꺼번에 시행과 같다), 감사 `version.bulk_publish`. 본문이 빈 조 제목 행은 버전을 만들지 않는다. 플랜 상한 403·코드 중복 409 는 회사 행을 잠근 뒤 센다. 긴 원문은 JSON 기본 한도(100kb)를 넘으므로 `Content-Type: application/vnd.policy-import+json` 으로 보내면 20MB 까지 받는다(이 경로만 — `application/json` 은 그대로 100kb). 응답: 만든 규정 + `articleCount`(만든 조문 행)·`published`(바로 시행한 버전 수) |
 | POST | import-logs | admin, editor | 가져오기 이력 기록 |

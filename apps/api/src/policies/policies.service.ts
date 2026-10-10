@@ -168,6 +168,58 @@ export class PoliciesService {
     return { roots, total: policies.length };
   }
 
+  /**
+   * 시행 예정 개정 — 대시보드 "제·개정 예고"(T-132 ⑤). 승인됐지만 시행일 전인 조문 버전(`scheduledVersionWhere`)을
+   * 규정·시행일별로 묶어 가까운 순으로. 예고는 규정의 시행일(`Policy.effectiveDate`)만 봐서, 조문 개정을 미래 시행일로
+   * 승인해도 나오지 않았다.
+   */
+  async findScheduledChanges(tenantId: string, limit = 10) {
+    const today = todayDateOnly();
+    const rows = await this.prisma.articleVersion.findMany({
+      where: { ...scheduledVersionWhere(today), article: { chapter: { policy: { tenantId } } } },
+      orderBy: [{ effectiveDate: 'asc' }, { article: { number: 'asc' } }],
+      select: {
+        effectiveDate: true,
+        article: {
+          select: {
+            id: true,
+            number: true,
+            branchNumber: true,
+            title: true,
+            chapter: { select: { policy: { select: { id: true, code: true, title: true, isActive: true } } } },
+          },
+        },
+      },
+    });
+    const groups = new Map<
+      string,
+      { policyId: string; code: string; title: string; isActive: boolean; effectiveDate: string; articleIds: Set<string>; firstArticle: string }
+    >();
+    for (const r of rows) {
+      const p = r.article.chapter.policy;
+      const date = toDateOnlyString(r.effectiveDate!);
+      const key = `${p.id}|${date}`;
+      const g = groups.get(key);
+      if (g) {
+        g.articleIds.add(r.article.id);
+        continue;
+      }
+      groups.set(key, {
+        policyId: p.id,
+        code: p.code,
+        title: p.title,
+        isActive: p.isActive,
+        effectiveDate: date,
+        articleIds: new Set([r.article.id]),
+        firstArticle: `${formatJo(r.article.number, r.article.branchNumber)}${r.article.title ? ` ${r.article.title}` : ''}`,
+      });
+    }
+    return [...groups.values()].slice(0, Math.min(Math.max(limit, 1), 50)).map(({ articleIds, ...g }) => ({
+      ...g,
+      articleCount: articleIds.size,
+    }));
+  }
+
   async findAll(tenantId: string) {
     return this.prisma.policy.findMany({
       where: { tenantId },

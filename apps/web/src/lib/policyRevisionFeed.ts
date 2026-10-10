@@ -71,3 +71,52 @@ export function daysBetween(from: string, to: string): number {
   const b = Date.UTC(+to.slice(0, 4), +to.slice(5, 7) - 1, +to.slice(8, 10));
   return Math.round((b - a) / 86_400_000);
 }
+
+export type UpcomingItem = {
+  key: string;
+  policyId: string;
+  code: string;
+  title: string;
+  dateKey: string;
+  daysLeft: number;
+  /** 그날 시행되는 조문 개정 수(승인된 미래 시행 개정, T-132 ⑤). 규정 시행일만 있으면 0 */
+  articleCount: number;
+  firstArticle: string | null;
+};
+
+/**
+ * 제·개정 예고 — 규정 시행일(`upcomingEffective`)과 **승인된 미래 시행 조문 개정**(T-127 의 시행 예정)을 합친다(T-132 ⑤).
+ * 예전에는 규정 시행일만 봐서, 조문 개정을 미래 시행일로 승인해도 예고에 나오지 않았다. 같은 규정·같은 날은 한 줄로.
+ */
+export function mergeUpcoming(
+  policies: RevisionFeedPolicy[],
+  scheduled: { policyId: string; code: string; title: string; effectiveDate: string; articleCount: number; firstArticle: string }[],
+  limit = 5,
+  today = todayKey(),
+): UpcomingItem[] {
+  const items = new Map<string, UpcomingItem>();
+  for (const p of upcomingEffective(policies, Number.MAX_SAFE_INTEGER, today)) {
+    const key = `${p.id}|${p.dateKey}`;
+    items.set(key, { key, policyId: p.id, code: p.code, title: p.title, dateKey: p.dateKey, daysLeft: p.daysLeft, articleCount: 0, firstArticle: null });
+  }
+  for (const c of scheduled) {
+    const dk = dateKey(c.effectiveDate);
+    if (!dk || dk <= today) continue;
+    const key = `${c.policyId}|${dk}`;
+    const prev = items.get(key);
+    items.set(key, {
+      key,
+      policyId: c.policyId,
+      code: c.code,
+      title: c.title,
+      dateKey: dk,
+      daysLeft: daysBetween(today, dk),
+      articleCount: (prev?.articleCount ?? 0) + c.articleCount,
+      firstArticle: prev?.firstArticle ?? c.firstArticle,
+    });
+  }
+  return [...items.values()]
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey) || a.title.localeCompare(b.title))
+    .slice(0, limit);
+}
+

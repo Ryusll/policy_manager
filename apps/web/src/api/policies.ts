@@ -56,8 +56,23 @@ export type PolicyTreeNode = {
   children: PolicyTreeNode[];
 };
 
+/** 시행 예정 조문 개정 — 규정·시행일별 묶음(대시보드 예고, T-132 ⑤) */
+export type ScheduledChange = {
+  policyId: string;
+  code: string;
+  title: string;
+  isActive: boolean;
+  /** YYYY-MM-DD */
+  effectiveDate: string;
+  articleCount: number;
+  /** 첫 조문 — "제3조 수당" */
+  firstArticle: string;
+};
+
 export const policiesApi = {
   list: () => client.get('/policies').then((r) => r.data),
+  scheduledChanges: (limit = 10): Promise<ScheduledChange[]> =>
+    client.get('/policies/scheduled-changes', { params: { limit } }).then((r) => r.data),
   get: (id: string) => client.get('/policies/' + id).then((r) => r.data),
   /** 3단비교 — 규정·세칙·지침 (T-56) */
   threeWay: (id: string): Promise<ThreeWayResult> =>

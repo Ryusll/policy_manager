@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { recentlyRevised, upcomingEffective } from '../lib/policyRevisionFeed';
+import { mergeUpcoming, recentlyRevised } from '../lib/policyRevisionFeed';
 import { Link, useNavigate } from 'react-router-dom';
 import { policiesApi } from '../api/policies';
 import { useAuthStore } from '../stores/authStore';
@@ -41,6 +41,12 @@ export default function DashboardPage() {
     queryFn: policiesApi.list,
   });
 
+  // 승인된 미래 시행 조문 개정 — 예고에 함께(T-132 ⑤). 못 받아도 규정 시행일 예고는 그대로
+  const { data: scheduledChanges = [] } = useQuery({
+    queryKey: ['policies', 'scheduled-changes'],
+    queryFn: () => policiesApi.scheduledChanges(20),
+  });
+
   const activeCount = policies.filter((p: any) => p.isActive).length;
 
   const recentPolicies = useMemo(() => {
@@ -55,7 +61,7 @@ export default function DashboardPage() {
 
   // 최근 개정 / 제·개정 예고 (T-78)
   const revised = useMemo(() => recentlyRevised(policies as any[], 5), [policies]);
-  const upcoming = useMemo(() => upcomingEffective(policies as any[], 5), [policies]);
+  const upcoming = useMemo(() => mergeUpcoming(policies as any[], scheduledChanges, 5), [policies, scheduledChanges]);
 
   const stats = useMemo(
     () => [
@@ -139,17 +145,23 @@ export default function DashboardPage() {
               <p className="px-4 py-6 text-sm text-gray-500">시행 예정인 규정이 없습니다.</p>
             ) : (
               <ul className="divide-y divide-gray-100">
-                {upcoming.map((policy) => (
-                  <li key={policy.id}>
+                {upcoming.map((item) => (
+                  <li key={item.key}>
                     <Link
-                      to={'/policies/' + policy.id}
+                      to={'/policies/' + item.policyId}
                       className="flex items-center gap-3 px-4 py-2.5 hover:bg-amber-50/60"
+                      title={item.firstArticle ? `${item.firstArticle}${item.articleCount > 1 ? ` 외 ${item.articleCount - 1}개 조문` : ''}` : undefined}
                     >
                       <span className="text-[11px] rounded px-1.5 py-0.5 border border-amber-200 bg-amber-50 text-amber-800 shrink-0 tabular-nums">
-                        {policy.daysLeft}일 후 시행
+                        {item.daysLeft}일 후 시행
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-gray-900">{policy.title}</span>
-                      <span className="text-xs text-gray-500 tabular-nums shrink-0">{policy.dateKey}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-gray-900">
+                        {item.title}
+                        {item.articleCount > 0 && (
+                          <span className="ml-1.5 text-xs text-gray-500">조문 {item.articleCount}개 개정</span>
+                        )}
+                      </span>
+                      <span className="text-xs text-gray-500 tabular-nums shrink-0">{item.dateKey}</span>
                     </Link>
                   </li>
                 ))}
