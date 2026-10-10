@@ -272,15 +272,20 @@ function ArticleBodyText({
   }
   const pending = article.pendingVersion;
   if (pending?.content) {
+    // 초안은 화면에만 — 인쇄는 PDF·한글처럼 시행본만 담는다(T-133: 인쇄가 실제로 찍히게 되며 드러났다)
+    const joHeadWithRows = article.clauseNumber == null && article.itemNumber == null && hasSubRows;
     return (
       <>
-        <span
-          className="mr-1.5 inline-flex items-center rounded border border-dashed border-amber-400 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 align-middle"
-          title="저장은 됐지만 아직 시행 승인 전입니다. 열람 권한 사용자에게는 보이지 않습니다."
-        >
-          {pending.status === 'review' ? '검토중 · 시행 전' : '초안 · 시행 전'}
+        <span className="print:hidden">
+          <span
+            className="mr-1.5 inline-flex items-center rounded border border-dashed border-amber-400 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 align-middle"
+            title="저장은 됐지만 아직 시행 승인 전입니다. 열람 권한 사용자에게는 보이지 않습니다."
+          >
+            {pending.status === 'review' ? '검토중 · 시행 전' : '초안 · 시행 전'}
+          </span>
+          <span className="text-gray-600">{highlightText(pending.content, highlightQuery)}</span>
         </span>
-        <span className="text-gray-600">{highlightText(pending.content, highlightQuery)}</span>
+        {!joHeadWithRows && <span className="hidden print:inline text-gray-400">시행중 버전이 없습니다.</span>}
       </>
     );
   }

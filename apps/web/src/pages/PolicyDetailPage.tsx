@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { apiErrorMessage } from '../lib/apiError';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -1980,7 +1981,12 @@ export default function PolicyDetailPage() {
     };
 
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    // 인쇄할 때 앱 화면은 통째로 빼고 이 창만 흐름대로 찍는다(index.css, T-133)
+    document.body.classList.add('policy-print-open');
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.classList.remove('policy-print-open');
+    };
   }, [showFullTextModal]);
 
   useEffect(() => {
@@ -4412,7 +4418,9 @@ export default function PolicyDetailPage() {
         }}
       />
 
-      {showFullTextModal && (
+      {/* 인쇄 창은 body 바로 아래에 그린다(T-133) — 화면 영역(page-shell)은 인쇄 때 숨기므로 그 안에 있으면 통째로 빈 쪽이 나왔다 */}
+      {showFullTextModal &&
+        createPortal(
         <div className="printable-policy-modal fixed inset-0 z-50 bg-black/60 p-2 sm:p-4 print:bg-white print:p-0">
           <div className="mx-auto h-full w-full max-w-6xl bg-white border border-gray-300 shadow-xl flex flex-col print:max-w-none print:h-auto print:min-h-0 print:border-0 print:shadow-none">
             <div className="bg-navy-900 text-white px-4 sm:px-5 py-3 flex items-center justify-between gap-2 print:hidden">
@@ -4515,8 +4523,9 @@ export default function PolicyDetailPage() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
       {showThreeWay && id && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-auto">
