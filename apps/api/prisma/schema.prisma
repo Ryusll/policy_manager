@@ -300,6 +300,8 @@ model Chapter {
   articles Article[]
   sections Section[]
 
+  /// 규정 하나의 장·조문을 읽는 모든 조회(상세·전문·시점 조회·검색·잠금)가 이 열로 찾는다 — FK 는 색인이 저절로 생기지 않는다(T-141)
+  @@index([policyId])
   @@map("chapters")
 }
 
@@ -355,6 +357,8 @@ model Article {
   /// 재파싱 검토에서 사람이 이 조문을 골라 이은 항목(판정 보류 → 고르기, 새 조문 후보 → 잇기)
   reparseTargets      ReparseReviewItem[] @relation("ReparseItemTarget")
 
+  /// 장의 조문 찾기·장 지우기(Cascade) — 없으면 조문 표 전체를 훑는다(T-141)
+  @@index([chapterId])
   @@map("articles")
 }
 

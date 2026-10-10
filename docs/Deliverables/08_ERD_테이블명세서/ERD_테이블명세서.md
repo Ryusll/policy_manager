@@ -68,7 +68,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | id | uuid PK | |
-| policyId | uuid FK → Policy (cascade) | |
+| policyId | uuid FK → Policy (cascade) | 색인 `[policyId]`(T-141) — 규정 하나의 장·조문을 읽는 조회가 이 열로 찾는다 |
 | number | int | 장 번호 |
 | title | string | |
 | suppressHeader | boolean | 장 제목 미표시 (목차·인쇄) |
@@ -90,7 +90,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | id | uuid PK | |
-| chapterId | uuid FK → Chapter (cascade) | |
+| chapterId | uuid FK → Chapter (cascade) | 색인 `[chapterId]`(T-141) — 장의 조문 찾기·장 지우기 |
 | sectionId | uuid FK? → Section (SetNull) | **nullable**. 절에 속하지 않는 조는 null |
 | number | int | 조 번호 |
 | branchNumber | int? | 조의 **가지 번호**. "제3조의2"면 `number=3, branchNumber=2`. 가지 조문이 아니면 null. 조 하나 = (`number`, `branchNumber`) — 정렬은 조 → 가지 → 항 → 목 (T-118, 마이그레이션 `20261007200000_article_branch_number`) |
