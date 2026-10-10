@@ -173,6 +173,11 @@ export default function CrossPolicyComparePanel({
                     <AlertTriangle size={12} /> 짝이 의심스러운 줄 {data.summary.suspect}
                   </span>
                 )}
+                {data.date && (
+                  <span className="px-2 py-1 text-gray-500" title="시행일 전인 개정(시행 예정)은 넣지 않았습니다.">
+                    오늘({data.date}) 시행 중인 본문 기준
+                  </span>
+                )}
               </div>
 
               {rows.length === 0 ? (

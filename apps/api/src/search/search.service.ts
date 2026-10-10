@@ -30,30 +30,34 @@ export class SearchService {
     if (external.length > 0) return { items: external.slice(0, limit), source: 'external' };
 
     if (type === 'rule') {
-      const rows = await this.prisma.articleVersion.findMany({
-        where: {
-          status: 'published',
-          // 시행일 전인 개정은 아직 규정이 아니다(T-127)
-          OR: [{ effectiveDate: null }, { effectiveDate: { lte: todayDateOnly() } }],
-          ...(scope === 'title' ? {} : { content: { contains: q, mode: 'insensitive' } }),
-          article: {
-            chapter: { policy: { tenantId } },
-            ...(scope === 'title'
-              ? {
-                  OR: [
-                    { title: { contains: q, mode: 'insensitive' } },
-                    { chapter: { policy: { title: { contains: q, mode: 'insensitive' } } } },
-                  ],
-                }
-              : {}),
-          },
-        },
-        include: {
-          article: { include: { chapter: { include: { policy: true } } } },
-        },
-        orderBy: sort === 'latest' ? { createdAt: 'desc' } : undefined,
-        take: limit,
-      });
+      // 조문마다 오늘 시행 중인 본문 하나에서 찾는다(T-127 — 통합검색·규정 상세와 같은 규칙). 시행일 전인 개정 문구는
+      // 찾지 않고, 개정이 예정돼 이전 본문이 archived 로 내려가 있어도 그 본문은 지금 규정이라 찾는다.
+      const today = todayDateOnly();
+      const pattern = `%${q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+      const match =
+        scope === 'title'
+          ? Prisma.sql`(a.title ILIKE ${pattern} ESCAPE '\\' OR p.title ILIKE ${pattern} ESCAPE '\\')`
+          : Prisma.sql`cur.content ILIKE ${pattern} ESCAPE '\\'`;
+      const order = sort === 'latest' ? Prisma.sql`ORDER BY v.created_at DESC` : Prisma.sql`ORDER BY cur.version_id`;
+      const hitIds = await this.prisma.$queryRaw<{ version_id: string }[]>(Prisma.sql`
+        SELECT cur.version_id
+        FROM (${currentVersionsSql(tenantId, today)}) cur
+        JOIN article_versions v ON v.id = cur.version_id
+        JOIN articles a ON a.id = cur.article_id
+        JOIN chapters c ON c.id = a.chapter_id
+        JOIN policies p ON p.id = c.policy_id
+        WHERE (cur.repealed_on IS NULL OR cur.repealed_on > ${today}) AND ${match}
+        ${order}
+        LIMIT ${limit}`);
+      const ids = hitIds.map((r) => r.version_id);
+      const found = ids.length
+        ? await this.prisma.articleVersion.findMany({
+            where: { id: { in: ids } },
+            include: { article: { include: { chapter: { include: { policy: true } } } } },
+          })
+        : [];
+      const rank = new Map(ids.map((id, i) => [id, i]));
+      const rows = found.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
       return {
         source: 'internal',
         items: rows.map((row) => ({

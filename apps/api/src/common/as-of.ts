@@ -61,9 +61,13 @@ export const CURRENT_VERSION_ORDER: Prisma.ArticleVersionOrderByWithRelationInpu
   { versionNum: 'desc' },
 ];
 
-/** 시행 예정 — 승인됐지만 시행일이 아직 오지 않은 버전(T-127). 시행일 전까지 "현재"는 이전 본문이다 */
+/**
+ * 시행 예정 — 승인됐지만 시행일이 아직 오지 않은 버전(T-127). 시행일 전까지 "현재"는 이전 본문이다.
+ * `archived` 도 넣는다: 시행 예정 버전보다 이른 날로 다른 버전을 승인하면 시행 예정 버전이 내려가지만, 날짜 규칙상 그날이 되면
+ * 다시 현재가 된다 — 숨기면 그날 갑자기 바뀐다. 폐지된 버전은 뺀다.
+ */
 export function scheduledVersionWhere(today: Date): Prisma.ArticleVersionWhereInput {
-  return { status: 'published', effectiveDate: { gt: today } };
+  return { status: { in: ['published', 'archived'] }, effectiveDate: { gt: today }, repealedOn: null };
 }
 
 /**

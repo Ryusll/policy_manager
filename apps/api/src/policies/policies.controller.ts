@@ -218,6 +218,8 @@ export class PoliciesController {
   findOne(@Request() req: any, @Param('id') id: string) {
     return this.policiesService.findOne(req.user.tenantId, id, {
       includePending: req.user.role === 'admin' || req.user.role === 'editor',
+      // 화면용 — 오늘 시점의 계층·시행 예정·상태를 싣는다(T-127)
+      detail: true,
     });
   }
 

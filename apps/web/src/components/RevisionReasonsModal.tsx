@@ -18,6 +18,7 @@ import { formatKoDate } from '../lib/legalArticleLabel';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
 import { formatArticleJo } from '../lib/legalArticleLabel';
+import { collectArticleChangeNotes } from '../lib/versionState';
 
 const KIND_LABEL: Record<PolicyRevisionKind, string> = {
   enactment: '제정',
@@ -53,25 +54,6 @@ const emptyDraft = (): DraftState => ({
   effectiveDate: '',
 });
 
-/** 조문별 개정 사유(승인 시 기록된 changeNote)를 시행일 기준으로 모은다 */
-function collectArticleChangeNotes(policy: any) {
-  const rows: { key: string; label: string; note: string; effectiveDate: string | null }[] = [];
-  for (const chapter of policy?.chapters || []) {
-    for (const article of chapter.articles || []) {
-      const version = article.versions?.[0];
-      const note = String(version?.changeNote ?? '').trim();
-      if (!note) continue;
-      rows.push({
-        key: version.id,
-        label: `${formatArticleJo(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`,
-        note,
-        effectiveDate: version.effectiveDate ?? null,
-      });
-    }
-  }
-  return rows.sort((a, b) => String(b.effectiveDate ?? '').localeCompare(String(a.effectiveDate ?? '')));
-}
-
 export default function RevisionReasonsModal({
   policyId,
   policy,
@@ -92,7 +74,8 @@ export default function RevisionReasonsModal({
     queryFn: () => policiesApi.listRevisionReasons(policyId),
   });
 
-  const articleNotes = useMemo(() => collectArticleChangeNotes(policy), [policy]);
+  // 오늘 시행본과 시행 예정 버전의 사유(T-127)
+  const articleNotes = useMemo(() => collectArticleChangeNotes(policy, formatArticleJo), [policy]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['policy', policyId, 'revision-reasons'] });
@@ -331,7 +314,7 @@ export default function RevisionReasonsModal({
             </h3>
             {articleNotes.length === 0 ? (
               <p className="text-xs text-gray-400 border border-dashed border-gray-200 rounded px-3 py-4 text-center">
-                시행 중인 버전에 기록된 개정 사유가 없습니다.
+                시행 중이거나 시행 예정인 버전에 기록된 개정 사유가 없습니다.
               </p>
             ) : (
               <ul className="space-y-1.5">
@@ -342,6 +325,7 @@ export default function RevisionReasonsModal({
                       <span className="text-[11px] text-gray-500">
                         {row.effectiveDate ? `${formatKoDate(row.effectiveDate)} 시행` : '시행일 미기재'}
                       </span>
+                      {row.scheduled && <span className="badge-scheduled !text-[10px] !px-1.5 !py-0">시행 예정</span>}
                     </div>
                     <p className="text-xs text-gray-700 whitespace-pre-wrap mt-1">{row.note}</p>
                   </li>

@@ -94,6 +94,10 @@
   .badge-archived {
     @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-200 text-gray-500 border border-gray-300;
   }
+  /* 시행 예정(T-127) — 승인됐지만 시행일 전. 초안 표시처럼 점선 */
+  .badge-scheduled {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-800 border border-dashed border-amber-300;
+  }
   .card {
     @apply bg-white border border-gray-200 rounded-lg shadow-sm;
   }

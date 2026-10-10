@@ -9,7 +9,15 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { parseSnapshot, positionKey, type Position } from '../common/article-structure';
 import { placeArticle, placeAsOf } from './as-of-structure';
-import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
+import {
+  AS_OF_VERSION_ORDER,
+  CURRENT_VERSION_ORDER,
+  asOfState,
+  asOfVersionWhere,
+  currentVersionWhere,
+  scheduledVersionWhere,
+} from '../common/as-of';
+import { buildCurrentChapters, currentStateOf, type CurrentState } from './current-view';
 import { AuditService } from '../audit/audit.service';
 import { maxPoliciesForPlan } from '../common/plan-limits';
 import { buildPolicyForest } from './policy-hierarchy';
@@ -25,7 +33,7 @@ import {
   currentJoOrder,
   type ReorderTarget,
 } from './article-reorder';
-import { coerceNullableDate, parseDateOnly, toDateOnlyString } from '../common/date-only';
+import { coerceNullableDate, parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import {
   buildComparisonRows,
   buildCrossPolicyRows,
@@ -174,11 +182,23 @@ export class PoliciesService {
   }
 
   /**
+   * 규정 상세 — **"현재" = 오늘(한국 날짜) 시점의 시행본**(T-127).
+   *
+   * 조문마다 `versions` 는 오늘 시행 중인 버전 0~1개다(`common/as-of.ts` 의 currentVersionWhere·CURRENT_VERSION_ORDER,
+   * 시행일 없는 예전 시행본도 후보). 미래 시행일로 승인한 개정은 이전 본문이 `archived` 로 내려가 있어도 시행일 전까지
+   * 그 이전 본문이 현재다 — 예전에는 `published` 를 그대로 보여 줘 미래 본문이 시행 전부터 현재처럼 보였다.
+   * 오늘 폐지된 조문은 `versions` 가 비어 있다.
+   *
    * @param opts.includePending 편집 권한자에게만 켠다. 시행본이 없는 조문에 최신 초안을
    *   `pendingVersion`으로 붙여, 넣은 내용이 "시행 전 초안"으로라도 보이게 한다.
    *   열람자에게 시행되지 않은 문구를 보여 주면 안 된다.
+   * @param opts.detail 화면용(GET :id). 켜면 오늘 시점 조회와 같은 계층으로 조립하고(`current-view.ts`),
+   *   조문마다 `currentState`·`repealedOn`·`scheduledVersions`(승인됐지만 시행일 전인 버전 — 열람자에게도 보인다)와
+   *   `liveChapterId`·`liveSectionId`(편집 호출용 지금 행의 장·절)를, 규정에 `current` 요약을 싣는다.
+   *   소속 확인용 내부 호출은 끈다(쿼리·조립 비용).
    */
-  async findOne(tenantId: string, id: string, opts: { includePending?: boolean } = {}) {
+  async findOne(tenantId: string, id: string, opts: { includePending?: boolean; detail?: boolean } = {}) {
+    const today = todayDateOnly();
     const policy = await this.prisma.policy.findFirst({
       where: { id, tenantId },
       include: {
@@ -189,8 +209,8 @@ export class PoliciesService {
             articles: {
               include: {
                 versions: {
-                  where: { status: 'published' },
-                  orderBy: { versionNum: 'desc' },
+                  where: currentVersionWhere(today),
+                  orderBy: CURRENT_VERSION_ORDER,
                   take: 1,
                   // 연혁 탭의 날짜 3종(T-111) — 개정 후보 승인 버전의 법령 시행일
                   include: { changeEvent: VERSION_LAW_CHANGE },
@@ -212,16 +232,85 @@ export class PoliciesService {
       },
     });
     if (!policy) throw new NotFoundException('Policy not found');
-    const shaped = {
-      ...policy,
-      chapters: policy.chapters.map((c) => ({
-        ...c,
-        articles: c.articles.map((a) => ({ ...a, versions: a.versions.map(withLawChange) })),
+    const ids = policy.chapters.flatMap((c) => c.articles.map((a) => a.id));
+
+    // 시행 예정 — 날짜마다 그날 이기는 버전(번호가 큰 쪽) 하나, 이른 날부터. 상세 화면만
+    const scheduledOf = new Map<string, ReturnType<typeof withLawChange<Prisma.ArticleVersionGetPayload<{ include: { changeEvent: typeof VERSION_LAW_CHANGE } }>>>[]>();
+    if (opts.detail && ids.length) {
+      const rows = await this.prisma.articleVersion.findMany({
+        where: { articleId: { in: ids }, ...scheduledVersionWhere(today) },
+        orderBy: [{ articleId: 'asc' }, { effectiveDate: 'asc' }, { versionNum: 'desc' }],
+        include: { changeEvent: VERSION_LAW_CHANGE },
+      });
+      for (const v of rows) {
+        const list = scheduledOf.get(v.articleId) ?? [];
+        const last = list.at(-1);
+        if (last && last.effectiveDate?.getTime() === v.effectiveDate?.getTime()) continue;
+        list.push(withLawChange(v));
+        scheduledOf.set(v.articleId, list);
+      }
+    }
+
+    // 오늘 고른 버전 + 상태. 폐지된 조문은 자리를 얼린 값에서 찾아야 해서 조립까지 버전을 들고 간다
+    const annotated = policy.chapters.map((c) => ({
+      ...c,
+      articles: c.articles.map((a) => ({
+        ...a,
+        currentState: currentStateOf(a.versions[0], today, (scheduledOf.get(a.id)?.length ?? 0) > 0) as CurrentState,
+        // 시행 예정 버전이 있는 조문만 오늘 자리를 얼린 계층에서 찾는다(current-view.ts)
+        hasScheduled: scheduledOf.has(a.id),
       })),
+    }));
+    const present = <A extends (typeof annotated)[number]['articles'][number]>(a: A) => {
+      const picked = a.versions[0];
+      const inForce = a.currentState === 'in_force';
+      return {
+        ...a,
+        versions: inForce ? [{ ...withLawChange(picked), phase: 'in_force' as const }] : [],
+        ...(opts.detail
+          ? {
+              repealedOn: a.currentState === 'repealed' && picked?.repealedOn ? toDateOnlyString(picked.repealedOn) : null,
+              scheduledVersions: (scheduledOf.get(a.id) ?? []).map((v) => ({ ...v, phase: 'scheduled' as const })),
+            }
+          : {}),
+      };
     };
+
+    let chapters: Array<Omit<(typeof annotated)[number], 'articles'> & { articles: ReturnType<typeof present>[] }>;
+    let current: Record<string, unknown> | undefined;
+    if (opts.detail) {
+      // 오늘 시점 조회와 같은 계층으로(T-110 ② 얼린 계층) — 편집용 지금 행의 장·절은 liveChapterId 로 남는다
+      const built = buildCurrentChapters(annotated);
+      chapters = built.chapters.map((c) => ({ ...c, articles: c.articles.map(present) }));
+      const firstDates = [...scheduledOf.values()].map((l) => l[0]?.effectiveDate).filter((d): d is Date => !!d);
+      current = {
+        date: toDateOnlyString(today),
+        scheduledCount: scheduledOf.size,
+        // 오늘 자리가 지금 행과 다른 조문·장 수(미래 시행 구조 변경) — 0 이 아니면 화면이 구조 편집을 막는다
+        structureChanges: built.displaced,
+        nextScheduledDate: firstDates.length
+          ? toDateOnlyString(new Date(Math.min(...firstDates.map((d) => d.getTime()))))
+          : null,
+        // 오늘 본문의 자리를 다른 조문이 차지해 본문에서 뺀 시행 예정 조문(미래 시행 묶음의 새 조문 등)
+        scheduledArticles: built.excluded.map((a) => ({
+          id: a.id,
+          number: a.number,
+          branchNumber: a.branchNumber,
+          clauseNumber: a.clauseNumber,
+          itemNumber: a.itemNumber,
+          title: a.title,
+          liveChapterId: a.liveChapterId,
+          effectiveDate: scheduledOf.get(a.id)?.[0]?.effectiveDate
+            ? toDateOnlyString(scheduledOf.get(a.id)![0].effectiveDate!)
+            : null,
+        })),
+      };
+    } else {
+      chapters = annotated.map((c) => ({ ...c, articles: c.articles.map(present) }));
+    }
+    const shaped = { ...policy, chapters, ...(current ? { current } : {}) };
     if (!opts.includePending) return shaped;
 
-    const ids = shaped.chapters.flatMap((c) => c.articles.map((a) => a.id));
     const pending = ids.length
       ? await this.prisma.articleVersion.findMany({
           where: { articleId: { in: ids }, status: { in: ['draft', 'review'] } },
@@ -390,13 +479,14 @@ export class PoliciesService {
     ]);
     if (!left || !right) throw new NotFoundException('Policy not found');
 
+    const today = todayDateOnly();
     const [leftRows, rightRows] = await Promise.all([
-      this.articlesCurrent(left.id),
-      this.articlesCurrent(right.id),
+      this.articlesCurrent(left.id, today),
+      this.articlesCurrent(right.id, today),
     ]);
 
     const { rows, summary } = buildCrossPolicyRows(leftRows, rightRows);
-    return { left, right, summary, rows };
+    return { left, right, summary, rows, date: toDateOnlyString(today) };
   }
 
   /**
@@ -433,9 +523,10 @@ export class PoliciesService {
       ...grandchildren.map((g) => ({ ...g, level: 2 })),
     ];
 
+    const today = todayDateOnly();
     const articlesByPolicy = new Map<string, ThreeWayArticle[]>();
     for (const policy of levels) {
-      articlesByPolicy.set(policy.id, await this.publishedArticles(policy.id));
+      articlesByPolicy.set(policy.id, await this.publishedArticles(policy.id, today));
     }
 
     const { rows, unmatched, matchedCount } = buildThreeWayRows(
@@ -455,68 +546,84 @@ export class PoliciesService {
         related: matchedCount,
         unmatched: unmatched.reduce((n, row) => n + row.related.length, 0),
       },
+      // 오늘 시행 중인 본문 기준(T-127)
+      date: toDateOnlyString(today),
     };
   }
 
-  /** 현재 게시된 본문 기준 조문 목록 (3단비교용) */
-  private async publishedArticles(policyId: string): Promise<ThreeWayArticle[]> {
-    const articles = await this.prisma.article.findMany({
-      where: { chapter: { policyId } },
-      include: {
-        versions: {
-          where: { status: 'published' },
-          orderBy: { versionNum: 'desc' },
-          take: 1,
-        },
-      },
-      orderBy: ARTICLE_ORDER,
-    });
-    return articles.map((a) => ({
+  /**
+   * 3단비교용 조문 목록 — 규정 상세 화면과 같은 "현재" 조립(T-127). 본문은 오늘 시행 중인 것만이고,
+   * 초안만·폐지·시행 예정 조문은 본문 없이 자리만(예전과 같다). 시행일 전인 개정 문구로 인용을 짝짓지 않는다.
+   */
+  private async publishedArticles(policyId: string, today: Date): Promise<ThreeWayArticle[]> {
+    return (await this.currentArticles(policyId, today)).map((a) => ({
       id: a.id,
       number: a.number,
       branchNumber: a.branchNumber,
       clauseNumber: a.clauseNumber,
       itemNumber: a.itemNumber,
       title: a.title || '',
-      content: a.versions[0]?.content || '',
+      content: a.currentState === 'in_force' ? a.versions[0]?.content || '' : '',
     }));
   }
 
-  /** 특정 시점에 시행 중이던 조문을 비교용 평탄 목록으로 */
   /**
-   * 규정의 "지금 본문" (T-91).
-   *
-   * `articlesAsOf` 와 다르다. 그쪽은 **시행일 기준 스냅샷**이라 시행일이 없거나
-   * 아직 오지 않은 게시본을 빼는데, 전문 보기(`findOne`)는 시행일과 무관하게
-   * **최신 게시본**을 보여 준다. 규정 간 비교가 `asOf` 를 쓰면 화면에는 있는
-   * 조문이 비교표에서 사라져 "왜 다르냐"는 질문이 생긴다. 화면과 같은 기준을 쓴다.
+   * 규정의 "현재" 조문 — 규정 상세 화면과 같은 규칙·같은 계층(T-127): 오늘(한국 날짜) 시행 중인 버전,
+   * 오늘의 자리(얼린 계층, 조 머리 따라감). 시행일 전인 개정은 넣지 않는다.
    */
-  private async articlesCurrent(policyId: string): Promise<CompareArticleInput[]> {
-    const articles = await this.prisma.article.findMany({
-      where: { chapter: { policyId } },
+  private async currentArticles(policyId: string, today: Date) {
+    const chapters = await this.prisma.chapter.findMany({
+      where: { policyId },
       include: {
-        versions: {
-          where: { status: 'published' },
-          orderBy: { versionNum: 'desc' },
-          take: 1,
+        sections: { orderBy: { number: 'asc' } },
+        articles: {
+          include: { versions: { where: currentVersionWhere(today), orderBy: CURRENT_VERSION_ORDER, take: 1 } },
+          orderBy: ARTICLE_ORDER,
         },
       },
-      orderBy: ARTICLE_ORDER,
+      orderBy: { number: 'asc' },
     });
+    const ids = chapters.flatMap((c) => c.articles.map((a) => a.id));
+    const scheduled = ids.length
+      ? new Set(
+          (
+            await this.prisma.articleVersion.findMany({
+              where: { articleId: { in: ids }, ...scheduledVersionWhere(today) },
+              select: { articleId: true },
+              distinct: ['articleId'],
+            })
+          ).map((v) => v.articleId),
+        )
+      : new Set<string>();
+    const built = buildCurrentChapters(
+      chapters.map((c) => ({
+        ...c,
+        articles: c.articles.map((a) => ({
+          ...a,
+          currentState: currentStateOf(a.versions[0], today, scheduled.has(a.id)),
+          hasScheduled: scheduled.has(a.id),
+        })),
+      })),
+    );
+    return built.chapters.flatMap((c) => c.articles);
+  }
 
-    return articles
-      .filter((article) => article.versions.length > 0)
-      .map((article) => ({
-        id: article.id,
-        number: article.number,
-        branchNumber: article.branchNumber,
-        clauseNumber: article.clauseNumber,
-        itemNumber: article.itemNumber,
-        title: article.title ?? '',
-        content: article.versions[0].content ?? '',
-        effectiveDate: article.versions[0].effectiveDate
-          ? toDateOnlyString(article.versions[0].effectiveDate)
-          : null,
+  /**
+   * 규정 간 비교의 "지금 본문" (T-91). 규정 상세 화면과 같은 기준을 쓴다 — 화면에는 있는 조문이 비교표에서 사라지면
+   * "왜 다르냐"는 질문이 생긴다. T-127 부터 그 기준이 "오늘 시행 중인 본문"이라 시행일 전인 개정은 비교하지 않는다.
+   */
+  private async articlesCurrent(policyId: string, today: Date): Promise<CompareArticleInput[]> {
+    return (await this.currentArticles(policyId, today))
+      .filter((a) => a.currentState === 'in_force')
+      .map((a) => ({
+        id: a.id,
+        number: a.number,
+        branchNumber: a.branchNumber,
+        clauseNumber: a.clauseNumber,
+        itemNumber: a.itemNumber,
+        title: a.title ?? '',
+        content: a.versions[0].content ?? '',
+        effectiveDate: a.versions[0].effectiveDate ? toDateOnlyString(a.versions[0].effectiveDate) : null,
       }));
   }
 

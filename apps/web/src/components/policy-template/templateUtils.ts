@@ -7,6 +7,7 @@ import {
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
 import { joGroupRenderRows } from '../../lib/fullViewGroups';
+import { noCurrentTextMarker } from '../../lib/versionState';
 
 /**
  * 템플릿 HTML sanitize.
@@ -111,11 +112,12 @@ function appendArticleBodyHtml(
     out.push(`<span class="tmpl-article-name">${nameInner}</span>`);
     out.push('</div>');
   }
-  // 인쇄·PDF·한글은 공식 문서라 시행본만 담는다(시행 전 초안은 화면에만 표시).
+  // 인쇄·PDF·한글은 공식 문서라 오늘 시행 중인 본문만 담는다(시행 전 초안·시행 예정 개정은 화면에만 표시, T-127).
+  // 폐지는 "삭제 <날짜>", 아직 시행 전인 새 조문은 "날짜 시행 예정"으로 적는다.
   // 항·목을 거느린 조의 머리 행은 본문이 없는 게 정상이므로 "시행중 버전이 없습니다"를 찍지 않는다.
   const raw = article?.versions?.[0]?.content;
   const isJoHead = article?.clauseNumber == null && article?.itemNumber == null;
-  const emptyText = isJoHead && hasSubRows ? '' : '시행중 버전이 없습니다.';
+  const emptyText = (article ? noCurrentTextMarker(article) : null) ?? (isJoHead && hasSubRows ? '' : '시행중 버전이 없습니다.');
   const bodyInner = wrapSearchHighlightsInEscapedHtml(
     escapeHtmlText(raw != null && raw !== '' ? String(raw) : emptyText),
     highlightQuery ?? '',

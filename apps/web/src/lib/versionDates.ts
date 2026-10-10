@@ -21,6 +21,7 @@ export type VersionLawChange = {
 export type VersionDateInput = {
   status: string;
   effectiveDate?: string | null;
+  repealedOn?: string | null;
   publishedAt?: string | null;
   publishedAtFromApproval?: boolean | null;
   lawChange?: VersionLawChange | null;
@@ -51,7 +52,8 @@ export function versionDates(v: VersionDateInput, today: string = serviceToday()
   const lawDate = v.lawChange?.lawEffectiveDate ?? null;
   return {
     effective,
-    upcoming: v.status === 'published' && !!effective && effective > today,
+    // 시행일 전이면 시행 예정 — archived 라도(더 이른 날로 다른 버전을 승인해 내려간 시행 예정 버전도 그날 현재가 된다, T-127)
+    upcoming: !!effective && effective > today && !v.repealedOn,
     published,
     publishedBasis: !published ? 'missing' : v.publishedAtFromApproval ? 'approval' : 'recorded',
     law: v.lawChange

@@ -104,6 +104,11 @@ export function ThreeWayComparePanel({ policyId }: { policyId: string }) {
         {data.summary.unmatched > 0 && (
           <span className="text-amber-700">연결 안 됨 {data.summary.unmatched}건</span>
         )}
+        {data.date && (
+          <span className="text-gray-500" title="시행일 전인 개정(시행 예정)은 넣지 않았습니다.">
+            오늘({data.date}) 시행 중인 본문 기준
+          </span>
+        )}
       </div>
 
       <div className="flex items-start gap-2 text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded px-3 py-2">

@@ -149,3 +149,29 @@ describe('전문 텍스트 내보내기 (T-84)', () => {
     expect(policyPlainTextFilename('')).toBe('policy-full.txt');
   });
 });
+
+describe('전문 텍스트 — 오늘 시행 중인 본문만 (T-127)', () => {
+  it('시행 예정 개정 본문은 넣지 않고, 시행 전 새 조문·폐지 조문은 표시만', () => {
+    const chapters = buildFullViewGroups([
+      {
+        id: 'c1',
+        number: 1,
+        title: '총칙',
+        suppressHeader: false,
+        sections: [],
+        articles: [
+          article({ number: 1, title: '수당', versions: ver('지금 본문 알파'), scheduledVersions: [{ content: '다음 해 베타', effectiveDate: '2099-01-01' }] }),
+          article({ number: 2, title: '신설', versions: [], currentState: 'scheduled', scheduledVersions: [{ content: '새 엡실론', effectiveDate: '2099-03-01' }] }),
+          article({ number: 3, title: '폐지', versions: [], currentState: 'repealed', repealedOn: '2026-10-10' }),
+        ],
+      },
+    ]);
+    const text = buildPolicyPlainText({ policy, chapters });
+    expect(text).toContain('지금 본문 알파');
+    expect(text).not.toContain('베타');
+    expect(text).not.toContain('엡실론');
+    expect(text).toContain('2099-03-01 시행 예정');
+    expect(text).toContain('삭제 <2026. 10. 10.>');
+  });
+});
+

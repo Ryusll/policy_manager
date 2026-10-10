@@ -382,7 +382,7 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
   });
 
   describe('미래 시행일 승인과 승인 뒤 원문에 없는 조문', () => {
-    it('미래 시행일로 승인하면 지금 화면은 새 계층, 오늘의 시점 조회는 옛 계층, 그 날부터 새 계층', async () => {
+    it('미래 시행일로 승인하면 지금 화면도 오늘의 시점 조회처럼 옛 계층(새 조문은 시행 예정으로), 그 날부터 새 계층', async () => {
       const { policyId, ids } = await commitPolicy(t.token, [node('L1', '가', '하나 본문'), node('L2', '나', '둘 본문'), node('L3', '다', '셋 본문')]);
       const sid = await session(t.token, [node('L1', '가', '하나 본문'), node('L2', '끼어든 조', '새 둘째 조 본문'), node('L3', '나', '둘 본문'), node('L4', '다', '셋 본문')]);
       let review = (await api(`/regulation-parse/${sid}/reparse`, { method: 'POST', token: editorToken, json: { policyId } })).body;
@@ -392,13 +392,28 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
       const future = kstDay(30);
       const ok = await api(`/reparse-reviews/${review.id}/approve`, { method: 'POST', token: t.token, json: { effectiveDate: future, changeNote: '다음 달 시행' } });
       expect(ok.status).toBe(201);
-      const current = articlesOf((await api(`/policies/${policyId}`, { token: t.token })).body).filter((a: any) => a.versions?.[0]);
-      expect(current.map((a: any) => [a.number, a.versions[0].content])).toEqual([
-        [1, '하나 본문'],
-        [2, '새 둘째 조 본문'],
-        [3, '둘 본문'],
-        [4, '셋 본문'],
+      // 지금 화면 = 오늘 시행 중인 본문과 오늘의 계층(T-127). 예전에는 published 를 그대로 보여 줘 시행일 전부터 새 계층이었다
+      // — 그 기대는 T-127 이전 동작을 적어 둔 것이라 T-110 ② 담당 세션 확인 뒤 바꿨다(10/10)
+      const detail = (await api(`/policies/${policyId}`, { token: t.token })).body;
+      const current = articlesOf(detail).filter((a: any) => a.versions?.[0]);
+      expect(current.map((a: any) => [a.id, a.number, a.versions[0].content])).toEqual([
+        [ids['1'], 1, '하나 본문'],
+        [ids['2'], 2, '둘 본문'],
+        [ids['3'], 3, '셋 본문'],
       ]);
+      // 끼어든 새 조문은 오늘 본문의 자리(제2조)를 차지하지 않고 시행 예정 목록에 있다
+      expect(detail.current.scheduledArticles).toEqual([
+        expect.objectContaining({ number: 2, title: '끼어든 조', effectiveDate: future }),
+      ]);
+      // 옮겨질 조문은 오늘 자리로 보이고, 편집은 지금 행(새 자리)의 장으로 한다
+      expect(articlesOf(detail).find((a: any) => a.id === ids['2'])).toMatchObject({
+        number: 2,
+        liveNumber: 3,
+        displaced: true,
+        liveChapterId: expect.any(String),
+      });
+      // 시행일 전까지 화면 자리와 지금 행이 달라 구조 편집을 막는다(T-127)
+      expect(detail.current.structureChanges).toBeGreaterThan(0);
       const todayView = articlesOf((await api(`/policies/${policyId}/as-of?date=${kstDay()}`, { token: t.token })).body);
       expect(todayView.map((a: any) => [a.id, a.number])).toEqual([
         [ids['1'], 1],

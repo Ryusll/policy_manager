@@ -214,8 +214,16 @@ describe('T-111 날짜 3종', () => {
       const r = await api(`/policies/${policyId}`, { token: t1.token });
       expect(r.status).toBe(200);
       const articles = r.body.chapters.flatMap((c: any) => c.articles);
-      const lawV = articles.find((a: any) => a.id === art.law).versions[0];
+      // 사내 시행일(OURS = 오늘+10)이 아직 오지 않아 v2 는 "시행 예정"이고 오늘 본문은 v1 이다(T-127).
+      // 날짜 3종(법령 시행일·발행일)은 시행 예정 자리에 같은 모양으로 실린다
+      const lawArticle = articles.find((a: any) => a.id === art.law);
+      expect(lawArticle.versions[0]).toMatchObject({ versionNum: 1, lawChange: null });
+      expect(lawArticle.currentState).toBe('in_force');
+      const lawV = lawArticle.scheduledVersions[0];
       expect(lawV).toMatchObject({ versionNum: 2, lawChange: { eventId: ev, lawEffectiveDate: LAW_DATE, label: '제60조제1항(유급휴가)' } });
+      expect(String(lawV.effectiveDate)).toMatch(new RegExp(`^${OURS}`));
+      expect(lawV).toHaveProperty('publishedAt');
+      expect(lawV).toHaveProperty('publishedAtFromApproval');
       expect('changeEvent' in lawV).toBe(false);
       expect(articles.find((a: any) => a.id === art.old).versions[0]).toMatchObject({ versionNum: 2, publishedAtFromApproval: true, lawChange: null });
       // 초안 요약(includePending)이 붙는 경로도 같은 모양

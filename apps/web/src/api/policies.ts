@@ -23,6 +23,8 @@ export type ThreeWayResult = {
   rows: ThreeWayRow[];
   unmatched: ThreeWayRow[];
   summary: { baseArticles: number; related: number; unmatched: number };
+  /** 기준일(YYYY-MM-DD, 한국 날짜) — 이 날 시행 중인 본문끼리 짝지었다(T-127) */
+  date?: string;
 };
 
 export type PolicyTreeNode = {
@@ -184,11 +186,25 @@ export type CrossPolicyRow = {
   titleDiffers: boolean;
 };
 
+/** 규정 상세의 `current.scheduledArticles` — 시행 예정인데 오늘 그 자리를 다른 조문이 쓰고 있어 본문 목록에서 뺀 조문(T-127) */
+export type PolicyScheduledArticle = {
+  id: string;
+  number: number;
+  branchNumber: number | null;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+  title: string;
+  liveChapterId: string;
+  effectiveDate: string | null;
+};
+
 export type CrossPolicyComparison = {
   left: { id: string; code: string; title: string };
   right: { id: string; code: string; title: string };
   summary: { same: number; different: number; leftOnly: number; rightOnly: number; suspect: number };
   rows: CrossPolicyRow[];
+  /** 기준일(YYYY-MM-DD, 한국 날짜) — 이 날 시행 중인 본문끼리 비교했다(T-127) */
+  date?: string;
 };
 
 export type CompareKind = 'added' | 'removed' | 'changed' | 'same';

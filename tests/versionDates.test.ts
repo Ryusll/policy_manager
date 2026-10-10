@@ -41,11 +41,15 @@ describe('versionDates', () => {
     expect(kstDateTime('2026-10-09T14:59:00Z')).toBe('2026-10-09 23:59');
   });
 
-  it('시행 예정 — 시행본이고 사내 시행일이 오늘 뒤일 때만(오늘 시행이면 아니다)', () => {
+  it('시행 예정 — 발행 이력이고 사내 시행일이 오늘 뒤일 때만(오늘 시행이면 아니다)', () => {
     expect(versionDates({ status: 'published', effectiveDate: '2026-10-10' }, TODAY)!.upcoming).toBe(true);
     expect(versionDates({ status: 'published', effectiveDate: TODAY }, TODAY)!.upcoming).toBe(false);
-    expect(versionDates({ status: 'archived', effectiveDate: '2026-10-10' }, TODAY)!.upcoming).toBe(false);
     expect(versionDates({ status: 'published', effectiveDate: null }, TODAY)!.upcoming).toBe(false);
+    // T-127: 시행 예정 개정이 둘이면 앞의 것은 뒤의 것을 승인할 때 archived 로 내려가지만 그날 시행된다
+    expect(versionDates({ status: 'archived', effectiveDate: '2026-10-10' }, TODAY)!.upcoming).toBe(true);
+    expect(versionDates({ status: 'archived', effectiveDate: '2026-10-01' }, TODAY)!.upcoming).toBe(false);
+    // 폐지된 버전은 시행 예정이 아니다(서버의 시행 예정 목록과 같은 조건)
+    expect(versionDates({ status: 'archived', effectiveDate: '2026-10-10', repealedOn: '2026-10-09' }, TODAY)!.upcoming).toBe(false);
   });
 
   it('법령 시행일 — 후보 승인 버전만, 사내 시행일이 더 이르면 조기 시행', () => {

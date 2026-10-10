@@ -33,6 +33,25 @@ describe('articleToSpeech — 화면 표기가 아니라 말로 읽는 표기', 
   it('줄바꿈·연속 공백을 정리한다', () => {
     expect(articleToSpeech({ number: 1, content: '가\n\n나   다' })).toBe('제1조. 가 나 다');
   });
+
+  it('규정 상세의 조문은 오늘 시행 중인 버전의 본문을 읽는다(조문 행에는 본문 칸이 없다)', () => {
+    expect(articleToSpeech({ number: 2, title: '수당', versions: [{ content: '수당은 10만원이다.' }] })).toBe(
+      '제2조. 수당. 수당은 10만원이다.',
+    );
+  });
+
+  it('시행 예정 본문은 읽지 않는다 — 폐지면 "삭제", 시행 전 새 조문이면 "시행 예정"만 (T-127)', () => {
+    const scheduledVersions = [{ content: '다음 해 본문', effectiveDate: '2099-03-01' }];
+    expect(articleToSpeech({ number: 5, title: '신설', versions: [], currentState: 'scheduled', scheduledVersions })).toBe(
+      '제5조. 신설. 2099-03-01 시행 예정',
+    );
+    expect(articleToSpeech({ number: 3, versions: [], currentState: 'repealed', repealedOn: '2026-10-10' })).toBe(
+      '제3조. 삭제 <2026. 10. 10.>',
+    );
+    expect(
+      articleToSpeech({ number: 2, versions: [{ content: '지금 본문' }], currentState: 'in_force', scheduledVersions }),
+    ).toBe('제2조. 지금 본문');
+  });
 });
 
 describe('chunkForSpeech — 길면 중간에서 끊긴다', () => {

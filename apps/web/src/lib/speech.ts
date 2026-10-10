@@ -10,15 +10,17 @@
  */
 
 import { formatArticleJo, isChapterHeaderHidden } from './legalArticleLabel';
+import { noCurrentTextMarker, type CurrentViewArticle } from './versionState';
 
 export const SPEECH_CHUNK_LIMIT = 180;
 
-export type SpeakableArticle = {
+export type SpeakableArticle = CurrentViewArticle & {
   number: number;
   branchNumber?: number | null;
   clauseNumber?: number | null;
   itemNumber?: number | null;
   title?: string | null;
+  /** 본문을 따로 줄 때. 규정 상세의 조문은 본문이 `versions[0]`(오늘 시행 중인 버전)에 있다 */
   content?: string | null;
 };
 
@@ -33,7 +35,10 @@ export function articleToSpeech(article: SpeakableArticle): string {
   } else {
     parts.push(`제${article.clauseNumber}항`);
   }
-  const body = (article.content || '').replace(/\s+/g, ' ').trim();
+  // 조문 행에는 본문 칸이 없다 — 예전에는 `article.content` 만 봐서 번호·제목만 읽었다.
+  // 오늘 시행 중인 본문을 읽고, 없으면 인쇄와 같은 "삭제 <날짜>"·"날짜 시행 예정"(T-127)
+  const text = article.content ?? article.versions?.[0]?.content ?? noCurrentTextMarker(article) ?? '';
+  const body = text.replace(/\s+/g, ' ').trim();
   if (body) parts.push(body);
   return parts.join('. ');
 }

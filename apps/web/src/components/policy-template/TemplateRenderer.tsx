@@ -15,6 +15,7 @@ import {
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
 import { fullViewGroupKey, joGroupRenderRows } from '../../lib/fullViewGroups';
+import { nextScheduled, noCurrentTextMarker } from '../../lib/versionState';
 
 type TemplateLike = {
   id?: string;
@@ -203,6 +204,34 @@ function FullViewArticleRow({
  * 표시와 함께 보인다. 예전에는 넣은 내용 대신 "시행중 버전이 없습니다."만 떠서, 조·항을
  * 손으로 넣은 사람은 저장이 안 된 줄 알았다. PDF·한글 내보내기는 시행본만 담는다.
  */
+/**
+ * 시행 예정 표시(T-127) — 화면에만 보인다(인쇄에서 빠진다). 인쇄·PDF·한글 파일에는 오늘 시행 중인 본문만 들어간다.
+ * 바뀌는 본문은 접어 두고 검색 강조도 하지 않는다 — 검색은 오늘 시행 중인 본문만 찾는다.
+ */
+function ScheduledNote({
+  scheduled,
+}: {
+  scheduled: { effectiveDate?: string | null; content?: string | null; versionNum?: number };
+}) {
+  const from = String(scheduled.effectiveDate ?? '').slice(0, 10);
+  return (
+    <span className="print:hidden">
+      <span
+        className="ml-1.5 mr-1 inline-flex items-center rounded border border-dashed border-amber-400 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 align-middle"
+        title="승인됐지만 시행일 전입니다. 그날부터 이 본문이 시행됩니다."
+      >
+        시행 예정 · {from}부터
+      </span>
+      {scheduled.content ? (
+        <details className="mt-1 text-[13px] text-gray-600">
+          <summary className="cursor-pointer text-[11px] text-amber-800">바뀌는 본문 보기 (v{scheduled.versionNum})</summary>
+          <span className="mt-1 block whitespace-pre-wrap border-l-2 border-amber-200 pl-2">{scheduled.content}</span>
+        </details>
+      ) : null}
+    </span>
+  );
+}
+
 function ArticleBodyText({
   article,
   hasSubRows,
@@ -212,8 +241,35 @@ function ArticleBodyText({
   hasSubRows: boolean;
   highlightQuery: string;
 }) {
-  const published = article.versions?.[0]?.content;
-  if (published) return <>{highlightText(published, highlightQuery)}</>;
+  // 오늘 시행 중인 본문(T-127 — 서버가 고른다). 시행일 전인 개정은 따로 "시행 예정"으로
+  const current = article.versions?.[0]?.content;
+  const scheduled = nextScheduled(article);
+  if (current) {
+    return (
+      <>
+        {highlightText(current, highlightQuery)}
+        {scheduled ? <ScheduledNote scheduled={scheduled} /> : null}
+      </>
+    );
+  }
+  if (scheduled) {
+    // 오늘 시행 중인 본문이 없다 — 폐지돼 있으면 "삭제 <날짜>"(그 뒤 다시 시행할 판이 있어도),
+    // 아직 시행 전인 새 조문이면 화면에는 안내, 인쇄에는 "날짜 시행 예정"만
+    const marker = noCurrentTextMarker(article);
+    return (
+      <>
+        {article.currentState === 'repealed' ? (
+          <span className="text-gray-500">{marker}</span>
+        ) : (
+          <>
+            <span className="text-gray-400 print:hidden">아직 시행 전인 조문입니다.</span>
+            <span className="hidden print:inline text-gray-400">{marker}</span>
+          </>
+        )}
+        <ScheduledNote scheduled={scheduled} />
+      </>
+    );
+  }
   const pending = article.pendingVersion;
   if (pending?.content) {
     return (
@@ -228,6 +284,9 @@ function ArticleBodyText({
       </>
     );
   }
+  // 폐지된 조문 — 법령 표기대로 "삭제 <날짜>"
+  const marker = noCurrentTextMarker(article);
+  if (marker) return <span className="text-gray-500">{marker}</span>;
   // 항·목을 거느린 조의 머리 행(제2조 적용범위 등)은 본문이 없는 게 정상이다
   const isJoHead = article.clauseNumber == null && article.itemNumber == null;
   if (isJoHead && hasSubRows) return null;

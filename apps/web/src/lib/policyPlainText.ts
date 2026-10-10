@@ -1,4 +1,5 @@
 import { articleShortLabel, isChapterHeaderHidden } from './legalArticleLabel';
+import { noCurrentTextMarker } from './versionState';
 
 /**
  * 전문 텍스트(.txt) 내보내기 본문 만들기.
@@ -43,7 +44,8 @@ export function buildPolicyPlainText(input: PlainTextInput): string {
       for (const article of group.items || []) {
         lines.push('');
         lines.push(`${articleShortLabel(article)} ${article.title || ''}`.trimEnd());
-        lines.push(String(article.versions?.[0]?.content || '').trim());
+        // 오늘 시행 중인 본문만(T-127). 없으면 "삭제 <날짜>"·"날짜 시행 예정" — 시행 예정 본문은 넣지 않는다
+        lines.push(String(article.versions?.[0]?.content || noCurrentTextMarker(article) || '').trim());
       }
     }
   }
