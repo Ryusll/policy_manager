@@ -30,7 +30,7 @@ const B_TEXT = '연차휴가는 본부장이 승인하고 15일 단위로 나누
 const C_TEXT = '직원에게는 매년 15일의 연차휴가를 준다.';
 const D_TEXT = '운영팀이 휴가 기록을 보관한다.';
 
-type Key = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h';
+type Key = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j';
 
 describe('T-109 ② 개정 후보에 변수 값 넣기', () => {
   const sourceId = randomUUID();
@@ -98,11 +98,11 @@ describe('T-109 ② 개정 후보에 변수 값 넣기', () => {
     const { policy, chapter, article } = await createPolicyWithArticle(t1.token, `AVR-${Date.now().toString(36)}`, '취업규칙');
     policyId = policy.id;
     art.a = article.id;
-    const keys: Key[] = ['b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const keys: Key[] = ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
     for (const [i, k] of keys.entries()) {
       art[k] = (await post(`/policies/${policyId}/chapters/${chapter.id}/articles`, { number: i + 2, title: `조문 ${k}`, content: '본문' })).body.id;
     }
-    const texts: Record<Key, string> = { a: TEXT, b: B_TEXT, c: C_TEXT, d: D_TEXT, e: TEXT, f: TEXT, g: TEXT, h: TEXT };
+    const texts: Record<Key, string> = { a: TEXT, b: B_TEXT, c: C_TEXT, d: D_TEXT, e: TEXT, f: TEXT, g: TEXT, h: TEXT, i: TEXT, j: TEXT };
     for (const k of ['a', ...keys] as Key[]) ver[k] = randomUUID();
     sql(`
       DELETE FROM article_versions WHERE article_id IN (${(['a', ...keys] as Key[]).map((k) => `'${art[k]}'`).join(',')});
@@ -117,6 +117,8 @@ describe('T-109 ② 개정 후보에 변수 값 넣기', () => {
     await variable('DEPT_F', '보관 부서', [['관리팀', null, null]]);
     await variable('DEPT_G', '담당 팀', [['관리팀', null, null]]);
     await variable('DEPT_H', '주관 팀', [['관리팀', null, null]]);
+    await variable('DEPT_I', '운영 팀', [['관리팀', null, null]]);
+    await variable('DEPT_J', '책임 팀', [['관리팀', null, null]]);
     await bind('a', 'DEPT_A', '운영팀');
     await bind('b', 'HEAD', '본부장');
     await bind('c', 'DAYS', '15일');
@@ -125,8 +127,10 @@ describe('T-109 ② 개정 후보에 변수 값 넣기', () => {
     await bind('f', 'DEPT_F', '운영팀');
     await bind('g', 'DEPT_G', '운영팀');
     await bind('h', 'DEPT_H', '운영팀');
+    await bind('i', 'DEPT_I', '운영팀');
+    await bind('j', 'DEPT_J', '운영팀');
     // d 는 연결만 있고 이 법령 변경의 영향 조문이 아니다
-    for (const k of ['a', 'b', 'c', 'e', 'f', 'g', 'h'] as Key[]) {
+    for (const k of ['a', 'b', 'c', 'e', 'f', 'g', 'h', 'i', 'j'] as Key[]) {
       const r = await post('/law-links', { lawArticleId: lawArt, articleId: art[k], relationType: 'delegation', evidenceText: '연차휴가 일수' });
       expect(r.status, JSON.stringify(r.body)).toBe(201);
     }
@@ -269,6 +273,47 @@ describe('T-109 ② 개정 후보에 변수 값 넣기', () => {
       expect(re.body).toMatchObject({ created: true, unchanged: false });
       const fresh = await detail(re.body.candidateId);
       expect(fresh).toMatchObject({ plannedEffectiveDate: E, candidateContent: '직원에게는 매년 20일의 연차휴가를 주고, 총무팀이 관리한다.' });
+    });
+
+    it('같은 값 행의 문구만 고쳐도(값 id 그대로) 낡은 후보로 보이고 승인하지 않는다 — 다시 만들면 새 문구로, 승인하면 연결이 따라간다 (T-139)', async () => {
+      const valueId = valId['DEPT_I:관리팀'];
+      expect((await api(`/variables/${varId.DEPT_I}/values/${valueId}`, { method: 'PUT', token: t1.token, json: { value: '총무팀' } })).status).toBe(200);
+      expect(await detail(cand.i)).toMatchObject({ isCurrentBase: false, staleReason: 'variable_changed' });
+      await review(cand.i);
+      const blocked = await approve(cand.i, E);
+      expect(blocked.status, JSON.stringify(blocked.body)).toBe(409);
+      expect(blocked.body.reason).toBe('variable_changed');
+      expect(blocked.body.message).toContain('운영 팀 "관리팀" → "총무팀"');
+      // 값 행은 같아도 문구가 다르니 지문이 다르다 — 낡은 후보를 돌려주지 않고 새 후보를 만든다
+      const re = await post(`/amendments/${cand.i}/regenerate`);
+      expect(re.status, JSON.stringify(re.body)).toBe(200);
+      expect(re.body).toMatchObject({ created: true, unchanged: false });
+      const fresh = re.body.candidateId;
+      expect((await detail(fresh)).candidateContent).toBe('직원에게는 매년 20일의 연차휴가를 주고, 총무팀이 관리한다.');
+      await review(fresh);
+      const ok = await approve(fresh, E);
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+      const v2 = ok.body.resultVersion.id;
+      const at = TEXT.indexOf('운영팀');
+      expect(
+        sql(`SELECT origin || ':' || state || ':' || start || '-' || "end" || ':' || text || ':' || (value_id = '${valueId}') FROM variable_bindings WHERE version_id='${v2}';`),
+      ).toBe(`inherited:active:${at}-${at + 3}:총무팀:true`);
+    });
+
+    it('문구를 넣기 전 지문(vf1)으로 만든 후보는 다시 만들면 한 번 새 후보(vf2)를 만들고, 그 뒤로는 같은 후보를 돌려준다 (T-139)', async () => {
+      sql(`UPDATE amendment_candidates SET variable_fingerprint = 'vf1:legacy' WHERE id='${cand.j}';`);
+      const count = () => Number(sql(`SELECT count(*) FROM amendment_candidates WHERE article_id='${art.j}';`));
+      const before = count();
+      const first = await post(`/amendments/${cand.j}/regenerate`);
+      expect(first.status, JSON.stringify(first.body)).toBe(200);
+      expect(first.body.created).toBe(true);
+      expect(sql(`SELECT variable_fingerprint LIKE 'vf2:%' FROM amendment_candidates WHERE id='${first.body.candidateId}';`)).toBe('t');
+      const [again, together] = await Promise.all([post(`/amendments/${cand.j}/regenerate`), post(`/amendments/${cand.j}/regenerate`)]);
+      for (const r of [again, together]) {
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+        expect(r.body).toMatchObject({ created: false, candidateId: first.body.candidateId });
+      }
+      expect(count()).toBe(before + 1);
     });
 
     it('승인이 값을 다시 보는 동안 값이 바뀌면 바뀐 값으로 판단한다(변수 잠금)', async () => {

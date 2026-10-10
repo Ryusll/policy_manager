@@ -63,11 +63,19 @@ describe('planVariables — 예정 시행일의 값을 연결된 자리에 (T-10
     const a = variableFingerprint(planVariables(BASE, bindings, values, d('2026-06-30')).entries);
     const b = variableFingerprint(planVariables(BASE, bindings, values, d('2026-08-01')).entries);
     expect(a).not.toBe(b);
-    expect(a).toMatch(/^vf1:[0-9a-f]{64}$/);
+    expect(a).toMatch(/^vf2:[0-9a-f]{64}$/);
     expect(variableFingerprint([])).toBe('');
     // 둘 다 "넣음"이어도 넣은 값(값 행)이 다르면 다르다
     const other = [value('v1', 'dept', '운영팀', null, '2026-07-01'), value('v9', 'dept', '총무팀', '2026-07-01', null), values[2]];
     expect(variableFingerprint(planVariables(BASE, bindings, other, d('2026-08-01')).entries)).not.toBe(b);
+  });
+
+  it('지문 — 같은 값 행의 문구만 고쳐도 달라진다(T-139, 값 행은 제자리에서 고쳐진다), 순서는 상관없다', () => {
+    const b = variableFingerprint(planVariables(BASE, bindings, values, d('2026-08-01')).entries);
+    const edited = [values[0], { ...values[1], value: '총무팀' }, values[2]];
+    expect(variableFingerprint(planVariables(BASE, bindings, edited, d('2026-08-01')).entries)).not.toBe(b);
+    // 같은 입력이면 같다 — 연결·값 순서가 달라도
+    expect(variableFingerprint(planVariables(BASE, [...bindings].reverse(), [...values].reverse(), d('2026-08-01')).entries)).toBe(b);
   });
 });
 
@@ -98,6 +106,15 @@ describe('compareVariableEffects — 승인 때 다시 고른 값과 비교 (T-1
     // 다시 고르면 값을 넣게 되는 날이어도(관리팀) 법령 고침과 겹치니 후보와 같다고 본다
     const stored = at('2026-08-01').map((e) => ({ ...e, status: 'conflict' as const, candidate: null }));
     expect(compareVariableEffects(stored, at('2026-08-01'))).toEqual([]);
+  });
+
+  it('같은 값 행이어도 문구를 고쳤으면 다르다(T-139) — 넣었던 문구와 지금 문구를 함께 보인다', () => {
+    const edited = planVariables(BASE, bindings, [values[0], { ...values[1], value: '총무팀' }], d('2026-08-01')).entries;
+    expect(edited[0].valueId).toBe('v2');
+    expect(compareVariableEffects(at('2026-08-01'), edited)).toEqual([{ label: 'dept', candidate: '관리팀', expected: '총무팀' }]);
+    // 고친 문구가 원문과 같아지면 "그대로"가 된다 — 넣었던 후보와 다르다
+    const back = planVariables(BASE, bindings, [values[0], { ...values[1], value: '운영팀' }], d('2026-08-01')).entries;
+    expect(compareVariableEffects(at('2026-08-01'), back)).toEqual([{ label: 'dept', candidate: '관리팀', expected: '운영팀' }]);
   });
 
   it('값을 고를 수 없게 되면(보류) 후보가 넣은 값과 다르다', () => {

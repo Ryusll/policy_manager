@@ -109,18 +109,20 @@ export function planVariables(
   return { entries, proposals };
 }
 
-/** 변수 입력의 지문 — 연결·고른 값·결과가 같으면 같다. 후보 중복 판정에 쓴다(예정 시행일과 함께) */
+/**
+ * 변수 입력의 지문 — 연결·고른 값·결과가 같으면 같다. 후보 중복 판정에 쓴다(예정 시행일과 함께).
+ * 값 문구도 넣는다(vf2, T-139) — 값 행은 제자리에서 고쳐지므로 id 가 같아도 문구가 다를 수 있다. vf1(문구 없음)으로 만든 후보와
+ * 입력이 같아도 지문이 달라 "다시 만들기"는 한 번 새 후보를 만든다(옛 후보도 승인 때 문구를 다시 본다)
+ */
 export function variableFingerprint(entries: VariableEntry[]): string {
   if (!entries.length) return '';
-  const lines = entries
-    .map((e) => `${e.bindingId}|${e.status}|${e.valueId ?? ''}|${e.reason ?? ''}`)
-    .sort();
-  return `vf1:${createHash('sha256').update(lines.join('\n'), 'utf8').digest('hex')}`;
+  const rows = entries.map((e) => JSON.stringify([e.bindingId, e.status, e.valueId, e.value, e.reason])).sort();
+  return `vf2:${createHash('sha256').update(rows.join('\n'), 'utf8').digest('hex')}`;
 }
 
-/** 본문에 미치는 효과 — 값을 넣었으면 그 값, 아니면 원문 그대로 */
-const effect = (e: Pick<VariableEntry, 'status' | 'valueId'> | undefined) =>
-  e?.status === 'applied' ? `apply:${e.valueId}` : 'keep';
+/** 본문에 미치는 효과 — 값을 넣었으면 그 값(값 행과 문구), 아니면 원문 그대로 */
+const effect = (e: Pick<VariableEntry, 'status' | 'valueId' | 'value'> | undefined) =>
+  e?.status === 'applied' ? `apply:${JSON.stringify([e.valueId, e.value])}` : 'keep';
 
 export interface VariableMismatch {
   label: string;
@@ -134,7 +136,7 @@ export interface VariableMismatch {
 
 /**
  * 후보가 넣은 변수 값이 지금(그 날짜 기준) 다시 골라도 같은가 — 본문에 미치는 효과로 비교한다(T-109 ②).
- * 원문을 둔 자리(그대로·보류·충돌)는 서로 같고, 값을 넣은 자리는 같은 값(같은 값 행)이어야 한다. 법령 개정과 겹쳐
+ * 원문을 둔 자리(그대로·보류·충돌)는 서로 같고, 값을 넣은 자리는 같은 값(같은 값 행, 같은 문구 — 값 행은 제자리에서 고쳐진다)이어야 한다. 법령 개정과 겹쳐
  * 원문을 둔 자리는 다시 골라도 겹치므로 보지 않는다. 후보가 값을 넣었는데 그 연결이 풀렸으면 근거가 없어진 것이다.
  * 변수 반영 전(`rule/1`) 후보는 변수 기록이 없어 "모두 원문"으로 본다 — 지금 고르면 넣을 값이 있으면 다르다.
  */

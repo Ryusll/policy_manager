@@ -616,7 +616,8 @@ export class VariablesService {
     for (const b of bindings) {
       const pick = selectValue(fresh.filter((v) => v.variableId === b.variable.id), effective);
       if ('reason' in pick) diffs.push(`${b.variable.label} "${b.text}" → ${PICK_REASON_TEXT[pick.reason]}`);
-      else if (pick.value.id !== b.valueId) diffs.push(`${b.variable.label} "${b.text}" → "${pick.value.value}"`);
+      // 같은 값 행이어도 문구를 제자리에서 고쳤을 수 있다(T-139) — 넣은 문구와 지금 값의 문구도 같아야 한다
+      else if (pick.value.id !== b.valueId || pick.value.value !== b.text) diffs.push(`${b.variable.label} "${b.text}" → "${pick.value.value}"`);
     }
     if (diffs.length) {
       throw new BadRequestException(

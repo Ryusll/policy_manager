@@ -275,6 +275,26 @@ describe('T-109 변수 값·유효기간과 본문 위치 연결', () => {
       expect(imp.body.message).toContain('변수 표식');
     });
 
+    it('검토 요청 뒤 같은 값 행의 문구만 고쳐도(값 id 그대로) 승인하지 않는다 — 넣은 문구로 돌아오면 메모가 바뀌어도 발행 (T-139)', async () => {
+      const team = await post('/variables', { key: 'TEAM', label: '주관 팀', value: '인사팀', validFrom: '2025-01-01' });
+      expect(team.status, JSON.stringify(team.body)).toBe(201);
+      const valueId = (await api(`/variables/${team.body.id}`, { token: t1.token })).body.values[0].id;
+      const { article } = await createPolicyWithArticle(t1.token, `VAR4-${Date.now().toString(36)}`, '주관규정');
+      const draft = sql(`SELECT id FROM article_versions WHERE article_id='${article.id}';`);
+      sql(`UPDATE article_versions SET content='{{TEAM}}이 맡는다.' WHERE id='${draft}';`);
+      expect((await submit(draft)).status).toBeLessThan(300);
+      expect(content(draft)).toBe('인사팀이 맡는다.');
+      expect((await put(`/variables/${team.body.id}/values/${valueId}`, { value: '총무팀' })).status).toBe(200);
+      const blocked = await approve(draft, today);
+      expect(blocked.status, JSON.stringify(blocked.body)).toBe(400);
+      expect(blocked.body.message).toContain('주관 팀 "인사팀" → "총무팀"');
+      expect(sql(`SELECT status FROM article_versions WHERE id='${draft}';`)).toBe('review');
+      expect((await put(`/variables/${team.body.id}/values/${valueId}`, { value: '인사팀', note: '표기 확인' })).status).toBe(200);
+      const ok = await approve(draft, today);
+      expect(ok.status, JSON.stringify(ok.body)).toBeLessThan(300);
+      expect(content(draft)).toBe('인사팀이 맡는다.');
+    });
+
     it('예전에 표식을 남긴 채 검토 요청된 버전은 승인하지 않는다', async () => {
       const legacy = randomUUID();
       sql(`INSERT INTO article_versions (id, article_id, version_num, content, status, updated_at)
