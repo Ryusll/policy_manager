@@ -13,6 +13,9 @@ import {
 } from './versions.dto';
 import { Roles } from '../common/guards/decorators';
 
+/** 초안·검토 중 본문은 편집 권한자에게만(T-138) — 열람자에게는 발행 이력만 준다(규정 상세의 T-117 과 같은 기준) */
+const issuedOnlyFor = (role: string | undefined) => ({ issuedOnly: role !== 'admin' && role !== 'editor' });
+
 @ApiTags('versions')
 @ApiBearerAuth()
 @Controller()
@@ -22,7 +25,7 @@ export class VersionsController {
   @Get('articles/:articleId/versions')
   @ApiOperation({ summary: 'List versions for an article' })
   findByArticle(@Request() req: any, @Param('articleId') articleId: string) {
-    return this.versionsService.findByArticle(req.user.tenantId, articleId);
+    return this.versionsService.findByArticle(req.user.tenantId, articleId, issuedOnlyFor(req.user.role));
   }
 
   @Post('articles/:articleId/versions')
@@ -46,13 +49,13 @@ export class VersionsController {
   ) {
     // 빈 id 로 찾으면 id 조건 없이 그 회사의 아무 버전이나 골라 비교한다
     if (!v1 || !v2) throw new BadRequestException('비교할 두 버전(v1·v2)을 주세요.');
-    return this.versionsService.diff(req.user.tenantId, v1, v2);
+    return this.versionsService.diff(req.user.tenantId, v1, v2, issuedOnlyFor(req.user.role));
   }
 
   @Get('versions/:id')
   @ApiOperation({ summary: 'Get version detail' })
   findOne(@Request() req: any, @Param('id') id: string) {
-    return this.versionsService.findOne(req.user.tenantId, id);
+    return this.versionsService.findOne(req.user.tenantId, id, issuedOnlyFor(req.user.role));
   }
 
   @Put('versions/:id')

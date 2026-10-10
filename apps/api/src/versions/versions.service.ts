@@ -34,7 +34,11 @@ export class VersionsService {
     private revisionNotify: RevisionNotifyService,
   ) {}
 
-  async findByArticle(tenantId: string, articleId: string) {
+  /**
+   * @param opts.issuedOnly 열람자용 — 발행 이력(시행본·이전 버전·시행 예정)만. 초안·검토 중 본문은 편집 권한자에게만 준다(T-138).
+   *   규정 상세는 T-117 부터 열람자에게 초안을 보내지 않았는데 버전 API 만 그대로 주고 있었다.
+   */
+  async findByArticle(tenantId: string, articleId: string, opts: { issuedOnly?: boolean } = {}) {
     const article = await this.prisma.article.findFirst({
       where: {
         id: articleId,
@@ -44,7 +48,7 @@ export class VersionsService {
     if (!article) throw new NotFoundException('Article not found');
 
     const versions = await this.prisma.articleVersion.findMany({
-      where: { articleId },
+      where: { articleId, ...(opts.issuedOnly ? { status: { in: ['published', 'archived'] } } : {}) },
       orderBy: { versionNum: 'desc' },
       // 버전 카드의 "변수 연결 N"(T-109) — 다시 이어야 하는 것도 센다
       include: {
@@ -58,11 +62,13 @@ export class VersionsService {
     return versions.map(withLawChange);
   }
 
-  async findOne(tenantId: string, versionId: string) {
+  /** @param opts.issuedOnly 열람자용 — 초안·검토 중이면 없는 것으로(404, T-138) */
+  async findOne(tenantId: string, versionId: string, opts: { issuedOnly?: boolean } = {}) {
     const version = await this.prisma.articleVersion.findFirst({
       where: {
         id: versionId,
         article: { chapter: { policy: { tenantId } } },
+        ...(opts.issuedOnly ? { status: { in: ['published', 'archived'] } } : {}),
       },
       include: {
         article: { include: { chapter: { include: { policy: true } } } },
@@ -660,9 +666,9 @@ export class VersionsService {
     return { ...row, remainingPublished };
   }
 
-  async diff(tenantId: string, versionId1: string, versionId2: string) {
-    const v1 = await this.findOne(tenantId, versionId1);
-    const v2 = await this.findOne(tenantId, versionId2);
+  async diff(tenantId: string, versionId1: string, versionId2: string, opts: { issuedOnly?: boolean } = {}) {
+    const v1 = await this.findOne(tenantId, versionId1, opts);
+    const v2 = await this.findOne(tenantId, versionId2, opts);
     const changes = Diff.diffWords(v1.content, v2.content);
     return { changes, v1, v2 };
   }
