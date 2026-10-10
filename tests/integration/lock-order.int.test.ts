@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { BASE, api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
 import { brief, expect409, sleepTrigger, sql, stillSleeping, waitForBlockedBy, waitForSleep } from './race';
 
 /**
@@ -42,8 +42,8 @@ const node = (articleNumber: string, articleTitle: string, content: string, chil
 async function parseSession(token: string, roots: any[]) {
   const form = new FormData();
   form.append('file', new Blob([readFileSync(FIXTURE)], { type: 'application/pdf' }), '잠금 규정.pdf');
-  const res = await fetch(`${BASE}/regulation-parse/upload`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: form });
-  let s = await res.json();
+  // 새 연결로 올린다(helpers.api — T-140, 막힌 이벤트 루프 뒤 끊긴 keep-alive 연결을 다시 쓰지 않게)
+  let s = (await api('/regulation-parse/upload', { method: 'POST', token, body: form })).body;
   for (let i = 0; i < 30 && s.status === 'processing'; i += 1) {
     await new Promise((r) => setTimeout(r, 500));
     s = (await api(`/regulation-parse/${s.id}`, { token })).body;
@@ -211,7 +211,8 @@ describe('T-131 잠금 순서·세기·기다림', () => {
       expect((await api(`/versions/${v2.body.id}/submit`, { method: 'POST', token: t.token })).status).toBe(200);
       const ok = await api(`/versions/${v2.body.id}/approve`, { method: 'POST', token: t.token, json: { changeNote: '개정', effectiveDate: today } });
       expect(ok.status, brief(ok)).toBe(200);
-      expect409(await api(`/variable-bindings/${binding.body.id}`, { method: 'DELETE', token: t.token }), '새 버전이 발행');
+      // 오늘 새 버전이 시행돼 옛 버전은 시행 중도 시행 예정도 아니다(문구는 T-132 ⑥)
+      expect409(await api(`/variable-bindings/${binding.body.id}`, { method: 'DELETE', token: t.token }), '새 버전이 시행됐습니다');
       expect(sql(`SELECT count(*) FROM variable_bindings WHERE version_id = '${v2.body.id}' AND state <> 'released';`)).toBe('1');
     });
   });

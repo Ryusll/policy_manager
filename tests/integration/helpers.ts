@@ -1,3 +1,6 @@
+import { request as httpRequest } from 'http';
+import { request as httpsRequest } from 'https';
+
 /**
  * 통합 테스트 공용 헬퍼 — 실제로 떠 있는 API를 HTTP로 두드린다.
  *
@@ -10,26 +13,60 @@ export const BASE = process.env.API_BASE_URL || 'http://localhost:3001/api';
 
 export type Json = Record<string, any>;
 
+/**
+ * 요청 하나를 **새 연결**로 보낸다(keep-alive 없음, T-140).
+ *
+ * fetch 는 쉬는 연결을 다시 쓴다. 시험이 execSync(psql 폴링·도커 명령·CLI)로 이벤트 루프를 몇 초 막는 사이 API 가 그 연결을
+ * 닫으면(keepAliveTimeout 5초) 다음 요청이 닫힌 소켓에 실려 ECONNRESET·"fetch failed"·"other side closed" 로 실패한다 —
+ * 부하가 높을 때 lock-order·law-sync 시험이 흔들린 까닭. 요청마다 새 연결이면 닫힌 소켓을 다시 쓸 일이 없다.
+ * 본문은 문자열이나 FormData(파일 올리기 — 경계 문자열을 붙인 multipart 로 바꿔 보낸다).
+ */
+async function send(url: string, method: string, headers: Record<string, string>, body: unknown) {
+  let payload: Buffer | undefined;
+  const h = { ...headers };
+  if (body instanceof FormData) {
+    const encoded = new Response(body);
+    payload = Buffer.from(await encoded.arrayBuffer());
+    h['Content-Type'] = encoded.headers.get('content-type')!;
+  } else if (typeof body === 'string') {
+    payload = Buffer.from(body, 'utf8');
+  } else if (body != null) {
+    throw new Error('api(): 본문은 문자열이나 FormData 만 보낼 수 있습니다');
+  }
+  if (payload) h['Content-Length'] = String(payload.length);
+  const u = new URL(url);
+  return new Promise<{ status: number; text: string }>((resolve, reject) => {
+    const req = (u.protocol === 'https:' ? httpsRequest : httpRequest)(u, { method, headers: h, agent: false }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
 export async function api(
   path: string,
   init: RequestInit & { token?: string; json?: unknown } = {},
 ): Promise<{ status: number; body: any }> {
-  const { token, json, headers, ...rest } = init;
-  const res = await fetch(`${BASE}${path}`, {
-    ...rest,
-    headers: {
+  const { token, json, headers, method } = init;
+  const res = await send(
+    `${BASE}${path}`,
+    method ?? 'GET',
+    {
       ...(json !== undefined ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(headers as Record<string, string> | undefined),
     },
-    body: json !== undefined ? JSON.stringify(json) : (rest.body as any),
-  });
-  const text = await res.text();
+    json !== undefined ? JSON.stringify(json) : init.body,
+  );
   let body: any;
   try {
-    body = text ? JSON.parse(text) : null;
+    body = res.text ? JSON.parse(res.text) : null;
   } catch {
-    body = text;
+    body = res.text;
   }
   return { status: res.status, body };
 }

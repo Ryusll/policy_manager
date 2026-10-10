@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { BASE, api, createTenant, login, waitForApi } from './helpers';
+import { api, createTenant, login, waitForApi } from './helpers';
 import { brief, expect409, sleepTrigger, sql, waitForBlockedBy, waitForSleep } from './race';
 
 /**
@@ -66,8 +66,8 @@ const uniq = (prefix: string) => `${prefix}-${Date.now().toString(36)}${(seq += 
 async function session(token: string, roots?: any[]) {
   const form = new FormData();
   form.append('file', new Blob([readFileSync(FIXTURE)], { type: 'application/pdf' }), FILE_NAME);
-  const res = await fetch(`${BASE}/regulation-parse/upload`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: form });
-  let s = await res.json();
+  // 새 연결로 올린다(helpers.api — T-140, 막힌 이벤트 루프 뒤 끊긴 keep-alive 연결을 다시 쓰지 않게)
+  let s = (await api('/regulation-parse/upload', { method: 'POST', token, body: form })).body;
   for (let i = 0; i < 30 && s.status === 'processing'; i += 1) {
     await new Promise((r) => setTimeout(r, 500));
     s = (await api(`/regulation-parse/${s.id}`, { token })).body;
