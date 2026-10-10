@@ -303,6 +303,9 @@ export class PoliciesService {
           effectiveDate: scheduledOf.get(a.id)?.[0]?.effectiveDate
             ? toDateOnlyString(scheduledOf.get(a.id)![0].effectiveDate!)
             : null,
+          // 제정·개정이유 창 — 본문 목록에 없는 조문이라 사유를 여기서 싣는다(T-132 ⑧)
+          versionId: scheduledOf.get(a.id)?.[0]?.id ?? null,
+          changeNote: scheduledOf.get(a.id)?.[0]?.changeNote ?? null,
         })),
       };
     } else {

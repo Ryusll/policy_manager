@@ -196,6 +196,9 @@ export type PolicyScheduledArticle = {
   title: string;
   liveChapterId: string;
   effectiveDate: string | null;
+  /** 가장 이른 시행 예정 버전(T-132 ⑧ — 제정·개정이유 창) */
+  versionId: string | null;
+  changeNote: string | null;
 };
 
 export type CrossPolicyComparison = {

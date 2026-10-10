@@ -129,3 +129,21 @@ describe('조문별 개정 사유 — 시행 예정 개정의 사유도 함께',
   });
 });
 
+describe('제정·개정이유 — 본문 목록에서 빠진 시행 예정 신설 조문의 사유도(T-132 ⑧)', () => {
+  it('current.scheduledArticles 의 사유를 함께 모은다', () => {
+    const policy = {
+      chapters: [{ articles: [{ number: 1, title: '목적', versions: [{ id: 'v1', changeNote: '제정', effectiveDate: '2024-01-01' }] }] }],
+      current: {
+        scheduledArticles: [
+          { number: 2, title: '끼어든 조', versionId: 'n1', changeNote: '다음 달 시행', effectiveDate: '2099-03-01' },
+          { number: 3, title: '사유 없음', versionId: 'n2', changeNote: '', effectiveDate: '2099-03-01' },
+        ],
+      },
+    };
+    expect(collectArticleChangeNotes(policy, formatArticleJo)).toEqual([
+      { key: 'n1', label: '제2조 (끼어든 조)', note: '다음 달 시행', effectiveDate: '2099-03-01', scheduled: true },
+      { key: 'v1', label: '제1조 (목적)', note: '제정', effectiveDate: '2024-01-01', scheduled: false },
+    ]);
+  });
+});
+

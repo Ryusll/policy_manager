@@ -154,10 +154,37 @@ export type ArticleChangeNote = {
  * 예전에는 시행본(`published`) 하나만 봤는데, 이제 미래 시행 개정은 `scheduledVersions` 에 따로 오므로 함께 모은다.
  */
 export function collectArticleChangeNotes(
-  policy: { chapters?: { articles?: (CurrentViewArticle & { number: number; branchNumber?: number | null; title?: string | null })[] }[] } | null | undefined,
+  policy:
+    | {
+        chapters?: { articles?: (CurrentViewArticle & { number: number; branchNumber?: number | null; title?: string | null })[] }[];
+        /** 본문 목록에서 빠진 시행 예정 신설 조문(자리가 겹친 것, T-127) — 사유는 여기서 온다(T-132 ⑧) */
+        current?: {
+          scheduledArticles?: {
+            number: number;
+            branchNumber?: number | null;
+            title?: string | null;
+            versionId?: string | null;
+            changeNote?: string | null;
+            effectiveDate?: string | null;
+          }[];
+        } | null;
+      }
+    | null
+    | undefined,
   joLabel: (number: number, branch?: number | null) => string,
 ): ArticleChangeNote[] {
   const rows: ArticleChangeNote[] = [];
+  for (const a of policy?.current?.scheduledArticles || []) {
+    const note = String(a.changeNote ?? '').trim();
+    if (!note || !a.versionId) continue;
+    rows.push({
+      key: a.versionId,
+      label: `${joLabel(a.number, a.branchNumber)}${a.title ? ` (${a.title})` : ''}`,
+      note,
+      effectiveDate: a.effectiveDate ?? null,
+      scheduled: true,
+    });
+  }
   for (const chapter of policy?.chapters || []) {
     for (const article of chapter.articles || []) {
       const label = `${joLabel(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`;

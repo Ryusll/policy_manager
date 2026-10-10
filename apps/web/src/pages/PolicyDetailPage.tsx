@@ -819,6 +819,10 @@ export default function PolicyDetailPage() {
   // 새 초안의 바탕 — 시행 예정 본문이 있으면 그것(오늘 본문으로 고치면 시행 예정 개정을 잃는다)
   const selectedDraftBase = useMemo(() => articleDraftBase(liveSelectedArticle ?? {}), [liveSelectedArticle]);
   const currentVersionId: string | null = liveSelectedArticle?.versions?.[0]?.id ?? null;
+  // 이 조문의 가장 늦은 시행 예정일 — 그보다 이른 날로는 승인할 수 없다(서버도 409, T-132 ①)
+  const approveMinDate: string | null = selectedDraftBase.kind === 'scheduled' ? selectedDraftBase.effectiveDate : null;
+  // 비워 두면 오늘로 승인된다
+  const approveTooEarly = !!approveMinDate && (approveEffectiveDate || serviceToday()) < approveMinDate;
   // 미래 시행 구조 변경(재파싱 묶음, T-110 ②)으로 오늘 자리와 지금 행이 다른 조문·장이 있다(T-127). 목차·본문은 오늘 자리로
   // 보이는데 편집 호출은 지금 행 기준이라, 그동안 화면 자리로 조·항·절·장을 넣거나 순서·번호·제목을 고치면 엉뚱한 자리가 바뀐다
   const structureLocked = Number(policy?.current?.structureChanges ?? 0) > 0;
@@ -5184,6 +5188,7 @@ export default function PolicyDetailPage() {
                   id="approve-effective-date"
                   type="date"
                   className="input w-full"
+                  min={approveMinDate ?? undefined}
                   value={approveEffectiveDate}
                   onChange={(e) => setApproveEffectiveDate(e.target.value)}
                 />
@@ -5193,6 +5198,15 @@ export default function PolicyDetailPage() {
                 {approveEffectiveDate && approveEffectiveDate > serviceToday() && (
                   <p className="text-[11px] text-amber-800 mt-1">
                     그날까지는 지금 본문이 현행으로 보이고, 이 버전은 「시행 예정」으로 표시됩니다.
+                  </p>
+                )}
+                {approveMinDate && (
+                  <p
+                    className={clsx('text-[11px] mt-1', approveTooEarly ? 'text-red-700' : 'text-gray-500')}
+                    data-testid="approve-min-date"
+                  >
+                    이 조문에는 {approveMinDate}에 시행될 버전이 있어 그보다 이른 날로는 승인할 수 없습니다
+                    {approveTooEarly ? ' — 시행일을 그날이나 그 뒤로 정하세요.' : '.'}
                   </p>
                 )}
               </div>
@@ -5213,7 +5227,7 @@ export default function PolicyDetailPage() {
                       effectiveDate: approveEffectiveDate || undefined,
                     });
                   }}
-                  disabled={!approveNote.trim() || approveMutation.isPending}
+                  disabled={!approveNote.trim() || approveMutation.isPending || approveTooEarly}
                   className="btn-primary"
                 >
                   승인

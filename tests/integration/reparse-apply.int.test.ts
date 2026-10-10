@@ -403,7 +403,8 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
       ]);
       // 끼어든 새 조문은 오늘 본문의 자리(제2조)를 차지하지 않고 시행 예정 목록에 있다
       expect(detail.current.scheduledArticles).toEqual([
-        expect.objectContaining({ number: 2, title: '끼어든 조', effectiveDate: future }),
+        // 제정·개정이유 창이 쓰는 사유도 싣는다(T-132 ⑧ — 본문 목록에 없는 조문)
+        expect.objectContaining({ number: 2, title: '끼어든 조', effectiveDate: future, changeNote: '다음 달 시행', versionId: expect.any(String) }),
       ]);
       // 옮겨질 조문은 오늘 자리로 보이고, 편집은 지금 행(새 자리)의 장으로 한다
       expect(articlesOf(detail).find((a: any) => a.id === ids['2'])).toMatchObject({

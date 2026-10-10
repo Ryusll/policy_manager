@@ -214,6 +214,20 @@ export class VersionsService {
       if (fresh.status !== 'review') throw new BadRequestException('Only versions in review can be approved');
       assertNotBundle(fresh);
       await assertAfterRepeal(tx, version.articleId, effective);
+      // 그보다 늦게 시행되는 발행 이력이 있으면 막는다(T-132 ①) — 개정 후보·재파싱 묶음 승인과 같은 규칙(같은 날은 된다 — 나중
+      // 버전이 이긴다). 막지 않으면 이 승인이 그 시행 예정 버전을 archived 로 내리지만 날짜 규칙상 그날 다시 현재가 되어,
+      // 이번 개정은 그날까지만 시행되고 사라진다
+      const later = await tx.articleVersion.findFirst({
+        where: { articleId: version.articleId, status: { in: ['published', 'archived'] }, effectiveDate: { gt: effective } },
+        orderBy: { effectiveDate: 'desc' },
+        select: { versionNum: true, effectiveDate: true },
+      });
+      if (later) {
+        const E = toDateOnlyString(effective);
+        throw new ConflictException(
+          `${E}보다 늦게 시행되는 버전(v${later.versionNum}, ${toDateOnlyString(later.effectiveDate!)} 시행)이 이미 있습니다 — 시행일을 그날이나 그 뒤로 정하세요.`,
+        );
+      }
       // 변수(T-109): 표식이 남은 본문은 발행하지 않고, 검토 요청 때 넣은 값이 그 시행일에도 맞는지 다시 본다
       await this.variablesService.assertNoMarkers(tx, tenantId, [{ label: '이 버전', content: version.content }]);
       await this.variablesService.assertMarkerValuesAt(tx, versionId, effective);
@@ -264,6 +278,7 @@ export class VersionsService {
         changeNote: reason,
         approvedByUserId: userId,
         metadata: policy.metadata,
+        effectiveDate: effective,
       });
       if (notifyResult.sent > 0) {
         await this.audit.log({
@@ -443,6 +458,7 @@ export class VersionsService {
       changeNote: reason,
       approvedByUserId: userId,
       metadata: policy.metadata,
+      effectiveDate: effective,
     });
     if (notifyResult.sent > 0) {
       await this.audit.log({

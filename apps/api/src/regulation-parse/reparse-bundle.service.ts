@@ -593,6 +593,7 @@ export class ReparseBundleService {
         changeNote: reason,
         approvedByUserId: userId,
         metadata: policy!.metadata,
+        effectiveDate: effective,
       });
       if (notify.sent > 0) {
         await this.audit.log({
