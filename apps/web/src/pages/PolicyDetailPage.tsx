@@ -935,6 +935,7 @@ export default function PolicyDetailPage() {
       setPolicyDatesMsg('저장했습니다.');
       setTimeout(() => setPolicyDatesMsg(''), 2500);
     },
+    onError: (err) => toast(apiErrorMessage(err, '날짜·알림을 저장하지 못했습니다.'), 'error'),
   });
 
   /**
@@ -2763,8 +2764,10 @@ export default function PolicyDetailPage() {
                       try {
                         await policiesApi.update(policy.id, { templateId: nextId || null });
                         qc.invalidateQueries({ queryKey: ['policy', id] });
-                      } catch {
-                        // keep local switch; next refetch will recover server state
+                      } catch (err) {
+                        // 저장 못 한 양식을 그대로 두면 새로 고칠 때까지 그 양식으로 보인다 — 비워 두면 아래 동기화가 서버 값(없으면 기본 양식)을 다시 고른다
+                        setSelectedTemplateId(policy.templateId ?? '');
+                        toast(apiErrorMessage(err, '적용 양식을 바꾸지 못했습니다.'), 'error');
                       }
                     }}
                   >
