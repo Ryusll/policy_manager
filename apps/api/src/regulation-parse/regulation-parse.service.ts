@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   Logger,
@@ -293,13 +294,16 @@ export class RegulationParseService {
       throw new BadRequestException('커밋된 세션의 트리는 수정할 수 없습니다.');
     }
     const roots = assertTree(body.roots);
-    return this.prisma.regulationParseSession.update({
-      where: { id },
+    // 조건부로 고친다(T-131) — 확인한 뒤 반영·등록이 원문을 쓰면 고치지 않는다(쓴 원문의 트리가 바뀌면 반영한 묶음과 어긋난다)
+    const changed = await this.prisma.regulationParseSession.updateMany({
+      where: { id, tenantId, committedPolicyId: null, status: { not: 'committed' } },
       data: {
         parseTree: { roots } as object,
         status: 'ready',
       },
     });
+    if (changed.count !== 1) throw new ConflictException('이 원문은 그 사이 반영이나 새 규정 등록에 썼습니다 — 원문을 다시 가져오세요.');
+    return this.prisma.regulationParseSession.findUniqueOrThrow({ where: { id } });
   }
 
   async commit(

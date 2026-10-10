@@ -11,6 +11,7 @@ import { FavoriteButton } from '../components/FavoriteButton';
 import { INDEX_KEYS, compareKo, countByIndexKey, indexKeyOf } from '../lib/hangulIndex';
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
+import { apiErrorMessage } from '../lib/apiError';
 import { useI18n } from '../i18n/useI18n';
 import { type ParseProfile, type ParsedPolicyDraft } from '../lib/policyImportParser';
 import { parsePolicyTextWithSplitMode, type ImportSplitMode } from '../lib/policyImportSplitModes';
@@ -216,6 +217,8 @@ export default function PoliciesPage() {
   const deleteMutation = useMutation({
     mutationFn: policiesApi.delete,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['policies'] }),
+    // 다른 작업이 그 규정을 고치는 중이면 409(잠시 뒤 다시) — 말없이 넘어가면 지워진 줄 안다(T-131)
+    onError: (err) => toast(apiErrorMessage(err, '규정을 삭제하지 못했습니다.'), 'error'),
   });
 
   /**
@@ -227,6 +230,7 @@ export default function PoliciesPage() {
     mutationFn: ({ id, next }: { id: string; next: boolean }) =>
       policiesApi.update(id, { isActive: next }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['policies'] }),
+    onError: (err) => toast(apiErrorMessage(err, '사용 상태를 바꾸지 못했습니다.'), 'error'),
   });
 
   const updateChapterField = (chapterIdx: number, field: 'number' | 'title', value: string) => {

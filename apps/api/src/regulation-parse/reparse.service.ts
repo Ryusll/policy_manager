@@ -23,6 +23,7 @@ import {
 } from './reparse-match';
 import { undecidedCount, validateDecisions, type DecisionItem } from './reparse-decisions';
 import { bundleState } from './reparse-state';
+import { lockOpenReparseReviews, lockPolicyRow, lockReparseReviewRow, shareParseSessionRow } from '../common/row-locks';
 
 type Db = PrismaService | Prisma.TransactionClient;
 
@@ -175,56 +176,73 @@ export class ReparseService {
       treeFingerprint: treeFingerprint(roots),
     };
 
-    const review = await this.prisma.$transaction(async (tx) => {
-      // 같은 원문을 같은 규정과 다시 비교하면 앞 검토는 지나간 것으로 — 사람이 정한 결정은 같은 항목이면 옮겨 온다
-      const previous = await tx.reparseReview.findMany({
-        where: { tenantId, policyId, sessionId, status: 'open' },
-        include: { items: true },
-      });
-      if (previous.length) {
-        await tx.reparseReview.updateMany({ where: { id: { in: previous.map((p) => p.id) } }, data: { status: 'superseded' } });
-      }
-      // 묶음을 반려한 뒤 같은 원문으로 다시 비교하면 그 검토의 결정도 옮겨 온다(열린 검토가 먼저)
-      const rejected = await tx.reparseReview.findFirst({
-        where: { tenantId, policyId, sessionId, status: 'rejected' },
-        orderBy: { rejectedAt: 'desc' },
-        include: { items: true },
-      });
-      const earlier = [...previous.flatMap((p) => p.items), ...(rejected?.items ?? [])];
-      carryDecisions(items, earlier);
-      addCompanions(items, earlier);
-      summary.counts = countBuilt(items);
-      return tx.reparseReview.create({
-        data: {
-          tenantId,
-          policyId,
-          sessionId,
-          sourceName: session.fileName,
-          algorithm: REPARSE_ALGORITHM,
-          normalizer: NORMALIZE_VERSION,
-          stateFingerprint: stored.state,
-          summary: summary as unknown as Prisma.InputJsonValue,
-          createdBy: userId,
-          items: {
-            create: items.map((i, seq) => ({
-              seq,
-              kind: i.kind,
-              articleId: i.articleId,
-              parsed: (i.parsed ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-              stored: (i.stored ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-              candidates: (i.candidates.length ? i.candidates : Prisma.JsonNull) as Prisma.InputJsonValue,
-              reasons: i.reasons as unknown as Prisma.InputJsonValue,
-              changes: (i.changes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-              recommended: i.recommended,
-              decision: i.decision,
-              targetArticleId: i.targetArticleId,
-              decidedBy: i.decidedBy,
-              decidedAt: i.decidedAt,
-            })),
+    const review = await this.prisma.$transaction(
+      async (tx) => {
+        // 규정 → 열린 검토(id 순) → 원문(공유) 순서로 잡고(T-131) 다시 본다. 비교는 잠그기 전에 했으므로 그 사이 원문을 반영·등록에
+        // 썼거나 원문·규정이 바뀌었으면 이 비교는 이미 낡았다
+        await lockPolicyRow(tx, policyId);
+        await lockOpenReparseReviews(tx, tenantId, policyId, sessionId);
+        await shareParseSessionRow(tx, sessionId);
+        const fresh = await tx.regulationParseSession.findUnique({ where: { id: sessionId }, select: { status: true, committedPolicyId: true, parseTree: true } });
+        if (!fresh || fresh.committedPolicyId || fresh.status === 'committed') {
+          throw new ConflictException('이 원문은 그 사이 반영이나 새 규정 등록에 썼습니다 — 원문을 다시 가져와 비교하세요.');
+        }
+        const freshRoots = (fresh.parseTree as { roots?: RegulationArticleNode[] } | null)?.roots;
+        if (fresh.status !== 'ready' || treeFingerprint(freshRoots) !== summary.treeFingerprint || (await this.loadStored(tx, policyId)).state !== stored.state) {
+          throw new ConflictException('비교하는 사이 이 규정이나 원문이 바뀌었습니다 — 다시 비교하세요.');
+        }
+        // 같은 원문을 같은 규정과 다시 비교하면 앞 검토는 지나간 것으로 — 사람이 정한 결정은 같은 항목이면 옮겨 온다. 열린 검토는
+        // 잠근 뒤 읽고, 그 사이 반영된 검토는 건드리지 않는다
+        const previous = await tx.reparseReview.findMany({
+          where: { tenantId, policyId, sessionId, status: 'open' },
+          include: { items: true },
+        });
+        if (previous.length) {
+          await tx.reparseReview.updateMany({ where: { id: { in: previous.map((p) => p.id) }, status: 'open' }, data: { status: 'superseded' } });
+        }
+        // 묶음을 반려한 뒤 같은 원문으로 다시 비교하면 그 검토의 결정도 옮겨 온다(열린 검토가 먼저)
+        const rejected = await tx.reparseReview.findFirst({
+          where: { tenantId, policyId, sessionId, status: 'rejected' },
+          orderBy: { rejectedAt: 'desc' },
+          include: { items: true },
+        });
+        const earlier = [...previous.flatMap((p) => p.items), ...(rejected?.items ?? [])];
+        carryDecisions(items, earlier);
+        addCompanions(items, earlier);
+        summary.counts = countBuilt(items);
+        return tx.reparseReview.create({
+          data: {
+            tenantId,
+            policyId,
+            sessionId,
+            sourceName: session.fileName,
+            algorithm: REPARSE_ALGORITHM,
+            normalizer: NORMALIZE_VERSION,
+            stateFingerprint: stored.state,
+            summary: summary as unknown as Prisma.InputJsonValue,
+            createdBy: userId,
+            items: {
+              create: items.map((i, seq) => ({
+                seq,
+                kind: i.kind,
+                articleId: i.articleId,
+                parsed: (i.parsed ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+                stored: (i.stored ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+                candidates: (i.candidates.length ? i.candidates : Prisma.JsonNull) as Prisma.InputJsonValue,
+                reasons: i.reasons as unknown as Prisma.InputJsonValue,
+                changes: (i.changes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+                recommended: i.recommended,
+                decision: i.decision,
+                targetArticleId: i.targetArticleId,
+                decidedBy: i.decidedBy,
+                decidedAt: i.decidedAt,
+              })),
+            },
           },
-        },
-      });
-    });
+        });
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
     await this.audit.log({
       tenantId,
       userId,
@@ -318,9 +336,12 @@ export class ReparseService {
     id: string,
     changes: { id: string; decision?: string | null; targetArticleId?: string | null }[],
   ) {
+    // 규정 → 검토 행 순서(T-131) — 반영·묶음 처리와 같은 순서로 줄 서서, 반영이 결정을 읽는 동안 끼어들지 않는다
+    const owner = await this.prisma.reparseReview.findFirst({ where: { id, tenantId }, select: { policyId: true } });
+    if (!owner) throw new NotFoundException('Reparse review not found');
     await this.prisma.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM reparse_reviews WHERE id = ${id} AND tenant_id = ${tenantId} FOR UPDATE`;
-      if (!locked.length) throw new NotFoundException('Reparse review not found');
+      await lockPolicyRow(tx, owner.policyId);
+      if (!(await lockReparseReviewRow(tx, id, tenantId))) throw new NotFoundException('Reparse review not found');
       const review = await tx.reparseReview.findUniqueOrThrow({ where: { id }, include: { items: true } });
       if (review.status !== 'open') throw new ConflictException('지나간 검토입니다 — 최근 비교 결과에서 정하세요.');
       const byId = new Map(review.items.map((i) => [i.id, i]));

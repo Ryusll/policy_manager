@@ -88,6 +88,14 @@ api 컨테이너 헬스체크는 `/api/health`를 5초 간격, start_period 60�
    - 배포 전 반드시 DB 백업: `docker compose exec postgres pg_dump -U postgres policy_manager > backup_YYYYMMDD.sql`
    - 문제 발생 시 복원: `docker compose exec -T postgres psql -U postgres policy_manager < backup_YYYYMMDD.sql`
 3. **볼륨 데이터**: `postgres_data`, `minio_data`, `api_uploads` 볼륨은 `docker compose down`으로는 삭제되지 않음. `down -v`는 볼륨까지 삭제하므로 **운영에서 절대 사용 금지**
+5. **재파싱 묶음(632466a, T-110 ②) 이전 코드로 되돌릴 때 (T-131)** — 옛 코드는 묶음 초안(`reparse_item_id`)을 일반 초안으로 보고 하나씩 승인할 수 있어 **묶음 일부만 발행**되고, 버전별 계층(`structure`)을 무시해 그 전 날짜의 시점 조회가 지금 계층으로 나온다. 순서대로:
+   1. 쓰기를 막는다(점검 공지 후 웹을 내리거나 관리자 외 접속 차단) — 진행 중인 요청이 끝날 때까지 기다린다
+   2. **지금 코드로** 반영·검토 중인 재파싱 묶음을 모두 반려한다(재파싱 검토 화면 `묶음 반려`)
+   3. 읽기 전용으로 확인한다(7-6 방식) — 둘 다 0 이어야 한다:
+      `SELECT count(*) FROM reparse_reviews WHERE status IN ('applied','submitted');` · `SELECT count(*) FROM article_versions WHERE reparse_item_id IS NOT NULL AND status IN ('draft','review');`
+   4. 이미 승인한 묶음이 있으면(`SELECT count(*) FROM article_versions WHERE structure IS NOT NULL;` 가 0 이 아니면) **632466a 이전으로는 되돌리지 않는다** — 반려로 풀리지 않는다. 그 기록을 읽는 632466a 이후 릴리스까지만 되돌린다
+   5. 이미지를 바꿔 기동이 끝날 때까지 1의 쓰기 차단을 유지한다
+   6. 이미 그렇게 되돌렸다가 다시 올렸다면: 발행 이력에 남은 제안 계층을 지우고(`UPDATE article_versions SET structure = NULL WHERE status IN ('published','archived') AND structure->>'kind' = 'proposal';`) 반영·검토 중으로 멈춘 묶음을 지금 코드로 반려한다
 4. **첨부파일 백업**: 규정 첨부는 DB가 아니라 `api_uploads` 볼륨에만 있어 `pg_dump` 에 **포함되지 않는다.** 아래 8절의 서버 밖 백업이 DB와 첨부를 함께 내보내므로, 그것이 돌고 있으면 이 항목은 자동으로 충족된다.
 
 ## 7-1. 시크릿 교체 (운영 배포 전 필수)

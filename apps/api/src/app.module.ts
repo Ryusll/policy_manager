@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { PasswordChangeGuard } from './common/guards/password-change.guard';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaModule } from './common/prisma/prisma.module';
@@ -31,6 +31,7 @@ import { PlatformBrandingModule } from './platform-branding/platform-branding.mo
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import { AskModule } from './ask/ask.module';
+import { LockBusyFilter } from './common/lock-busy.filter';
 
 @Module({
   controllers: [HealthController],
@@ -71,6 +72,8 @@ import { AskModule } from './ask/ask.module';
     { provide: APP_GUARD, useClass: PlanGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // 잠금 기다림·교착·트랜잭션 제한 → 다시 시도할 수 있는 응답(T-131)
+    { provide: APP_FILTER, useClass: LockBusyFilter },
   ],
 })
 export class AppModule {}

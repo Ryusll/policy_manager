@@ -21,6 +21,7 @@ import { planApply, type ApplyPlan, type ParsedJson, type PlanArticle, type Plan
 import { findBoundaryConflicts, type BoundaryArticle } from './reparse-boundary';
 import { undecidedCount } from './reparse-decisions';
 import { ReparseService, treeFingerprint } from './reparse.service';
+import { LONG_LOCK_WAIT_MS, lockArticleRow, lockParseSessionRow, lockPolicyRow, lockPolicyWithArticles, lockReparseReviewRow } from '../common/row-locks';
 import type { RegulationArticleNode } from './regulation-tree.builder';
 
 type Tx = Prisma.TransactionClient;
@@ -61,10 +62,13 @@ export class ReparseBundleService {
     private reparse: ReparseService,
   ) {}
 
-  /** 규정 → 그 규정의 모든 조문(id 순) — 계층 변경 경로·버전 경로와 같은 순서로 줄 세운다 */
-  private async lockPolicy(tx: Tx, policyId: string) {
-    await tx.$queryRaw`SELECT id FROM policies WHERE id = ${policyId} FOR UPDATE`;
-    await tx.$queryRaw`SELECT a.id FROM articles a JOIN chapters c ON c.id = a.chapter_id WHERE c.policy_id = ${policyId} ORDER BY a.id FOR UPDATE OF a`;
+  /**
+   * 규정 → 그 규정의 모든 조문(id 순) → 이 검토 행 — 계층 변경 경로·버전 경로·결정·다시 비교와 같은 순서로 줄 세운다(T-131).
+   * 검토 행까지 잡은 뒤에 결정·상태를 읽는다 — 그 전에 읽으면 그 사이 커밋된 결정이나 다시 비교를 보지 못한 채 묶음을 만든다
+   */
+  private async lockBundle(tx: Tx, policyId: string, reviewId: string, tenantId: string) {
+    await lockPolicyWithArticles(tx, policyId, LONG_LOCK_WAIT_MS);
+    if (!(await lockReparseReviewRow(tx, reviewId, tenantId, LONG_LOCK_WAIT_MS))) throw new NotFoundException('Reparse review not found');
   }
 
   private async loadReview(tenantId: string, id: string) {
@@ -77,7 +81,10 @@ export class ReparseBundleService {
   async apply(tenantId: string, userId: string, id: string) {
     const { policyId } = await this.loadReview(tenantId, id);
     await this.prisma.$transaction(async (tx) => {
-      await this.lockPolicy(tx, policyId);
+      await this.lockBundle(tx, policyId, id, tenantId);
+      // 원문 세션도 잡는다(T-131, 순서의 맨 끝) — 반영이 원문을 다 쓴 것으로 둘 때까지 원문 미리보기 고치기·다른 비교가 끼어들지 않게
+      const { sessionId } = await tx.reparseReview.findUniqueOrThrow({ where: { id }, select: { sessionId: true } });
+      if (sessionId) await lockParseSessionRow(tx, sessionId, LONG_LOCK_WAIT_MS);
       const review = await tx.reparseReview.findUniqueOrThrow({
         where: { id },
         include: { items: { orderBy: { seq: 'asc' } }, session: { select: { id: true, parseTree: true, status: true } } },
@@ -136,6 +143,7 @@ export class ReparseBundleService {
         tx,
         tenantId,
         plan.newArticles.map((n) => ({ label: labelOf.get(n.itemId) ?? '새 조문', content: n.content })),
+        '새 조문은 고칠 수 없으니 원문을 고쳐 다시 비교하세요.',
       );
 
       // 묶음 초안 — 조문마다 다음 버전 번호
@@ -222,7 +230,7 @@ export class ReparseBundleService {
     const { policyId } = await this.loadReview(tenantId, id);
     const today = todayDateOnly();
     await this.prisma.$transaction(async (tx) => {
-      await this.lockPolicy(tx, policyId);
+      await this.lockBundle(tx, policyId, id, tenantId);
       const review = await tx.reparseReview.findUniqueOrThrow({ where: { id } });
       if (review.status !== 'applied') throw new ConflictException('반영한 묶음만 검토 요청할 수 있습니다.');
       if ((await bundleState(tx, policyId, review.plan, false)) !== review.bundleFingerprint) {
@@ -272,7 +280,7 @@ export class ReparseBundleService {
     const today = todayDateOnly();
     const { policyId } = await this.loadReview(tenantId, id);
     const result = await this.prisma.$transaction(async (tx) => {
-      await this.lockPolicy(tx, policyId);
+      await this.lockBundle(tx, policyId, id, tenantId);
       const review = await tx.reparseReview.findUniqueOrThrow({ where: { id }, include: { items: true } });
       if (review.status !== 'submitted') throw new ConflictException('검토 요청한 묶음만 승인할 수 있습니다.');
       if ((await bundleState(tx, policyId, review.plan, true)) !== review.bundleFingerprint) {
@@ -318,6 +326,17 @@ export class ReparseBundleService {
           throw new ConflictException(`${label(v.articleId)}: 제안할 때와 지금 계층이 다릅니다 — 묶음을 반려하고 다시 비교하세요.`);
         }
       }
+      // 새 조문 본문도 다시 본다(T-131) — 반영한 뒤 변수가 등록되면 그 문구가 표식이 된다. 새 조문은 고칠 수 없으니 반려하고 다시 비교
+      const newBodies = plan.newArticles.filter((n) => normalizeText(n.content));
+      await this.variables.assertNoMarkers(
+        tx,
+        tenantId,
+        newBodies.map((n) => ({
+          label: `${labelOfPosition({ number: n.number, branchNumber: n.branchNumber, clauseNumber: n.clauseNumber, itemNumber: n.itemNumber })}(새 조문)`,
+          content: n.content,
+        })),
+        '새 조문은 고칠 수 없으니 묶음을 반려하고 원문을 고쳐 다시 비교하세요.',
+      );
       // 2) 폐지 — 시행일이 오늘 이전이면 그 날로(그날 시행 중인 시행본, 더 늦은 시행본 없음). 미래면 미결로 남긴다
       const executeRepeals = effective.getTime() <= today.getTime();
       const repealVersions = new Map<string, string>();
@@ -595,7 +614,7 @@ export class ReparseBundleService {
     if (!reason) throw new BadRequestException('반려 사유를 입력하세요.');
     const { policyId } = await this.loadReview(tenantId, id);
     await this.prisma.$transaction(async (tx) => {
-      await this.lockPolicy(tx, policyId);
+      await this.lockBundle(tx, policyId, id, tenantId);
       const review = await tx.reparseReview.findUniqueOrThrow({ where: { id } });
       if (review.status !== 'applied' && review.status !== 'submitted') throw new ConflictException('반영했거나 검토 요청한 묶음만 반려할 수 있습니다.');
       // 묶음 초안은 발행된 적 없는 검토 대상이라 지운다(무엇을 제안했는지는 검토 항목·감사 기록에 남는다). 제안 계층을 가진 초안이
@@ -632,38 +651,47 @@ export class ReparseBundleService {
    * 반영 전에는 검토의 결정으로 정하고, 반영부터 승인 전까지는 묶음 계획이라 바꾸지 않는다.
    */
   async resolveMissing(tenantId: string, userId: string, role: string, id: string, itemId: string, decision: 'keep' | 'repeal') {
-    await this.loadReview(tenantId, id);
-    const review = await this.prisma.reparseReview.findUniqueOrThrow({ where: { id } });
-    if (review.status !== 'approved' && review.status !== 'rejected') {
-      throw new ConflictException('원문에 없는 조문은 묶음을 승인하거나 반려한 뒤에 따로 정합니다(그 전에는 검토의 결정으로).');
-    }
-    const item = await this.prisma.reparseReviewItem.findFirst({ where: { id: itemId, reviewId: id } });
-    if (!item || item.kind !== 'missing' || !item.articleId) throw new BadRequestException('원문에 없는 조문 항목이 아닙니다.');
-    const outcome = (item.outcome ?? {}) as { action?: string; status?: string };
-    if (outcome.action === 'repeal' && outcome.status === 'done') throw new ConflictException('이미 폐지한 조문입니다.');
-    if (decision === 'keep') {
-      await this.prisma.reparseReviewItem.update({
-        where: { id: itemId },
-        data: { decision: 'keep', decidedBy: userId, decidedAt: new Date(), outcome: { action: 'keep' } },
+    const { policyId } = await this.loadReview(tenantId, id);
+    const pre = await this.prisma.reparseReviewItem.findFirst({ where: { id: itemId, reviewId: id }, select: { kind: true, articleId: true } });
+    if (!pre || pre.kind !== 'missing' || !pre.articleId) throw new BadRequestException('원문에 없는 조문 항목이 아닙니다.');
+    const articleId = pre.articleId;
+    // 규정 → 조문 → 검토 행 순서로 잡고(T-131) 상태·항목을 다시 읽는다. 폐지와 항목 결과는 한 트랜잭션 — 폐지만 남거나, 함께 누른
+    // 유지가 폐지 결과를 덮지 않게
+    await this.prisma.$transaction(async (tx) => {
+      await lockPolicyRow(tx, policyId);
+      await lockArticleRow(tx, articleId);
+      if (!(await lockReparseReviewRow(tx, id, tenantId))) throw new NotFoundException('Reparse review not found');
+      const review = await tx.reparseReview.findUniqueOrThrow({ where: { id }, select: { status: true } });
+      if (review.status !== 'approved' && review.status !== 'rejected') {
+        throw new ConflictException('원문에 없는 조문은 묶음을 승인하거나 반려한 뒤에 따로 정합니다(그 전에는 검토의 결정으로).');
+      }
+      const item = await tx.reparseReviewItem.findUniqueOrThrow({ where: { id: itemId }, select: { outcome: true } });
+      const outcome = (item.outcome ?? {}) as { action?: string; status?: string };
+      if (outcome.action === 'repeal' && outcome.status === 'done') throw new ConflictException('이미 폐지한 조문입니다.');
+      if (decision === 'keep') {
+        await tx.reparseReviewItem.update({
+          where: { id: itemId },
+          data: { decision: 'keep', decidedBy: userId, decidedAt: new Date(), outcome: { action: 'keep' } },
+        });
+        return;
+      }
+      if (role !== 'admin') throw new ForbiddenException('폐지는 관리자만 할 수 있습니다.');
+      const published = await tx.articleVersion.findFirst({
+        where: { articleId, status: 'published' },
+        orderBy: { versionNum: 'desc' },
+        select: { id: true },
       });
-      return this.reparse.get(tenantId, id);
-    }
-    if (role !== 'admin') throw new ForbiddenException('폐지는 관리자만 할 수 있습니다.');
-    const published = await this.prisma.articleVersion.findFirst({
-      where: { articleId: item.articleId, status: 'published' },
-      orderBy: { versionNum: 'desc' },
-      select: { id: true },
-    });
-    if (!published) throw new ConflictException('시행 중인 버전이 없는 조문입니다.');
-    const archived = await this.versions.archive(tenantId, published.id, userId);
-    await this.prisma.reparseReviewItem.update({
-      where: { id: itemId },
-      data: {
-        decision: 'repeal',
-        decidedBy: userId,
-        decidedAt: new Date(),
-        outcome: { action: 'repeal', status: 'done', repealedOn: day(archived.repealedOn), versionId: published.id },
-      },
+      if (!published) throw new ConflictException('시행 중인 버전이 없는 조문입니다.');
+      const archived = await this.versions.archiveLocked(tx, tenantId, { id: published.id, articleId }, userId);
+      await tx.reparseReviewItem.update({
+        where: { id: itemId },
+        data: {
+          decision: 'repeal',
+          decidedBy: userId,
+          decidedAt: new Date(),
+          outcome: { action: 'repeal', status: 'done', repealedOn: day(archived.repealedOn), versionId: published.id },
+        },
+      });
     });
     return this.reparse.get(tenantId, id);
   }

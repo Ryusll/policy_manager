@@ -10,6 +10,7 @@
 - `@Roles(...)`는 테넌트 내 역할(admin/editor/viewer), `@PlatformRoles('global_admin')`은 SaaS 운영자 전용, `@MinPlan('pro')`는 플랜 하한(PlanGuard)
 - 레이트리밋: 100 req/min (`ThrottlerGuard`)
 - 요청 바디는 전역 `ValidationPipe`(whitelist, forbidNonWhitelisted, transform) 적용 — DTO에 없는 필드는 자동 거부
+- **잠금 대기(T-131)**: 규정·조문을 고치는 쓰기는 규정 → 조문(id 순) → 재파싱 검토 → 원문 순서로 잠근다. 다른 쓰기가 같은 규정·조문을 잡고 있어 3초(재파싱 묶음·한꺼번에 시행·시행일 보정·조 재정렬·규정 삭제는 30초) 안에 잠금을 못 잡으면 **409 `다른 작업이 같은 규정을 고치는 중입니다 — 잠시 뒤 다시 시도하세요.`** — 같은 요청을 다시 보내면 된다. 교착이 나도 같은 409, 트랜잭션을 시작하지 못하면(커넥션 부족) **503**(전역 `LockBusyFilter` — 기다림 409 는 어느 잠금인지 경고 로그, 교착은 오류 로그). 변수 값 고치기는 `다른 작업이 이 변수를 쓰는 중입니다`. 의견·즐겨찾기·개정 후보 넣기는 이 잠금에 막히지 않는다
 
 ## auth (`/api/auth`)
 
@@ -58,17 +59,17 @@
 | POST | import-logs | admin, editor | 가져오기 이력 기록 |
 | GET | :id | admin, editor | 규정 상세. 조문은 **조 → 가지(`branchNumber`, 제3조의2) → 조 본문 → 항 → 목** 순. 조문마다 `versions`(최신 시행본 1건)와 `_count.comments`(**처리 안 된** 의견 수). **admin·editor 에게만** 조문마다 `pendingVersion`(시행본 유무와 무관한 최신 초안·검토중 버전, 없으면 null)을 더한다 — 시행본이 없는 조문은 화면이 이것을 "초안 · 시행 전"으로 보인다. 열람자에게는 보내지 않는다 (T-117). 조문마다 `versions[0]` 에 `lawChange`(아래 버전 목록과 같은 모양 — 연혁 탭의 날짜 3종, T-111) |
 | POST | (root) | admin, editor | 규정 생성 |
-| PUT | :id | admin, editor | 규정 수정(개정일·시행일·알림 설정 포함) |
-| DELETE | :id | admin | 규정 삭제 |
+| PUT | :id | admin, editor | 규정 수정(개정일·시행일·알림 설정 포함). 규정 행을 잠그고 메타데이터(부서·분류·개정 알림)를 다시 읽어 고친다(T-131 — 동시에 고친 키를 지우지 않는다). 긴 작업(묶음 승인 등)이 잡고 있으면 30초까지 기다렸다 저장, 넘으면 409 |
+| DELETE | :id | admin | 규정 삭제. 규정을 처음부터 지우기 잠금(FOR UPDATE)으로 잡고 지울 조문(id 순)을 잡은 뒤 지운다(T-131 — 조문 즐겨찾기 넣기와 엇갈려 멈추지 않게). 지우는 동안 기다린 쓰기는 404 |
 | POST | :id/chapters | admin, editor | 장 생성 |
-| PUT | :id/chapters/:chapterId | admin, editor | 장 수정(suppressHeader 등) |
-| DELETE | :id/chapters/:chapterId | admin | 장 삭제 |
+| PUT | :id/chapters/:chapterId | admin, editor | 장 수정(suppressHeader 등). 규정을 잠근 뒤 장을 다시 읽어 머리글을 계산한다(T-131 — 그 사이 바뀐 제목을 되쓰지 않는다) |
+| DELETE | :id/chapters/:chapterId | admin | 장 삭제. 규정 → 그 장의 조문(id 순)을 잡고 지운다(T-131) |
 | POST | :id/chapters/:chapterId/sections | admin, editor | **절 추가** (선택 계층) |
 | PUT | :id/chapters/:chapterId/sections/:sectionId | admin, editor | 절 수정 |
 | DELETE | :id/chapters/:chapterId/sections/:sectionId | admin | 절 삭제 (소속 조문은 보존, 연결만 해제) |
 | POST | :id/chapters/:chapterId/articles | admin, editor | 조문 생성 |
-| PUT | :id/chapters/:chapterId/articles/:articleId | admin, editor | 조문 구조·메타 수정 — 번호(조·가지·항·목)를 바꿀 때 다른 조문의 **얼린 자리**(지난 계층 기록, T-110 ②)와 같으면 400(그 기간의 시점 조회에서 번호가 겹친다). 계층을 바꾸는 쓰기는 규정 행을 잠근다(장·절 생성·수정·삭제, 조문 생성·삭제도) |
-| DELETE | :id/chapters/:chapterId/articles/:articleId | admin | 조문 삭제 |
+| PUT | :id/chapters/:chapterId/articles/:articleId | admin, editor | 조문 구조·메타 수정 — 번호(조·가지·항·목)를 바꿀 때 다른 조문의 **얼린 자리**(지난 계층 기록, T-110 ②)와 같으면 400(그 기간의 시점 조회에서 번호가 겹친다). 계층을 바꾸는 쓰기는 규정 행을 잠근다(장·절 생성·수정·삭제, 조문 생성·삭제도). 규정을 잠근 뒤 조문을 다시 읽는다(T-131) — 그 사이 같은 규정의 다른 장으로 옮겨졌으면 409 |
+| DELETE | :id/chapters/:chapterId/articles/:articleId | admin | 조문 삭제. 규정을 잠근 뒤 다시 읽고 그 조문을 잡고 지운다(T-131 — 다른 장으로 옮겨졌으면 409) |
 | POST | :id/appendices | admin, editor | 부칙/별표/서식 생성 |
 | PUT | :id/appendices/:appendixId | admin, editor | 부칙/별표/서식 수정 |
 | DELETE | :id/appendices/:appendixId | admin | 부칙/별표/서식 삭제 |
@@ -92,7 +93,7 @@
 > **첨부파일 4종 공통(T-41)**: 규정 소유를 먼저 확인하므로 남의 규정이면 404다. `:id`·`:filename` 은 형식 검사를 통과해야 하며(UUID / 저장 파일명), 조립 경로가 업로드 루트를 벗어나면 400. 예전에는 인코딩한 슬래시로 경로를 거슬러 올라가 컨테이너의 임의 파일을 읽고 지울 수 있었다.
 
 | GET | :id/jo-order | JWT | 조 재정렬 시작점 — 현재 조 차례(`[{chapterId, jo, branch?}]`). 가지 조문(제3조의2)은 `branch` 를 단 별도 항목 (T-118) |
-| PUT | :id/jo-order | admin·editor | 조 순서 일괄 재정렬·번호 재부여. Body: `order: [{chapterId, jo, branch?}]` — **규정의 모든 조를 문서 순서대로 한 번씩**. `jo`·`branch` 는 옮기기 전 번호. 재정렬하면 1부터 다시 매기므로 가지 번호는 풀린다(T-118). 빠지거나 겹치면 400. 조에 딸린 항·목 행도 함께 움직이고, 장이 바뀌면 절 지정은 풀린다(T-60) 바뀌는 조의 새 자리가 다른 조문의 얼린 자리와 같으면 400(T-110 ②) |
+| PUT | :id/jo-order | admin·editor | 조 순서 일괄 재정렬·번호 재부여. Body: `order: [{chapterId, jo, branch?}]` — **규정의 모든 조를 문서 순서대로 한 번씩**. `jo`·`branch` 는 옮기기 전 번호. 재정렬하면 1부터 다시 매기므로 가지 번호는 풀린다(T-118). 빠지거나 겹치면 400. 조에 딸린 항·목 행도 함께 움직이고, 장이 바뀌면 절 지정은 풀린다(T-60) 바뀌는 조의 새 자리가 다른 조문의 얼린 자리와 같으면 400(T-110 ②). 규정을 잠근 뒤 조문을 읽어 계획을 세운다(T-131) — 그 사이 재파싱 승인으로 조가 늘거나 바뀌었으면 보낸 차례가 맞지 않아 400(승인한 자리를 되돌리지 않는다) |
 
 ## versions (`/api/articles/:articleId/versions`, `/api/versions/:id`)
 | Method | Path | 인증 | 설명 |
@@ -106,8 +107,8 @@
 | POST | versions/:id/reject | admin | 검토 반려(review→draft). Body: `reason`(**필수**) — 사유는 버전의 `reviewNote` 에 남아 편집자에게 보인다. 다시 검토 요청하면 지워진다 (T-10) 재파싱 묶음의 버전(`reparseItemId`)이면 409 — 묶음으로만 처리한다(T-110 ②). 조문 행을 잠그고 상태를 다시 확인한다 |
 | POST | versions/:id/archive | admin | 게시본 폐지(published→archived) — **오늘(한국 날짜)부터 조문을 시행에서 뺀다**: 폐지 시행일 `repealedOn` 을 남긴다(T-126). 날짜는 고르지 않는다(미래 폐지는 T-127 뒤, 소급 없음). 조문 행을 잠그고(승인과 같은 잠금) 다시 확인한다 — 그 사이 내려갔으면 409, 시행일이 없으면(보정 먼저)·아직 시행 전이면·오늘 뒤에 시행될 버전이 따로 있으면·오늘 시행 중인 본문이 이 버전이 아니면 400. 응답에 `repealedOn`·`remainingPublished` — 0이면 이 조문에 게시본이 없다(전문 보기·인쇄에 본문 없이 나온다) (T-10). 감사 `version.archive`(같은 트랜잭션, details `repealedOn`·`remainingPublished`) |
 | GET | versions/diff | admin, editor | 두 버전 diff. Query: `v1`, `v2`(버전 ID) |
-| POST | policies/:policyId/publish-drafts | admin | **시행본이 없는 조문(새로 넣은 조문, 폐지 뒤 다시 쓴 조문)의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate`(**필수**, YYYY-MM-DD — 이 조문들이 실제로 시행된 날. 오늘로 채우지 않는다(PAT-02), 없으면 400). 규정의 첫 시행이고 규정 시행일이 비어 있으면 같은 날로 채운다. 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건"). 폐지한 조문이 있으면 시행일이 그 폐지일 이후여야 한다 — 하나라도 어긋나면 400(조문·폐지일 목록)이고 아무것도 시행하지 않는다(T-126) 변수 표식이 남은 초안이 있으면 400(검토 요청으로 시행), 폐지 뒤 다시 시행하는 조문은 폐지한 버전의 변수 연결을 옮긴다(T-109) 재파싱 묶음의 초안은 빠진다(T-110 ②). 대상 조문을 id 순으로 잠그고 다시 확인한다 |
-| POST | policies/:policyId/fill-effective-date | admin | **시행일 없이 시행된 버전에 확인한 시행일 넣기**(T-123 · PAT-02, 예전 가져오기 데이터 보정). Body: `effectiveDate`(YYYY-MM-DD, **필수** — 최초 제정일이 아니라 지금 본문이 시행된 날), `reason`(**필수**). 시행일이 비어 있는 시행본(published·archived)에만 넣고, 규정 단위 시행일이 비어 있으면 함께 채운다. **같은 조문의 앞뒤 시행본과 순서가 어긋나거나 비어 있는 시행본이 둘 이상인 조문이 하나라도 있으면 409 + `conflicts[]`(label·detail)로 아무것도 바꾸지 않는다.** 넣을 것이 없으면 400. 응답 `{updated}`. 감사 `version.effective_date_fill` |
+| POST | policies/:policyId/publish-drafts | admin | **시행본이 없는 조문(새로 넣은 조문, 폐지 뒤 다시 쓴 조문)의 초안을 한꺼번에 시행**(T-117). Body: `changeNote`(**필수**), `effectiveDate`(**필수**, YYYY-MM-DD — 이 조문들이 실제로 시행된 날. 오늘로 채우지 않는다(PAT-02), 없으면 400). 규정의 첫 시행이고 규정 시행일이 비어 있으면 같은 날로 채운다. 대상은 시행본이 없는 조문의 최신 초안·검토중 버전뿐이고, **이미 시행 중인 조문의 개정 초안은 건드리지 않는다**(그건 조문별 검토·승인). 응답 `{published}`. 감사 `version.bulk_publish` 1건, 개정 알림은 조문 수만큼이 아니라 1번("제1조 외 N건"). 폐지한 조문이 있으면 시행일이 그 폐지일 이후여야 한다 — 하나라도 어긋나면 400(조문·폐지일 목록)이고 아무것도 시행하지 않는다(T-126) 변수 표식이 남은 초안이 있으면 400(검토 요청으로 시행), 폐지 뒤 다시 시행하는 조문은 폐지한 버전의 변수 연결을 옮긴다(T-109) 재파싱 묶음의 초안은 빠진다(T-110 ②). 대상 조문을 id 순으로 잠그고 다시 확인한다. 규정 → 조문 순서로 잠그고 첫 시행 여부·초안 상태와 본문·폐지를 잠근 뒤 다시 본다 — 그 사이 바뀌었으면 409, 규정 시행일은 잠근 뒤 비어 있을 때만 채운다(T-131) |
+| POST | policies/:policyId/fill-effective-date | admin | **시행일 없이 시행된 버전에 확인한 시행일 넣기**(T-123 · PAT-02, 예전 가져오기 데이터 보정). Body: `effectiveDate`(YYYY-MM-DD, **필수** — 최초 제정일이 아니라 지금 본문이 시행된 날), `reason`(**필수**). 시행일이 비어 있는 시행본(published·archived)에만 넣고, 규정 단위 시행일이 비어 있으면 함께 채운다. **같은 조문의 앞뒤 시행본과 순서가 어긋나거나 비어 있는 시행본이 둘 이상인 조문이 하나라도 있으면 409 + `conflicts[]`(label·detail)로 아무것도 바꾸지 않는다.** 넣을 것이 없으면 400. 응답 `{updated}`. 감사 `version.effective_date_fill`. 규정 → 모든 조문을 잠그고 규정 시행일을 잠근 뒤 다시 읽는다(T-131) |
 
 ## comments (`/api/articles/:articleId/comments`, `/api/comments/:id`)
 | Method | Path | 인증 | 설명 |
@@ -129,7 +130,7 @@
 | DELETE | variables/:id/values/:valueId | admin, editor | 값 지우기. 감사 `variable.value.delete` |
 | GET | versions/:versionId/variable-bindings | JWT | 그 버전 본문의 연결(풀지 않은 것) — 다른 회사 버전은 404 |
 | POST | versions/:versionId/variable-bindings | admin, editor | **시행 중인 버전의 문구를 변수에 잇기** `{ variableId, start, end, text }` — 위치는 저장된 본문의 UTF-16 [start, end). 시행본이 아니거나 `text` 가 본문 그 구간과 다르면(그 사이 바뀜) 409, 다른 연결과 겹치면 409, 앞뒤 공백이 있으면 400. 그 버전 시행일에 맞는 값과 같은 문구면 `valueId`(직전 적용값)를 적는다. 조문을 잠근다(발행 때 연결 옮기기와 줄 세움). 감사 `variable.binding.create` |
-| DELETE | variable-bindings/:id | admin, editor | 연결 풀기 — 지우지 않고 `released` 로 남긴다. 감사 `variable.binding.release` |
+| DELETE | variable-bindings/:id | admin, editor | 연결 풀기 — 지우지 않고 `released` 로 남긴다. 감사 `variable.binding.release`. 조문을 잠그고 다시 본다(T-131) — 그 사이 새 버전이 발행돼 이 버전이 내려갔으면 409(새 버전에 옮겨진 연결을 남긴 채 옛 연결만 푸는 일이 없게), 폐지됐으면 폐지 안내로 409 |
 
 > 예전 `POST variables/:id/usages`(버전-변수 사용 기록)와 `defaultValue` 는 없앴다(T-109) — 위치를 가진 연결과 기간 있는 값으로 대신한다. 마이그레이션 `20261009150000_variable_values_bindings` 가 옛 기본값을 기간 미확정 값으로, 옛 사용 기록을 표식 `{{KEY}}` 이 나오는 자리마다의 연결로 옮겼다(본문에 표식이 없던 기록은 "다시 이어야 함", 변수와 버전의 회사가 다른 기록은 옮기지 않음).
 
@@ -192,20 +193,20 @@
 |---|---|---|---|
 | POST | upload | admin, editor | PDF 업로드 → 텍스트 추출(Python pdfplumber/pymupdf) → 조항 트리. 최대 30MB. 파싱에 성공하면 **원문 PDF를 세션 이름(`<세션id>.pdf`)으로 보관**해 `extractMeta.sourceFile` 에 적는다(등록 시 첨부로 옮김, 미등록은 일주일 뒤 정리). 한글 파일명은 latin1 해석을 바로잡아 `fileName` 에 저장 (T-120) |
 | GET | :id | admin, editor, viewer | 파싱 세션 조회 |
-| PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14) |
+| PATCH | :id/tree | admin, editor | 파싱 트리 수정. DTO에 `@Type(() => Object)` 필수 — 없으면 전역 ValidationPipe가 노드를 `[]`로 만든다(C-14). 반영·새 규정 등록에 이미 쓴 원문이면 409 — 반영이 원문을 잡고 있으면 끝날 때까지 기다렸다가 판정한다(T-131) |
 | POST | :id/commit | admin, editor | 파싱 결과 → 규정(Policy) 등록. 응답 `{policyId, sessionId, articleCount}`. 트리를 장·절·조·항·목으로 옮긴다(T-88·T-89). **원문 조·항·호 번호를 그대로 쓰고**(가지 조문은 `branchNumber`), 첫 조 앞의 글(문서 제목 등)은 조문이 아니라 규정 설명으로, 부칙·별표·서식은 규정 부칙·별표로 보낸다. 항·목은 제목 칸의 번호 표기를 버리고 문장을 본문으로 쓴다(예전 모양 세션의 제목 칸 문장도 살린다). 조문은 바로 시행 상태로 등록되고, 업로드한 원문 PDF는 규정 첨부파일로 붙는다 (T-115·T-118·T-120). Body 의 **`effectiveDate`(YYYY-MM-DD)는 필수**(T-123) — 가져오는 본문이 실제로 시행된 날이며 첫 버전과 규정 단위 시행일에 들어간다. 없거나 없는 날짜면 아무것도 만들지 않고 400 본문에 등록된 변수의 표식이 있으면 400(바로 시행하는 본문이라, T-109) |
-| POST | :id/reparse | admin, editor | **기존 규정과 비교(T-110 ①, 재파싱)** `{ policyId }` — 이 원문을 고른 규정의 조문과 계층·내용 지문 두 축으로 맞춘 **재파싱 검토**를 만든다(201, 응답은 `GET /reparse-reviews/:id` 와 같다). 규정 데이터는 바꾸지 않는다. 같은 원문·같은 규정의 열린 검토는 지나간 것(`superseded`)이 되고 사람이 정한 결정은 같은 항목(종류·재파싱 행·기존 조문·후보가 같고 결정 규칙에 맞을 때)으로 옮겨 온다. 미리보기가 준비되지 않았거나 이미 새 규정으로 등록한 원문이면 400, 다른 회사의 원문·규정이면 404. 감사 `reparse.compare` |
+| POST | :id/reparse | admin, editor | **기존 규정과 비교(T-110 ①, 재파싱)** `{ policyId }` — 이 원문을 고른 규정의 조문과 계층·내용 지문 두 축으로 맞춘 **재파싱 검토**를 만든다(201, 응답은 `GET /reparse-reviews/:id` 와 같다). 규정 데이터는 바꾸지 않는다. 같은 원문·같은 규정의 열린 검토는 지나간 것(`superseded`)이 되고 사람이 정한 결정은 같은 항목(종류·재파싱 행·기존 조문·후보가 같고 결정 규칙에 맞을 때)으로 옮겨 온다. 미리보기가 준비되지 않았거나 이미 새 규정으로 등록한 원문이면 400, 다른 회사의 원문·규정이면 404. 감사 `reparse.compare`. 잠근 뒤(규정 → 열린 검토 → 원문, T-131) 다시 본다 — 그 사이 원문을 반영·등록에 썼으면 409 `원문을 다시 가져와`, 원문 트리·규정 상태가 바뀌었으면 409 `다시 비교`. 앞 검토는 그때 열려 있는 것만 지나감으로 돌린다 |
 
 ## reparse-reviews — 재파싱 검토 (T-110 ①) — 화면: `/policies/:id/reparse/:reviewId`
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | /reparse-reviews/:id | admin, editor | 검토 1건 — `status`(open·superseded·applied), `algorithm`(`reparse/1`)·`normalizer`(`norm/1`), `summary`(종류별 개수 `counts`·장 단위 변경 `chapters`·부칙·별표 수(이번 비교에서 뺌)·작업본이 있는 조문 수), `undecided`(결정이 남은 항목 — 옮김·본문 바뀜·판정 보류·새 조문 후보), `stale`(비교한 뒤 규정이 바뀜 — 장·절·조문 계층·제목, 비교 대상 버전, 작업본), `sourceChanged`(비교한 뒤 원문 트리를 고침), `items[]` — `kind`(same 그대로·moved 옮김·changed 같은 자리 본문 바뀜·ambiguous 판정 보류·new 새 조문 후보·missing 원문에 없음), `articleId`, `parsed`(재파싱 행: 계층·장·절·제목·본문·지문·번호 다시 매김), `stored`(비교 대상: 최근 발행본(시행 예정 포함), 발행 이력이 없으면 최신 작업본 — 버전 id·번호·상태·시행/폐지일·본문·지문, 계층·장·절·제목, 작업본), `candidates`(판정 보류 후보), `reasons`(번호·본문·띄어쓰기만·상위 조·하위 항·앞뒤 조·빈 본문·번호 다시 매김·폐지·중복), `changes`(본문·띄어쓰기만·번호·장·절·제목), `recommended`, `decision`·`targetArticleId`·`decidedBy`·`decidedAt`, 본문 바뀜이면 낱말 단위 `diff`. 다른 회사 검토면 404 **2단계(T-110 ②)**: `status` 에 `applied`(반영 — 묶음 초안)·`submitted`(묶음 검토 요청)·`approved`·`rejected`, `plan`(승인 때 만들 장·절·새 조문, 장·절 번호·제목 변경, 버전 없는 조 머리 행 옮김, 폐지), 반영·검토 요청·승인·반려 시각과 사람, `effectiveDate`·`changeNote`·`rejectReason`, 항목마다 `outcome`(개정·자리 옮김·장 변경 초안, 새 조문, 폐지 예정·함·미결, 보류, 유지)과 `version`(그 항목의 묶음 버전). 반영·검토 요청 뒤의 `stale` 은 그때의 묶음 지문과 지금이 다름(그 단계로 넘어갈 수 없다) |
-| PATCH | /reparse-reviews/:id/decisions | admin, editor | `{ items: [{ id, decision, targetArticleId? }] }` — 옮김: `accept`·`new`·`hold` / 본문 바뀜: `amend`·`new`·`hold` / 판정 보류: `pick`(후보 중, `targetArticleId`)·`new`·`hold` / 새 조문 후보: `new`·`link`(원문에 없는 기존 조문에 잇기)·`hold` / 원문에 없음: `keep`·`repeal`(관리자) 또는 `null`(미결). **한 기존 조문은 한 항목만** 가리킨다(400), 이어진 원문에 없는 조문은 유지·폐지를 정하지 않는다(400), 다른 검토의 항목 id 는 400, 지나간 검토면 409. 검토 행을 잠가 결정끼리 줄 세운다 옮김·본문 바뀜을 `new` 로 돌리면 그 기존 조문의 **원문에 없음 항목**을 곧바로 만들고(유지·폐지를 반영 전에 정한다), 되돌리면 거둔다(T-110 ②). 반영한 뒤에는 409 |
-| POST | /reparse-reviews/:id/apply | admin, editor | **반영**(T-110 ②) — 결정이 모두 정해진 열린 검토만(아니면 400). 규정 → 조문(id 순) 잠금 아래 비교 때의 규정 상태·원문 트리를 다시 확인해 다르면 409. 기존 조문의 **묶음 초안**(본문·제안 계층, `reparseItemId`)만 만들고 지금 본문·계층은 그대로 둔다 — 새 조문·새 장·절은 계획에만(승인 때 만든다). 장·절 번호·제목이 바뀌면 그 장·절의 시행 중인 조문에 계층만 바꾸는 초안. 묶음이 아닌 초안·검토 중 버전이 남은 조문을 바꾸려 하면 409(그 항목을 보류로 두면 된다), 반영할 변경이 없으면 400. 원문은 다 쓴 것으로 둔다. 감사 `reparse.apply` |
+| PATCH | /reparse-reviews/:id/decisions | admin, editor | `{ items: [{ id, decision, targetArticleId? }] }` — 옮김: `accept`·`new`·`hold` / 본문 바뀜: `amend`·`new`·`hold` / 판정 보류: `pick`(후보 중, `targetArticleId`)·`new`·`hold` / 새 조문 후보: `new`·`link`(원문에 없는 기존 조문에 잇기)·`hold` / 원문에 없음: `keep`·`repeal`(관리자) 또는 `null`(미결). **한 기존 조문은 한 항목만** 가리킨다(400), 이어진 원문에 없는 조문은 유지·폐지를 정하지 않는다(400), 다른 검토의 항목 id 는 400, 지나간 검토면 409. 규정 → 검토 행 순서로 잠가 결정끼리, 그리고 반영·다시 비교·조문 지우기와 줄 세운다(T-131 — 반영이 먼저 잡았으면 끝난 뒤 409) 옮김·본문 바뀜을 `new` 로 돌리면 그 기존 조문의 **원문에 없음 항목**을 곧바로 만들고(유지·폐지를 반영 전에 정한다), 되돌리면 거둔다(T-110 ②). 반영한 뒤에는 409 |
+| POST | /reparse-reviews/:id/apply | admin, editor | **반영**(T-110 ②) — 결정이 모두 정해진 열린 검토만(아니면 400). 규정 → 조문(id 순) → 검토 행 → 원문 잠금 아래(T-131 — 결정·상태는 잠근 뒤 읽는다) 비교 때의 규정 상태·원문 트리를 다시 확인해 다르면 409. 기존 조문의 **묶음 초안**(본문·제안 계층, `reparseItemId`)만 만들고 지금 본문·계층은 그대로 둔다 — 새 조문·새 장·절은 계획에만(승인 때 만든다). 장·절 번호·제목이 바뀌면 그 장·절의 시행 중인 조문에 계층만 바꾸는 초안. 묶음이 아닌 초안·검토 중 버전이 남은 조문을 바꾸려 하면 409(그 항목을 보류로 두면 된다), 반영할 변경이 없으면 400. 원문은 다 쓴 것으로 둔다. 감사 `reparse.apply` |
 | POST | /reparse-reviews/:id/submit | admin, editor | **묶음 검토 요청** — 반영한 묶음만. 반영 때의 묶음 지문(장·절·조문 계층, 발행 이력의 상태·시행일·폐지일·얼린 계층, 작업본, 계획)과 지금이 다르면 409. 묶음 초안을 한꺼번에 검토 중으로(변수 표식은 오늘 값으로). 감사 `reparse.submit` |
-| POST | /reparse-reviews/:id/approve | **admin** | **묶음 승인** `{ effectiveDate, changeNote }` — 검토 요청한 묶음만, 같은 시행일로 전부 되거나 전부 안 된다. 묶음 지문(검토 요청 뒤엔 묶음 본문까지)이 다르면 409, 그 조문에 더 늦은 시행본이 있으면 409, 폐지 뒤 다시 시행이면 폐지일 이후, 변수 표식·값 확인, **승인 시행일부터 그 뒤의 모든 시행일에서 같은 자리에 시행 중인 조문이 둘이 되면 409**. 시행일이 미래인데 폐지로 정한 조문이 번호·제목이 바뀌는 장·절에 있으면 409. 통과하면: 계층이 바뀌는 조문의 발행 이력을 그때 계층으로 얼리고, 장·절을 만들거나 고치고, 묶음 버전을 후속 버전으로 발행(제안 계층을 조문 행에, 변수 연결 이어받기), 버전 없는 조 머리 행을 옮기고, 새 조문(첫 버전 그 시행일)을 만들고, 시행일이 오늘 이전이면 폐지로 정한 조문을 그 날로 폐지(미래면 미결). 감사 `reparse.approve`, 개정 알림 한 번 |
+| POST | /reparse-reviews/:id/approve | **admin** | **묶음 승인** `{ effectiveDate, changeNote }` — 검토 요청한 묶음만, 같은 시행일로 전부 되거나 전부 안 된다. 묶음 지문(검토 요청 뒤엔 묶음 본문까지)이 다르면 409, 그 조문에 더 늦은 시행본이 있으면 409, 폐지 뒤 다시 시행이면 폐지일 이후, 변수 표식·값 확인, **승인 시행일부터 그 뒤의 모든 시행일에서 같은 자리에 시행 중인 조문이 둘이 되면 409**. 시행일이 미래인데 폐지로 정한 조문이 번호·제목이 바뀌는 장·절에 있으면 409. 통과하면: 계층이 바뀌는 조문의 발행 이력을 그때 계층으로 얼리고, 장·절을 만들거나 고치고, 묶음 버전을 후속 버전으로 발행(제안 계층을 조문 행에, 변수 연결 이어받기), 버전 없는 조 머리 행을 옮기고, 새 조문(첫 버전 그 시행일)을 만들고, 시행일이 오늘 이전이면 폐지로 정한 조문을 그 날로 폐지(미래면 미결). 감사 `reparse.approve`, 개정 알림 한 번. 새 조문 본문의 변수 표식도 다시 본다(T-131 — 반영 뒤 등록된 변수면 400, 묶음을 반려하고 다시 비교) |
 | POST | /reparse-reviews/:id/reject | **admin** | **묶음 반려** `{ reason }` — 반영했거나 검토 요청한 묶음만. 묶음 초안을 거두고(새 조문·장은 아직 없다) 원문을 다시 비교할 수 있게 돌려 둔다 — 같은 원문으로 다시 비교하면 반려한 검토의 결정을 옮겨 온다. 감사 `reparse.reject` |
-| POST | /reparse-reviews/:id/items/:itemId/resolve | admin, editor | 승인·반려 뒤 원문에 없는 조문 `{ decision: keep \| repeal }` — 유지로 닫거나 오늘 폐지(관리자, T-126 절차 그대로). 승인 전이면 409, 이미 폐지했으면 409, 원문에 없음 항목이 아니면 400 |
+| POST | /reparse-reviews/:id/items/:itemId/resolve | admin, editor | 승인·반려 뒤 원문에 없는 조문 `{ decision: keep \| repeal }` — 유지로 닫거나 오늘 폐지(관리자, T-126 절차 그대로). 승인 전이면 409, 이미 폐지했으면 409, 원문에 없음 항목이 아니면 400. 규정 → 조문 → 검토 행을 잠그고 다시 읽으며, 폐지와 항목 결과는 한 트랜잭션이다(T-131 — 함께 누른 유지는 409, 중간에 실패하면 폐지도 되돌린다) |
 | GET | /policies/:policyId/reparse-reviews | admin, editor | 이 규정의 재파싱 검토 최근 20건 — `status`·`sourceName`·`counts`·`undecided`·`deletionUndecided`(원문에 없는데 유지·폐지를 정하지 않았고 다른 항목에 이어지지도 않은 조문) |
 
 ## admin (`/api/admin`)

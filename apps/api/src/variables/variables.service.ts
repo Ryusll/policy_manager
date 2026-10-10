@@ -3,6 +3,7 @@ import type { Prisma, VariableBindingOrigin } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { formatJo } from '../common/article-label';
+import { lockArticleRow, lockVariableRow } from '../common/row-locks';
 import {
   CreateBindingDto,
   CreateVariableDto,
@@ -293,10 +294,13 @@ export class VariablesService {
     return { ...presented, changedOverlaps: changedId ? presented.values.some((v) => v.id === changedId && v.overlapping) : false };
   }
 
-  /** 변수 행 잠금 — 값 고치기와 승인 때 값 재확인이 겹치지 않게 */
+  /**
+   * 변수 행 잠금 — 값 고치기끼리, 그리고 승인 때 값 재확인(FOR SHARE)과 겹치지 않게. FOR NO KEY UPDATE 라 연결 insert(FK 확인)는
+   * 막지 않는다(T-131)
+   */
   private async lockVariable(tx: Db, tenantId: string, variableId: string) {
     await this.owned(tenantId, variableId, tx);
-    await tx.$queryRaw`SELECT id FROM variables WHERE id = ${variableId} FOR UPDATE`;
+    await lockVariableRow(tx as Prisma.TransactionClient, variableId);
   }
 
   // ── 연결(바인딩) ──
@@ -339,7 +343,7 @@ export class VariablesService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM articles WHERE id = ${head.articleId} FOR UPDATE`;
+      await lockArticleRow(tx, head.articleId);
       const version = await tx.articleVersion.findUniqueOrThrow({
         where: { id: versionId },
         select: { id: true, articleId: true, status: true, content: true, effectiveDate: true },
@@ -394,10 +398,24 @@ export class VariablesService {
   async releaseBinding(tenantId: string, bindingId: string, userId: string) {
     const b = await this.prisma.variableBinding.findFirst({
       where: { id: bindingId, tenantId, state: { not: 'released' }, article: { chapter: { policy: { tenantId } } } },
-      select: { id: true, versionId: true, variableId: true, text: true },
+      select: { id: true, versionId: true, variableId: true, text: true, articleId: true },
     });
     if (!b) throw new NotFoundException('Binding not found');
     await this.prisma.$transaction(async (tx) => {
+      // 조문을 잡고 다시 본다(T-131) — 발행이 연결을 새 버전으로 옮기는 동안 옛 버전의 연결만 풀고 새 것은 남는 일이 없게
+      await lockArticleRow(tx, b.articleId);
+      const fresh = await tx.variableBinding.findUnique({
+        where: { id: bindingId },
+        select: { state: true, version: { select: { status: true, repealedOn: true } } },
+      });
+      if (!fresh || fresh.state === 'released') throw new NotFoundException('Binding not found');
+      if (fresh.version.status === 'archived') {
+        throw new ConflictException(
+          fresh.version.repealedOn
+            ? '그 사이 이 조문이 폐지됐습니다 — 화면을 새로 고쳐 확인하세요.'
+            : '그 사이 새 버전이 발행됐습니다 — 화면을 새로 고쳐 확인하세요.',
+        );
+      }
       await tx.variableBinding.update({ where: { id: bindingId }, data: { state: 'released' } });
       await this.auditLog(tx, tenantId, userId, 'variable.binding.release', 'ArticleVersion', b.versionId, {
         bindingId,
@@ -486,7 +504,12 @@ export class VariablesService {
    * 발행되는 본문에 등록된 변수의 표식이 남아 있으면 거부한다(결정 1) — 표식은 검토 요청 때 값으로 바뀐다.
    * 검토를 거치지 않는 발행(한꺼번에 시행·일괄 가져오기·문서 가져오기 확정)은 초안으로 두고 검토를 요청하게 한다.
    */
-  async assertNoMarkers(db: Db, tenantId: string, items: Array<{ label: string; content: string }>) {
+  async assertNoMarkers(
+    db: Db,
+    tenantId: string,
+    items: Array<{ label: string; content: string }>,
+    hint = '초안으로 두고 검토를 요청하면 그날 값으로 바뀝니다.',
+  ) {
     const keys = new Set(items.flatMap((i) => [...markerKeys(i.content)]));
     if (!keys.size) return;
     const registered = new Set(
@@ -495,8 +518,7 @@ export class VariablesService {
     const hit = items.filter((i) => findMarkers(i.content, registered).length > 0).map((i) => i.label);
     if (hit.length) {
       throw new BadRequestException(
-        `변수 표식({{…}})이 남은 본문은 바로 시행할 수 없습니다 — ${hit.slice(0, 5).join(', ')}${hit.length > 5 ? ` 외 ${hit.length - 5}건` : ''}. ` +
-          '초안으로 두고 검토를 요청하면 그날 값으로 바뀝니다.',
+        `변수 표식({{…}})이 남은 본문은 바로 시행할 수 없습니다 — ${hit.slice(0, 5).join(', ')}${hit.length > 5 ? ` 외 ${hit.length - 5}건` : ''}. ` + hint,
       );
     }
   }

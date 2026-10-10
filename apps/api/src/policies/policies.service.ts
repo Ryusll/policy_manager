@@ -53,14 +53,13 @@ import {
 } from './policies.dto';
 import { ARTICLE_ORDER, formatJo } from '../common/article-label';
 import { VERSION_LAW_CHANGE, withLawChange } from '../versions/version-law-change';
+import { LONG_LOCK_WAIT_MS, lockArticlesForDelete, lockPolicyForDelete, lockPolicyRow } from '../common/row-locks';
 
 /**
  * 계층을 바꾸는 쓰기(장·절·조문 생성·수정·삭제, 조 순서 재정렬)는 규정 행을 잠근다 — 재파싱 묶음(T-110 ②)이 같은 잠금 아래에서
- * 규정 계층 지문을 다시 계산하므로, 그 사이에 끼어들지 못하고 앞이나 뒤에 줄 선다.
+ * 규정 계층 지문을 다시 계산하므로, 그 사이에 끼어들지 못하고 앞이나 뒤에 줄 선다. 잠금 순서·세기는 `common/row-locks`(T-131)
  */
-async function lockPolicy(tx: Prisma.TransactionClient, policyId: string) {
-  await tx.$queryRaw`SELECT id FROM policies WHERE id = ${policyId} FOR UPDATE`;
-}
+const lockPolicy = lockPolicyRow;
 
 /**
  * 바로잡기(재정렬·번호 직접 수정)가 다른 조문의 **얼린 자리**(지난 계층 기록, T-110 ②)와 겹치면 막는다. 바로잡기는 버전을 만들지
@@ -642,7 +641,7 @@ export class PoliciesService {
   }
 
   async update(tenantId: string, id: string, dto: UpdatePolicyDto, userId: string) {
-    const existing = await this.findOne(tenantId, id);
+    await this.findOne(tenantId, id);
     if (dto.templateId !== undefined) {
       const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } });
       if (!tenant) throw new NotFoundException('Tenant not found');
@@ -662,71 +661,91 @@ export class PoliciesService {
     if (dto.parentId) {
       await this.assertParentAllowed(tenantId, id, dto.parentId);
     }
-    const nextDto = { ...dto } as any;
-    const hasDepartment = Object.prototype.hasOwnProperty.call(nextDto, 'department');
-    const hasCategory = Object.prototype.hasOwnProperty.call(nextDto, 'category');
-    const currentMeta =
-      existing.metadata && typeof existing.metadata === 'object'
-        ? ({ ...(existing.metadata as Record<string, unknown>) } as Record<string, unknown>)
-        : {};
-    if (hasDepartment) {
-      const v = String(nextDto.department ?? '').trim();
-      if (v) currentMeta.department = v;
-      else delete currentMeta.department;
-      delete nextDto.department;
-    }
-    if (hasCategory) {
-      const v = String(nextDto.category ?? '').trim();
-      if (v) currentMeta.category = v;
-      else delete currentMeta.category;
-      delete nextDto.category;
-    }
-    if (hasDepartment || hasCategory) {
-      nextDto.metadata = Object.keys(currentMeta).length ? (currentMeta as any) : null;
-    }
-    const hasRevisionNotify = Object.prototype.hasOwnProperty.call(nextDto, 'revisionNotify');
-    if (hasRevisionNotify) {
-      const raw = nextDto.revisionNotify;
-      delete nextDto.revisionNotify;
-      if (raw == null) {
-        delete currentMeta.revisionNotify;
-        delete currentMeta.revisionNotifyEnabled;
-      } else {
-        currentMeta.revisionNotify = {
-          enabled: raw.enabled === true,
-          userIds: Array.isArray(raw.userIds) ? raw.userIds : [],
-          groupIds: Array.isArray(raw.groupIds) ? raw.groupIds : [],
-        };
-        delete currentMeta.revisionNotifyEnabled;
+    /** 저장할 값 — 메타데이터(부서·분류·개정 알림)는 넘겨받은 저장값(잠근 뒤 다시 읽은 것)에 고쳐 쓴다 */
+    const buildData = (storedMeta: unknown) => {
+      const nextDto = { ...dto } as any;
+      const hasDepartment = Object.prototype.hasOwnProperty.call(nextDto, 'department');
+      const hasCategory = Object.prototype.hasOwnProperty.call(nextDto, 'category');
+      const currentMeta =
+        storedMeta && typeof storedMeta === 'object'
+          ? ({ ...(storedMeta as Record<string, unknown>) } as Record<string, unknown>)
+          : {};
+      if (hasDepartment) {
+        const v = String(nextDto.department ?? '').trim();
+        if (v) currentMeta.department = v;
+        else delete currentMeta.department;
+        delete nextDto.department;
       }
-      nextDto.metadata = Object.keys(currentMeta).length ? (currentMeta as any) : null;
-    }
-    if (Object.prototype.hasOwnProperty.call(nextDto, 'revisionDate')) {
-      const raw = nextDto.revisionDate;
-      nextDto.revisionDate = raw ? new Date(String(raw)) : null;
-    }
-    if (Object.prototype.hasOwnProperty.call(nextDto, 'effectiveDate')) {
-      const raw = nextDto.effectiveDate;
-      nextDto.effectiveDate = raw ? new Date(String(raw)) : null;
-    }
-    const updated = await this.prisma.policy.update({
-      where: { id },
-      data: nextDto,
-    });
+      if (hasCategory) {
+        const v = String(nextDto.category ?? '').trim();
+        if (v) currentMeta.category = v;
+        else delete currentMeta.category;
+        delete nextDto.category;
+      }
+      if (hasDepartment || hasCategory) {
+        nextDto.metadata = Object.keys(currentMeta).length ? (currentMeta as any) : null;
+      }
+      const hasRevisionNotify = Object.prototype.hasOwnProperty.call(nextDto, 'revisionNotify');
+      if (hasRevisionNotify) {
+        const raw = nextDto.revisionNotify;
+        delete nextDto.revisionNotify;
+        if (raw == null) {
+          delete currentMeta.revisionNotify;
+          delete currentMeta.revisionNotifyEnabled;
+        } else {
+          currentMeta.revisionNotify = {
+            enabled: raw.enabled === true,
+            userIds: Array.isArray(raw.userIds) ? raw.userIds : [],
+            groupIds: Array.isArray(raw.groupIds) ? raw.groupIds : [],
+          };
+          delete currentMeta.revisionNotifyEnabled;
+        }
+        nextDto.metadata = Object.keys(currentMeta).length ? (currentMeta as any) : null;
+      }
+      if (Object.prototype.hasOwnProperty.call(nextDto, 'revisionDate')) {
+        const raw = nextDto.revisionDate;
+        nextDto.revisionDate = raw ? new Date(String(raw)) : null;
+      }
+      if (Object.prototype.hasOwnProperty.call(nextDto, 'effectiveDate')) {
+        const raw = nextDto.effectiveDate;
+        nextDto.effectiveDate = raw ? new Date(String(raw)) : null;
+      }
+      return nextDto;
+    };
+    // 규정 행을 잠그고 메타데이터를 다시 읽는다(T-131) — 다른 저장과 겹쳐 서로 고친 키를 지우지 않게. 예전처럼 긴 작업(묶음 승인 등)이
+    // 끝나길 기다렸다 저장하되, 한도(30초)를 넘으면 409
+    const { updated, fields } = await this.prisma.$transaction(
+      async (tx) => {
+        await lockPolicyRow(tx, id, LONG_LOCK_WAIT_MS);
+        const fresh = await tx.policy.findUniqueOrThrow({ where: { id }, select: { metadata: true } });
+        const nextDto = buildData(fresh.metadata);
+        return { updated: await tx.policy.update({ where: { id }, data: nextDto }), fields: Object.keys(nextDto) };
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
     await this.audit.log({
       tenantId,
       userId,
       action: 'policy.update',
       entityType: 'Policy',
       entityId: id,
-      details: { fields: Object.keys(nextDto) },
+      details: { fields },
     });
     return updated;
   }
 
   async remove(tenantId: string, id: string, userId: string) {
     await this.findOne(tenantId, id);
-    await this.prisma.policy.delete({ where: { id } });
+    // 규정 → 지울 조문(id 순)을 잡은 뒤 지운다(T-131) — 지우기가 스캔 순서로 잠그면 여러 조문을 id 순으로 가리키는 insert 와
+    // 서로 기다리다 멈출 수 있고, 진행 중인 묶음 승인 뒤에 줄 선다
+    await this.prisma.$transaction(
+      async (tx) => {
+        await lockPolicyForDelete(tx, id, LONG_LOCK_WAIT_MS);
+        await lockArticlesForDelete(tx, { policyId: id }, LONG_LOCK_WAIT_MS);
+        await tx.policy.delete({ where: { id } });
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
     await this.audit.log({
       tenantId,
       userId,
@@ -756,20 +775,19 @@ export class PoliciesService {
 
   async updateChapter(tenantId: string, policyId: string, chapterId: string, dto: UpdateChapterDto) {
     await this.findOne(tenantId, policyId);
-    const chapter = await this.prisma.chapter.findFirst({
-      where: { id: chapterId, policyId },
-    });
-    if (!chapter) throw new NotFoundException('Chapter not found');
-    // 생성에는 있고 수정에는 없던 검사다(T-84). 없으면 "제목 없는 보이는 장"을
-    // 만들 수 있고, 그 장은 화면·인쇄에 제목 없는 빈 머리글로 나온다.
-    const header = this.chapterHeader(() =>
-      applyChapterHeaderPatch(
-        { title: chapter.title, suppressHeader: chapter.suppressHeader },
-        dto,
-      ),
-    );
     return this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
+      // 잠근 뒤 읽는다(T-131) — 그 사이 재파싱 승인이 장 제목을 바꿨으면 그 값에 고친다(옛 제목을 되쓰지 않는다)
+      const chapter = await tx.chapter.findFirst({ where: { id: chapterId, policyId } });
+      if (!chapter) throw new NotFoundException('Chapter not found');
+      // 생성에는 있고 수정에는 없던 검사다(T-84). 없으면 "제목 없는 보이는 장"을
+      // 만들 수 있고, 그 장은 화면·인쇄에 제목 없는 빈 머리글로 나온다.
+      const header = this.chapterHeader(() =>
+        applyChapterHeaderPatch(
+          { title: chapter.title, suppressHeader: chapter.suppressHeader },
+          dto,
+        ),
+      );
       return tx.chapter.update({ where: { id: chapterId }, data: { ...dto, ...header } });
     });
   }
@@ -786,12 +804,12 @@ export class PoliciesService {
 
   async removeChapter(tenantId: string, policyId: string, chapterId: string) {
     await this.findOne(tenantId, policyId);
-    const chapter = await this.prisma.chapter.findFirst({
-      where: { id: chapterId, policyId },
-    });
-    if (!chapter) throw new NotFoundException('Chapter not found');
     await this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
+      // 잠근 뒤 다시 확인하고, 지울 조문을 id 순으로 잡은 뒤 지운다(T-131)
+      const chapter = await tx.chapter.findFirst({ where: { id: chapterId, policyId }, select: { id: true } });
+      if (!chapter) throw new NotFoundException('Chapter not found');
+      await lockArticlesForDelete(tx, { chapterId });
       await tx.chapter.delete({ where: { id: chapterId } });
     });
   }
@@ -803,10 +821,11 @@ export class PoliciesService {
   private async resolveSectionId(
     chapterId: string,
     sectionId: string | null | undefined,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<string | null | undefined> {
     if (sectionId === undefined) return undefined;
     if (sectionId === null || sectionId === '') return null;
-    const section = await this.prisma.section.findFirst({
+    const section = await db.section.findFirst({
       where: { id: sectionId, chapterId },
       select: { id: true },
     });
@@ -928,26 +947,24 @@ export class PoliciesService {
   async updateArticle(tenantId: string, policyId: string, chapterId: string, articleId: string, dto: UpdateArticleDto) {
     // 장이 이 규정 소속인지까지 확인한다. 규정만 보면 남의 장·조문을 고칠 수 있다(T-41).
     await this.findChapterOrThrow(tenantId, policyId, chapterId);
-    const article = await this.prisma.article.findFirst({
-      where: { id: articleId, chapterId },
-    });
-    if (!article) throw new NotFoundException('Article not found');
     const data: Record<string, unknown> = { ...dto };
-    // 절 이동: 같은 장의 절인지 검증. null이면 절에서 분리
-    if (dto.sectionId !== undefined) {
-      data.sectionId = await this.resolveSectionId(chapterId, dto.sectionId);
-    }
     for (const key of ['relatedPrecedentNote', 'relatedLawNote', 'relatedRuleNote'] as const) {
       if (data[key] !== undefined) {
         const t = String(data[key] ?? '').trim();
         data[key] = t.length ? t : null;
       }
     }
-    const moved = (['number', 'branchNumber', 'clauseNumber', 'itemNumber'] as const).some(
-      (k) => dto[k as keyof UpdateArticleDto] !== undefined && dto[k as keyof UpdateArticleDto] !== article[k],
-    );
     return this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
+      // 잠근 뒤 읽는다(T-131) — 그 사이 재파싱 승인이 조문을 옮겼으면 옛 자리로 되돌리지 않게
+      const article = await this.lockedArticle(tx, policyId, chapterId, articleId);
+      // 절 이동: 같은 장의 절인지 검증. null이면 절에서 분리
+      if (dto.sectionId !== undefined) {
+        data.sectionId = await this.resolveSectionId(chapterId, dto.sectionId, tx);
+      }
+      const moved = (['number', 'branchNumber', 'clauseNumber', 'itemNumber'] as const).some(
+        (k) => dto[k as keyof UpdateArticleDto] !== undefined && dto[k as keyof UpdateArticleDto] !== article[k],
+      );
       if (moved) {
         const position = {
           number: (dto.number ?? article.number) as number,
@@ -963,14 +980,25 @@ export class PoliciesService {
 
   async removeArticle(tenantId: string, policyId: string, chapterId: string, articleId: string) {
     await this.findChapterOrThrow(tenantId, policyId, chapterId);
-    const article = await this.prisma.article.findFirst({
-      where: { id: articleId, chapterId },
-    });
-    if (!article) throw new NotFoundException('Article not found');
     await this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
+      await this.lockedArticle(tx, policyId, chapterId, articleId);
+      await lockArticlesForDelete(tx, { articleId });
       await tx.article.delete({ where: { id: articleId } });
     });
+  }
+
+  /**
+   * 규정을 잠근 뒤 조문을 다시 읽는다(T-131) — 이 규정에 없으면(지워졌거나 남의 조문) 404, 그 사이 같은 규정의 다른 장으로
+   * 옮겨졌으면 409
+   */
+  private async lockedArticle(tx: Prisma.TransactionClient, policyId: string, chapterId: string, articleId: string) {
+    const article = await tx.article.findFirst({ where: { id: articleId, chapter: { policyId } } });
+    if (!article) throw new NotFoundException('Article not found');
+    if (article.chapterId !== chapterId) {
+      throw new ConflictException('그 사이 이 조문이 다른 장으로 옮겨졌습니다 — 화면을 새로 고친 뒤 다시 시도하세요.');
+    }
+    return article;
   }
 
   /**
@@ -990,29 +1018,25 @@ export class PoliciesService {
     userId: string,
   ) {
     await this.findOne(tenantId, policyId);
-    const chapters = await this.prisma.chapter.findMany({
-      where: { policyId },
-      select: { id: true },
-    });
-    const rows = await this.prisma.article.findMany({
-      where: { chapter: { policyId } },
-      select: { id: true, chapterId: true, sectionId: true, number: true, branchNumber: true, clauseNumber: true, itemNumber: true },
-    });
-
-    let changes;
-    try {
-      changes = buildReorderPlan(rows, order, chapters.map((c) => c.id));
-    } catch (e) {
-      if (e instanceof ReorderPlanError) throw new BadRequestException(e.message);
-      throw e;
-    }
-
-    if (changes.length === 0) return { changed: 0 };
-
-    const rowById = new Map(rows.map((r) => [r.id, r]));
-    await this.prisma.$transaction(
+    // 규정을 잠근 뒤 읽고 계획을 세운다(T-131) — 그 사이 재파싱 승인이 조문을 옮기거나 새 조문을 넣었으면, 그 전 목록으로 세운
+    // 계획이 승인을 되돌리지 않게(새 조가 빠진 차례면 계획 단계에서 400)
+    const changed = await this.prisma.$transaction(
       async (tx) => {
-        await lockPolicy(tx, policyId);
+        await lockPolicy(tx, policyId, LONG_LOCK_WAIT_MS);
+        const chapters = await tx.chapter.findMany({ where: { policyId }, select: { id: true } });
+        const rows = await tx.article.findMany({
+          where: { chapter: { policyId } },
+          select: { id: true, chapterId: true, sectionId: true, number: true, branchNumber: true, clauseNumber: true, itemNumber: true },
+        });
+        let changes;
+        try {
+          changes = buildReorderPlan(rows, order, chapters.map((c) => c.id));
+        } catch (e) {
+          if (e instanceof ReorderPlanError) throw new BadRequestException(e.message);
+          throw e;
+        }
+        if (changes.length === 0) return 0;
+        const rowById = new Map(rows.map((r) => [r.id, r]));
         await assertNoFrozenClash(
           tx,
           policyId,
@@ -1033,9 +1057,11 @@ export class PoliciesService {
             data: { number: c.number, branchNumber: c.branchNumber, chapterId: c.chapterId, sectionId: c.sectionId },
           });
         }
+        return changes.length;
       },
       { maxWait: 10_000, timeout: 60_000 },
     );
+    if (changed === 0) return { changed: 0 };
 
     await this.audit.log({
       tenantId,
@@ -1043,10 +1069,10 @@ export class PoliciesService {
       action: 'policy.articles.reorder',
       entityType: 'Policy',
       entityId: policyId,
-      details: { changed: changes.length, order: order.map((t) => (t.branch ? `${t.jo}의${t.branch}` : t.jo)) },
+      details: { changed, order: order.map((t) => (t.branch ? `${t.jo}의${t.branch}` : t.jo)) },
     });
 
-    return { changed: changes.length };
+    return { changed };
   }
 
   /** 재정렬 화면이 시작점으로 쓸 현재 순서 */

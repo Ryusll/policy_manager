@@ -7,6 +7,7 @@ import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notif
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { impactReferenceDate } from '../law-changes/law-impact';
 import { VariablesService } from '../variables/variables.service';
+import { lockArticleRow } from '../common/row-locks';
 import {
   compareVariableEffects,
   planVariables,
@@ -214,6 +215,8 @@ export class AmendmentsService {
       );
     }
     if (!rows.length) return result;
+    // 조문 id 순으로 넣는다(T-131) — FK 확인이 조문을 id 순으로 잡아, 조문을 id 순으로 잡고 지우는 규정·장 삭제와 엇갈리지 않게
+    rows.sort((a, b) => (a.articleId < b.articleId ? -1 : a.articleId > b.articleId ? 1 : 0));
 
     const created = await this.prisma.$transaction(async (tx) => {
       // ON CONFLICT DO NOTHING RETURNING — 자동 생성과 버튼이 겹쳐도, 다시 눌러도 같은 후보는 하나다.
@@ -734,7 +737,7 @@ export class AmendmentsService {
 
     await this.prisma.$transaction(async (tx) => {
       // 조문 단위로 줄 세운다 — 같은 조문의 다른 후보 승인·일반 승인과 겹치면 앞선 개정을 덮어쓴다
-      await tx.$queryRaw`SELECT id FROM articles WHERE id = ${cand.articleId} FOR UPDATE`;
+      await lockArticleRow(tx, cand.articleId);
       const history = await tx.articleVersion.findMany({
         where: { articleId: cand.articleId },
         select: { id: true, status: true, effectiveDate: true, versionNum: true, repealedOn: true },
