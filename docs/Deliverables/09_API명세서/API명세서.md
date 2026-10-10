@@ -110,8 +110,8 @@
 ## variables (`/api/variables`) — 변수 값·유효기간과 본문 위치 연결 (T-109 ①, 특허 도 9)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | variables | JWT | 변수 목록 — 값마다 유효기간(`validFrom`·`validTo`, 비면 처음부터·끝 없음)·`periodConfirmed`(false = 옛 기본값을 옮긴 기간 미확정 값)·`overlapping`(같은 변수의 다른 값과 기간 겹침), 오늘 쓸 값 `current`(없으면 `currentReason`: `none`·`ambiguous`(겹침)·`unconfirmed`), `needsReview`, `bindingCount`(지금 시행 중인 본문의 연결 수, 다시 이어야 하는 것 포함) |
-| GET | variables/:id | JWT | 변수 하나 + 지금 시행 중인 본문의 연결 `bindings[]`(규정·조문 표기·버전·구간·문구·앞뒤 문맥·출현 순번·상태) |
+| GET | variables | JWT | 변수 목록 — 값마다 유효기간(`validFrom`·`validTo`, 비면 처음부터·끝 없음)·`periodConfirmed`(false = 옛 기본값을 옮긴 기간 미확정 값)·`overlapping`(같은 변수의 다른 값과 기간 겹침), 오늘 쓸 값 `current`(없으면 `currentReason`: `none`·`ambiguous`(겹침)·`unconfirmed`), `needsReview`, `bindingCount`(오늘(한국 날짜) 시행 중인 본문의 연결 수, 다시 이어야 하는 것 포함)·`scheduledBindingCount`(시행 예정 본문의 연결 수 — 조문·시행일마다 그날 이기는 판, T-132 ⑥) |
+| GET | variables/:id | JWT | 변수 하나 + 오늘(한국 날짜, `asOf`) 시행 중인 본문의 연결 `bindings[]`와 시행 예정 본문의 연결 `scheduledBindings[]`(T-132 ⑥ — 둘 다 규정·조문 표기·`versionId`·`versionNum`·`effectiveDate`·`phase`(`in_force`·`scheduled`)·구간·문구·앞뒤 문맥·출현 순번·상태). 승인 때 연결은 새 버전에 복사되고 옛 버전의 연결은 남는다 |
 | POST | variables | admin, editor | 변수 등록 `{ key, label, description?, value?, validFrom? }` — 첫 값은 시작일(비우면 처음부터)부터 끝 없이. 감사 `variable.create` |
 | PUT | variables/:id | admin, editor | 표시명·설명 |
 | DELETE | variables/:id | admin | 삭제 — 값·연결도 함께. 감사 `variable.delete` |
@@ -119,8 +119,8 @@
 | PUT | variables/:id/values/:valueId | admin, editor | 값 고치기 `{ value?, validFrom?, validTo?, note?, confirmPeriod? }` — 기간을 넣거나 `confirmPeriod: true` 면 기간 미확정 값이 확정된다. 감사 `variable.value.update`(전후) |
 | DELETE | variables/:id/values/:valueId | admin, editor | 값 지우기. 감사 `variable.value.delete` |
 | GET | versions/:versionId/variable-bindings | JWT | 그 버전 본문의 연결(풀지 않은 것) — 다른 회사 버전은 404 |
-| POST | versions/:versionId/variable-bindings | admin, editor | **시행 중인 버전의 문구를 변수에 잇기** `{ variableId, start, end, text }` — 위치는 저장된 본문의 UTF-16 [start, end). 시행본이 아니거나 `text` 가 본문 그 구간과 다르면(그 사이 바뀜) 409, 다른 연결과 겹치면 409, 앞뒤 공백이 있으면 400. 그 버전 시행일에 맞는 값과 같은 문구면 `valueId`(직전 적용값)를 적는다. 조문을 잠근다(발행 때 연결 옮기기와 줄 세움). 감사 `variable.binding.create` |
-| DELETE | variable-bindings/:id | admin, editor | 연결 풀기 — 지우지 않고 `released` 로 남긴다. 감사 `variable.binding.release`. 조문을 잠그고 다시 본다(T-131) — 그 사이 새 버전이 발행돼 이 버전이 내려갔으면 409(새 버전에 옮겨진 연결을 남긴 채 옛 연결만 푸는 일이 없게), 폐지됐으면 폐지 안내로 409 |
+| POST | versions/:versionId/variable-bindings | admin, editor | **오늘 시행 중인 버전이나 시행 예정 버전의 문구를 변수에 잇기**(버전마다 따로, T-132 ⑥) `{ variableId, start, end, text }` — 위치는 저장된 본문의 UTF-16 [start, end). 조문을 잠근 뒤 한국 날짜로 오늘 시행본·시행 예정본인지 다시 보고 아니거나 `text` 가 본문 그 구간과 다르면(그 사이 바뀜) 409, 다른 연결과 겹치면 409, 앞뒤 공백이 있으면 400. 그 버전 시행일에 맞는 값과 같은 문구면 `valueId`(직전 적용값)를 적는다. 조문을 잠근다(발행 때 연결 옮기기와 줄 세움). 감사 `variable.binding.create` |
+| DELETE | variable-bindings/:id | admin, editor | 연결 풀기 — 지우지 않고 `released` 로 남긴다. 감사 `variable.binding.release`. 조문을 잠그고 다시 본다 — **오늘 시행본이나 시행 예정본의 연결만** 푼다(T-132 ⑥: 미래 시행 개정이 있어 오늘 본문이 archived 여도 풀린다). 그 버전이 이제 시행 중도 시행 예정도 아니면 409(폐지됐으면 폐지 안내). 그 버전의 연결만 푼다 — 시행 예정본에 복사된 자식 연결은 그대로 |
 
 > 예전 `POST variables/:id/usages`(버전-변수 사용 기록)와 `defaultValue` 는 없앴다(T-109) — 위치를 가진 연결과 기간 있는 값으로 대신한다. 마이그레이션 `20261009150000_variable_values_bindings` 가 옛 기본값을 기간 미확정 값으로, 옛 사용 기록을 표식 `{{KEY}}` 이 나오는 자리마다의 연결로 옮겼다(본문에 표식이 없던 기록은 "다시 이어야 함", 변수와 버전의 회사가 다른 기록은 옮기지 않음).
 

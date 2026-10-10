@@ -233,7 +233,14 @@ export default function VariablesPage() {
                       </span>
                     )}
                   </td>
-                  <td className="hidden lg:table-cell text-center text-sm text-gray-500">{variable.bindingCount ?? 0}</td>
+                  <td className="hidden lg:table-cell text-center text-sm text-gray-500">
+                    {variable.bindingCount ?? 0}
+                    {(variable.scheduledBindingCount ?? 0) > 0 && (
+                      <span className="block text-[11px] text-amber-800" title="시행 예정 본문의 연결 — 시행일부터 지금 것이 된다">
+                        예정 {variable.scheduledBindingCount}
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <div className="flex items-center gap-1 justify-center">
                       {editingId === variable.id ? (

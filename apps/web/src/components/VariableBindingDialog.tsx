@@ -4,18 +4,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BINDING_REVIEW_REASON_LABEL, variablesApi, type VariableBindingRow } from '../api/policies';
 
 /**
- * 변수 연결 창 (T-109, 특허 도 9) — 지금 시행 중인 버전의 문구를 골라 변수에 잇는다.
+ * 변수 연결 창 (T-109, 특허 도 9) — 오늘 시행 중인 버전이나 시행 예정 버전의 문구를 골라 변수에 잇는다(버전마다 따로, T-132 ⑥).
  *
  * 저장된 본문을 그대로 보여 주는 읽기 전용 입력칸에서 고른다 — 화면의 본문은 `**굵게**` 표시를 빼고 그려서
  * 위치가 저장된 문자열과 어긋난다. 입력칸의 선택 위치는 저장된 문자열의 UTF-16 위치와 같다.
  */
 export default function VariableBindingDialog({
   version,
+  phase,
   articleId,
   canEdit,
   onClose,
 }: {
-  version: { id: string; versionNum: number; content: string };
+  version: { id: string; versionNum: number; content: string; effectiveDate?: string | null };
+  /** 오늘 시행 중 / 시행 예정 — 이 버전에만 잇고 푼다(다른 버전의 연결은 그대로) */
+  phase?: 'in_force' | 'scheduled';
   articleId: string;
   canEdit: boolean;
   onClose: () => void;
@@ -96,8 +99,14 @@ export default function VariableBindingDialog({
       <div className="bg-white border border-gray-300 shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div id="var-bind-title" className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">
           변수 연결 — v{version.versionNum}
+          {phase === 'scheduled' ? ` · ${String(version.effectiveDate ?? '').slice(0, 10)}부터 시행 예정` : phase === 'in_force' ? ' · 오늘 시행 중' : ''}
         </div>
         <div className="p-5 space-y-4 text-sm">
+          {phase === 'scheduled' && (
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5" data-testid="binding-phase-note">
+              시행 예정 본문입니다. 여기서 잇고 푸는 것은 이 버전에만 적용되고, 오늘 시행 중인 본문의 연결은 그대로입니다.
+            </p>
+          )}
           <div>
             <p className="text-xs text-gray-600 mb-1">이은 자리</p>
             <p className="whitespace-pre-wrap leading-relaxed bg-gray-50 border border-gray-200 rounded p-3" data-testid="binding-preview">

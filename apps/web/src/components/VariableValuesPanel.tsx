@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BINDING_REVIEW_REASON_LABEL,
   VARIABLE_PICK_REASON_LABEL,
+  type VariableDetailBinding,
   variablesApi,
   type VariableValueRow,
 } from '../api/policies';
@@ -174,34 +175,58 @@ export default function VariableValuesPanel({ variableId, canEdit }: { variableI
 
       <section className="space-y-2">
         <h3 className="text-xs font-semibold text-gray-700">
-          연결된 조문 <span className="font-normal text-gray-500">— 지금 시행 중인 본문에서 이 변수의 값인 자리</span>
+          연결된 조문{' '}
+          <span className="font-normal text-gray-500">
+            — 오늘{data.asOf ? `(${data.asOf})` : ''} 시행 중인 본문에서 이 변수의 값인 자리
+          </span>
         </h3>
         {data.bindings.length === 0 ? (
           <p className="text-xs text-gray-500">
             연결된 조문이 없습니다. 규정 화면의 버전 카드에서 "변수 연결"로 문구를 골라 잇거나, 초안에 표식을 넣고 검토를 요청하세요.
           </p>
         ) : (
-          <ul className="space-y-1">
-            {data.bindings.map((b) => (
-              <li key={b.id} className="text-xs text-gray-700 flex flex-wrap gap-x-2" data-testid="variable-binding">
-                <Link to={`/policies/${b.policy.id}#${b.article.label}`} className="text-navy-700 hover:underline">
-                  {b.policy.title} {b.article.label}
-                </Link>
-                <span className="text-gray-500">
-                  …{b.contextBefore}
-                  <mark className="bg-amber-100 text-gray-900 px-0.5">{b.text}</mark>
-                  {b.contextAfter}…
-                </span>
-                {b.state === 'needs_review' && (
-                  <span className="text-amber-800">
-                    다시 이어야 함{b.reviewReason ? ` — ${BINDING_REVIEW_REASON_LABEL[b.reviewReason] ?? b.reviewReason}` : ''}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
+          <BindingList rows={data.bindings} />
         )}
       </section>
+
+      {(data.scheduledBindings?.length ?? 0) > 0 && (
+        <section className="space-y-2" data-testid="variable-scheduled-bindings">
+          <h3 className="text-xs font-semibold text-amber-900">
+            시행 예정 본문의 연결{' '}
+            <span className="font-normal text-gray-500">— 승인됐지만 시행일 전인 버전. 시행일부터 위 목록으로 옮겨 보입니다</span>
+          </h3>
+          <BindingList rows={data.scheduledBindings!} />
+        </section>
+      )}
     </div>
+  );
+}
+
+/** 연결 목록 한 묶음 — 어느 버전의 연결인지(v·시행일) 함께 */
+function BindingList({ rows }: { rows: VariableDetailBinding[] }) {
+  return (
+    <ul className="space-y-1">
+      {rows.map((b) => (
+        <li key={b.id} className="text-xs text-gray-700 flex flex-wrap gap-x-2" data-testid="variable-binding">
+          <Link to={`/policies/${b.policy.id}#${b.article.label}`} className="text-navy-700 hover:underline">
+            {b.policy.title} {b.article.label}
+          </Link>
+          <span className={b.phase === 'scheduled' ? 'text-amber-800' : 'text-gray-400'}>
+            v{b.versionNum}
+            {b.phase === 'scheduled' && b.effectiveDate ? ` · ${b.effectiveDate}부터` : ''}
+          </span>
+          <span className="text-gray-500">
+            …{b.contextBefore}
+            <mark className="bg-amber-100 text-gray-900 px-0.5">{b.text}</mark>
+            {b.contextAfter}…
+          </span>
+          {b.state === 'needs_review' && (
+            <span className="text-amber-800">
+              다시 이어야 함{b.reviewReason ? ` — ${BINDING_REVIEW_REASON_LABEL[b.reviewReason] ?? b.reviewReason}` : ''}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }

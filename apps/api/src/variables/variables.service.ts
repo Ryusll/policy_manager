@@ -1,9 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma, VariableBindingOrigin } from '@prisma/client';
+import { Prisma, type VariableBindingOrigin } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { formatJo } from '../common/article-label';
 import { lockArticleRow, lockVariableRow } from '../common/row-locks';
+import { asOfState, CURRENT_VERSION_ORDER, currentVersionWhere, currentVersionsSql, scheduledVersionWhere } from '../common/as-of';
 import {
   CreateBindingDto,
   CreateVariableDto,
@@ -26,6 +27,8 @@ import {
 } from './variable-binding';
 
 type Db = Prisma.TransactionClient;
+/** 변수 연결이 걸린 버전의 갈래 — 오늘 시행 중 / 시행 예정(T-132 ⑥) */
+type VersionPhase = 'in_force' | 'scheduled';
 
 const dateOnly = (d: Date | null) => (d ? toDateOnlyString(d) : null);
 
@@ -106,21 +109,84 @@ export class VariablesService {
 
   private valuesOrder = [{ validFrom: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }] satisfies Prisma.VariableValueOrderByWithRelationInput[];
 
+  /**
+   * 회사의 조문마다 오늘 시행 중인 버전과 시행 예정 버전(T-132 ⑥) — 변수 연결 화면은 이 두 갈래만 센다.
+   * 현재는 공통 규칙(`currentVersionsSql` — 시행일 없는 예전 시행본 포함, 폐지는 `asOfState` 로 뺀다),
+   * 시행 예정은 `scheduledVersionWhere` 에서 조문·시행일마다 그날 이기는 판(번호가 큰 쪽)만 — 규정 상세(T-127)와 같다.
+   * 예전에는 `status = published` 로 골라, 미래 시행일로 승인하면 시행 예정 본문의 연결을 지금 것으로 셌다.
+   */
+  private async versionPhases(db: Db | PrismaService, tenantId: string, today: Date) {
+    const cur = await db.$queryRaw<{ version_id: string; repealed_on: Date | null }[]>(
+      Prisma.sql`SELECT version_id, repealed_on FROM (${currentVersionsSql(tenantId, today)}) cur`,
+    );
+    const phases = new Map<string, VersionPhase>();
+    for (const r of cur) if (asOfState({ repealedOn: r.repealed_on }, today) === 'in_force') phases.set(r.version_id, 'in_force');
+    const scheduled = await db.articleVersion.findMany({
+      where: { ...scheduledVersionWhere(today), article: { chapter: { policy: { tenantId } } } },
+      orderBy: [{ articleId: 'asc' }, { effectiveDate: 'asc' }, { versionNum: 'desc' }],
+      select: { id: true, articleId: true, effectiveDate: true },
+    });
+    let last = '';
+    for (const v of scheduled) {
+      const key = `${v.articleId}|${v.effectiveDate?.getTime()}`;
+      if (key === last) continue;
+      last = key;
+      phases.set(v.id, 'scheduled');
+    }
+    return phases;
+  }
+
+  /** 그 버전이 오늘 시행본이나 시행 예정본인가 — 조문 잠금 안에서 다시 본다(연결 만들기·풀기, T-132 ⑥) */
+  private async phaseOf(tx: Db, articleId: string, versionId: string, today: Date): Promise<VersionPhase | null> {
+    const picked = await tx.articleVersion.findFirst({
+      where: { articleId, ...currentVersionWhere(today) },
+      orderBy: CURRENT_VERSION_ORDER,
+      select: { id: true, repealedOn: true },
+    });
+    if (picked?.id === versionId) return asOfState(picked, today) === 'in_force' ? 'in_force' : null;
+    const scheduled = await tx.articleVersion.findMany({
+      where: { articleId, ...scheduledVersionWhere(today) },
+      orderBy: [{ effectiveDate: 'asc' }, { versionNum: 'desc' }],
+      select: { id: true, effectiveDate: true },
+    });
+    const seen = new Set<number>();
+    for (const v of scheduled) {
+      const t = v.effectiveDate!.getTime();
+      if (seen.has(t)) continue;
+      seen.add(t);
+      if (v.id === versionId) return 'scheduled';
+    }
+    return null;
+  }
+
   async findAll(tenantId: string) {
+    const today = todayDateOnly();
     const rows = await this.prisma.variable.findMany({
       where: { tenantId },
-      include: {
-        values: { orderBy: this.valuesOrder },
-        // 지금 시행 중인 본문에 걸린 연결 수(다시 이어야 하는 것 포함)
-        _count: {
-          select: {
-            bindings: { where: { state: { in: ['active', 'needs_review'] }, version: { status: 'published' } } },
-          },
-        },
-      },
+      include: { values: { orderBy: this.valuesOrder } },
       orderBy: { key: 'asc' },
     });
-    return rows.map(({ values, _count, ...v }) => ({ ...v, ...this.presentValues(values), bindingCount: _count.bindings }));
+    // 오늘 시행 중인 본문·시행 예정 본문에 걸린 연결 수(다시 이어야 하는 것 포함)
+    const phases = await this.versionPhases(this.prisma, tenantId, today);
+    const links = phases.size
+      ? await this.prisma.variableBinding.findMany({
+          where: { tenantId, state: { in: ['active', 'needs_review'] }, versionId: { in: [...phases.keys()] } },
+          select: { variableId: true, versionId: true },
+        })
+      : [];
+    const count = new Map<string, { now: number; scheduled: number }>();
+    for (const l of links) {
+      const c = count.get(l.variableId) ?? { now: 0, scheduled: 0 };
+      if (phases.get(l.versionId) === 'in_force') c.now += 1;
+      else c.scheduled += 1;
+      count.set(l.variableId, c);
+    }
+    return rows.map(({ values, ...v }) => ({
+      ...v,
+      ...this.presentValues(values),
+      bindingCount: count.get(v.id)?.now ?? 0,
+      scheduledBindingCount: count.get(v.id)?.scheduled ?? 0,
+    }));
   }
 
   async findOne(tenantId: string, id: string) {
@@ -129,12 +195,15 @@ export class VariablesService {
       include: { values: { orderBy: this.valuesOrder } },
     });
     if (!variable) throw new NotFoundException('Variable not found');
+    const today = todayDateOnly();
+    const phases = await this.versionPhases(this.prisma, tenantId, today);
     const bindings = await this.prisma.variableBinding.findMany({
       where: {
         tenantId,
         variableId: id,
         state: { in: ['active', 'needs_review'] },
-        version: { status: 'published', article: { chapter: { policy: { tenantId } } } },
+        versionId: { in: [...phases.keys()] },
+        version: { article: { chapter: { policy: { tenantId } } } },
       },
       orderBy: [{ articleId: 'asc' }, { start: 'asc' }],
       select: {
@@ -153,16 +222,21 @@ export class VariablesService {
       },
     });
     const { values, ...rest } = variable;
+    const shaped = bindings.map(({ article, version, ...b }) => ({
+      ...b,
+      versionNum: version.versionNum,
+      effectiveDate: dateOnly(version.effectiveDate),
+      phase: phases.get(b.versionId)!,
+      policy: article.chapter.policy,
+      article: { label: articleLabel(article), title: article.title },
+    }));
     return {
       ...rest,
       ...this.presentValues(values),
-      bindings: bindings.map(({ article, version, ...b }) => ({
-        ...b,
-        versionNum: version.versionNum,
-        effectiveDate: dateOnly(version.effectiveDate),
-        policy: article.chapter.policy,
-        article: { label: articleLabel(article), title: article.title },
-      })),
+      // 기준일(한국 날짜) — 이 날 시행 중인 본문과 그 뒤 시행될 본문으로 나눈다(T-132 ⑥)
+      asOf: toDateOnlyString(today),
+      bindings: shaped.filter((b) => b.phase === 'in_force'),
+      scheduledBindings: shaped.filter((b) => b.phase === 'scheduled'),
     };
   }
 
@@ -320,7 +394,7 @@ export class VariablesService {
   }
 
   /**
-   * 지금 시행 중인 버전의 문구를 골라 변수에 잇는다(관리자·편집자). 고른 문구가 본문 그 자리와 같아야 하고
+   * 오늘 시행 중인 버전이나 시행 예정 버전의 문구를 골라 변수에 잇는다(관리자·편집자, 버전마다 따로 — T-132 ⑥). 고른 문구가 본문 그 자리와 같아야 하고
    * (화면이 본 뒤 본문이 바뀌었으면 409), 다른 연결과 겹치면 안 된다. 조문을 잠가 발행(연결 옮기기)과 줄 세운다.
    */
   async createBinding(tenantId: string, versionId: string, dto: CreateBindingDto, userId: string) {
@@ -348,8 +422,9 @@ export class VariablesService {
         where: { id: versionId },
         select: { id: true, articleId: true, status: true, content: true, effectiveDate: true },
       });
-      if (version.status !== 'published') {
-        throw new ConflictException('지금 시행 중인 버전에만 이을 수 있습니다 — 화면을 새로 고쳐 확인하세요.');
+      // 오늘 시행본이나 시행 예정본만(T-132 ⑥) — 예전에는 published 만 받아, 미래 시행 개정이 있으면 오늘 시행 중인(archived) 본문엔 못 이었다
+      if (!(await this.phaseOf(tx, version.articleId, versionId, todayDateOnly()))) {
+        throw new ConflictException('오늘 시행 중이거나 시행 예정인 버전에만 이을 수 있습니다 — 화면을 새로 고쳐 확인하세요.');
       }
       if (end > version.content.length || version.content.slice(start, end) !== dto.text) {
         throw new ConflictException('본문이 그 사이 바뀌었습니다 — 화면을 새로 고쳐 다시 골라 주세요.');
@@ -409,11 +484,13 @@ export class VariablesService {
         select: { state: true, version: { select: { status: true, repealedOn: true } } },
       });
       if (!fresh || fresh.state === 'released') throw new NotFoundException('Binding not found');
-      if (fresh.version.status === 'archived') {
+      // 오늘 시행본이나 시행 예정본의 연결만 푼다(T-132 ⑥) — 예전에는 archived 면 409 라 오늘 시행 중인(archived) 본문의 연결을 못 풀었다.
+      // 그 버전만 바꾼다: 시행 예정본에 복사된 자식 연결(parentId)은 따로 정했을 수 있어 같이 풀지 않는다
+      if (!(await this.phaseOf(tx, b.articleId, b.versionId, todayDateOnly()))) {
         throw new ConflictException(
           fresh.version.repealedOn
             ? '그 사이 이 조문이 폐지됐습니다 — 화면을 새로 고쳐 확인하세요.'
-            : '그 사이 새 버전이 발행됐습니다 — 화면을 새로 고쳐 확인하세요.',
+            : '이 버전은 이제 시행 중도 시행 예정도 아닙니다(새 버전이 시행됐습니다) — 화면을 새로 고쳐 확인하세요.',
         );
       }
       await tx.variableBinding.update({ where: { id: bindingId }, data: { state: 'released' } });

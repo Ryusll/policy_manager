@@ -341,8 +341,10 @@ export type VariableRow = {
   currentReason: VariablePickReason | null;
   /** 기간 겹침·기간 미확정 값이 있다 */
   needsReview: boolean;
-  /** 지금 시행 중인 본문의 연결 수(다시 이어야 하는 것 포함) */
+  /** 오늘 시행 중인 본문의 연결 수(다시 이어야 하는 것 포함) */
   bindingCount?: number;
+  /** 시행 예정 본문의 연결 수(T-132 ⑥) */
+  scheduledBindingCount?: number;
 };
 
 export type VariableBindingState = 'active' | 'needs_review' | 'released';
@@ -366,15 +368,22 @@ export type VariableBindingRow = {
   variable?: { id: string; key: string; label: string };
 };
 
+export type VariableDetailBinding = VariableBindingRow & {
+  versionNum: number;
+  effectiveDate: string | null;
+  /** 오늘 시행 중 / 시행 예정(T-132 ⑥) */
+  phase: 'in_force' | 'scheduled';
+  policy: { id: string; code: string; title: string };
+  article: { label: string; title: string };
+};
+
 export type VariableDetail = VariableRow & {
-  bindings: Array<
-    VariableBindingRow & {
-      versionNum: number;
-      effectiveDate: string | null;
-      policy: { id: string; code: string; title: string };
-      article: { label: string; title: string };
-    }
-  >;
+  /** 기준일(YYYY-MM-DD, 한국 날짜) */
+  asOf?: string;
+  /** 오늘 시행 중인 본문의 연결 */
+  bindings: VariableDetailBinding[];
+  /** 시행 예정 본문의 연결(T-132 ⑥) — 승인 때 오늘 본문의 연결이 복사돼 들어간다 */
+  scheduledBindings?: VariableDetailBinding[];
 };
 
 export const VARIABLE_PICK_REASON_LABEL: Record<VariablePickReason, string> = {

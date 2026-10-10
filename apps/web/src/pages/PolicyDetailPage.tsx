@@ -819,6 +819,13 @@ export default function PolicyDetailPage() {
   // 새 초안의 바탕 — 시행 예정 본문이 있으면 그것(오늘 본문으로 고치면 시행 예정 개정을 잃는다)
   const selectedDraftBase = useMemo(() => articleDraftBase(liveSelectedArticle ?? {}), [liveSelectedArticle]);
   const currentVersionId: string | null = liveSelectedArticle?.versions?.[0]?.id ?? null;
+  // 변수를 이을 수 있는 버전 — 오늘 시행본과 시행 예정본(날짜마다 그날 이기는 판, 서버와 같은 기준 — T-132 ⑥)
+  const bindablePhase = useMemo(() => {
+    const m = new Map<string, 'in_force' | 'scheduled'>();
+    if (currentVersionId) m.set(currentVersionId, 'in_force');
+    for (const v of (liveSelectedArticle?.scheduledVersions ?? []) as { id: string }[]) m.set(v.id, 'scheduled');
+    return m;
+  }, [currentVersionId, liveSelectedArticle]);
   // 이 조문의 가장 늦은 시행 예정일 — 그보다 이른 날로는 승인할 수 없다(서버도 409, T-132 ①)
   const approveMinDate: string | null = selectedDraftBase.kind === 'scheduled' ? selectedDraftBase.effectiveDate : null;
   // 비워 두면 오늘로 승인된다
@@ -3529,7 +3536,7 @@ export default function PolicyDetailPage() {
                               </button>
                             </>
                           )}
-                          {version.status === 'published' && (canEdit || version._count?.variableBindings > 0) && (
+                          {bindablePhase.has(version.id) && (canEdit || version._count?.variableBindings > 0) && (
                             <button
                               type="button"
                               onClick={() => setBindingTarget(version)}
@@ -5428,6 +5435,7 @@ export default function PolicyDetailPage() {
       {bindingTarget && (
         <VariableBindingDialog
           version={bindingTarget}
+          phase={bindablePhase.get(bindingTarget.id)}
           articleId={selectedArticle?.id ?? bindingTarget.articleId}
           canEdit={canEdit}
           onClose={() => setBindingTarget(null)}
