@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Param, Body, Request, HttpCode, Query,
+  Controller, Get, Post, Put, Param, Body, Request, HttpCode, Query, BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { VersionsService } from './versions.service';
@@ -34,6 +34,19 @@ export class VersionsController {
     @Body() dto: CreateVersionDto,
   ) {
     return this.versionsService.create(req.user.tenantId, articleId, dto, req.user.id);
+  }
+
+  // versions/:id 보다 먼저 선언해야 한다 — 뒤에 두면 "diff" 가 버전 id 로 잡혀 늘 404 였다(T-134)
+  @Get('versions/diff')
+  @ApiOperation({ summary: 'Diff two versions' })
+  diff(
+    @Request() req: any,
+    @Query('v1') v1: string,
+    @Query('v2') v2: string,
+  ) {
+    // 빈 id 로 찾으면 id 조건 없이 그 회사의 아무 버전이나 골라 비교한다
+    if (!v1 || !v2) throw new BadRequestException('비교할 두 버전(v1·v2)을 주세요.');
+    return this.versionsService.diff(req.user.tenantId, v1, v2);
   }
 
   @Get('versions/:id')
@@ -113,15 +126,5 @@ export class VersionsController {
   @ApiOperation({ summary: '폐지 — 게시본을 내리고 오늘(한국 날짜)부터 조문을 시행에서 뺀다(repealedOn). 응답의 remainingPublished 가 0이면 조문에 게시본이 없다 (T-10, T-126)' })
   archive(@Request() req: any, @Param('id') id: string) {
     return this.versionsService.archive(req.user.tenantId, id, req.user.id);
-  }
-
-  @Get('versions/diff')
-  @ApiOperation({ summary: 'Diff two versions' })
-  diff(
-    @Request() req: any,
-    @Query('v1') v1: string,
-    @Query('v2') v2: string,
-  ) {
-    return this.versionsService.diff(req.user.tenantId, v1, v2);
   }
 }
