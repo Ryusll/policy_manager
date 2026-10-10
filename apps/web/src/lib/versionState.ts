@@ -202,3 +202,24 @@ export function collectArticleChangeNotes(
   }
   return rows.sort((a, b) => String(b.effectiveDate ?? '').localeCompare(String(a.effectiveDate ?? '')));
 }
+
+/**
+ * 본문 목록에서 빠진 시행 예정 신설 조문(`current.scheduledArticles` — 행마다)을 조 단위로 — 안내 띠에 한 줄씩.
+ * 항·호 행만 있으면 "①"처럼 조 번호가 빠져 보였다. 제목은 조 머리 행(없으면 처음 제목 있는 행), 시행일은 가장 이른 날.
+ */
+export function groupScheduledByJo<
+  T extends { liveChapterId: string; number: number; branchNumber: number | null; clauseNumber: number | null; itemNumber: number | null; title: string; effectiveDate: string | null },
+>(rows: T[]): { key: string; number: number; branchNumber: number | null; title: string; effectiveDate: string | null; rows: number }[] {
+  const groups = new Map<string, { key: string; number: number; branchNumber: number | null; title: string; headTitle: string | null; effectiveDate: string | null; rows: number }>();
+  for (const r of rows) {
+    const key = `${r.liveChapterId}|${r.number}|${r.branchNumber ?? 0}`;
+    const g = groups.get(key) ?? { key, number: r.number, branchNumber: r.branchNumber, title: '', headTitle: null, effectiveDate: null, rows: 0 };
+    g.rows += 1;
+    if (r.clauseNumber == null && r.itemNumber == null && r.title) g.headTitle = r.title;
+    if (!g.title && r.title) g.title = r.title;
+    if (r.effectiveDate && (!g.effectiveDate || r.effectiveDate < g.effectiveDate)) g.effectiveDate = r.effectiveDate;
+    groups.set(key, g);
+  }
+  return [...groups.values()].map(({ headTitle, ...g }) => ({ ...g, title: headTitle ?? g.title }));
+}
+

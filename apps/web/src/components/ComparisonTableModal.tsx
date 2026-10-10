@@ -5,7 +5,9 @@
  * 바뀐 낱말만 강조한다. 대상이 *우리 규정끼리*라 외부 데이터 없이 시점 조회(T-72)로 만든다.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { holdPrintRoot } from '../lib/printRoot';
 import { useQuery } from '@tanstack/react-query';
 import { X, Printer, ArrowRight } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -103,7 +105,10 @@ export default function ComparisonTableModal({
     (error as any)?.response?.data?.message?.toString() ||
     (error ? '대비표를 불러오지 못했습니다.' : '');
 
-  return (
+  // 인쇄 때 앱 화면을 빼고 이 창만 흐름대로(전체화면 전문 보기와 같은 인쇄 규칙, T-133) — 그래서 body 바로 아래에 그린다
+  useEffect(() => holdPrintRoot(), []);
+
+  return createPortal(
     <div className="printable-policy-modal fixed inset-0 z-50 bg-black/60 p-2 sm:p-4 print:bg-white print:p-0">
       <div className="mx-auto h-full w-full max-w-6xl bg-white border border-gray-300 shadow-xl flex flex-col print:max-w-none print:h-auto print:border-0 print:shadow-none">
         <div className="bg-navy-900 text-white px-4 py-3 flex items-center justify-between gap-2 print:hidden">
@@ -281,6 +286,7 @@ export default function ComparisonTableModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

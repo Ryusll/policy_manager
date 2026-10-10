@@ -380,9 +380,14 @@ export class VariablesService {
   // ── 연결(바인딩) ──
 
   /** 이 버전 본문의 연결(풀지 않은 것) */
-  async listForVersion(tenantId: string, versionId: string) {
+  /** @param opts.issuedOnly 열람자용 — 초안·검토 중 버전이면 없는 것으로(404). 검토 요청 때 생긴 연결도 미승인 문구다(T-138 후속) */
+  async listForVersion(tenantId: string, versionId: string, opts: { issuedOnly?: boolean } = {}) {
     const version = await this.prisma.articleVersion.findFirst({
-      where: { id: versionId, article: { chapter: { policy: { tenantId } } } },
+      where: {
+        id: versionId,
+        article: { chapter: { policy: { tenantId } } },
+        ...(opts.issuedOnly ? { status: { in: ['published', 'archived'] } } : {}),
+      },
       select: { id: true },
     });
     if (!version) throw new NotFoundException('Version not found');

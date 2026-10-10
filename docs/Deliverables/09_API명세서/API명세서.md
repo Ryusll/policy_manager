@@ -118,7 +118,7 @@
 | POST | variables/:id/values | admin, editor | 값 추가 `{ value, validFrom?, validTo?, note? }` — 유효기간 [시작, 종료), 시작 ≥ 종료면 400. 기간이 겹쳐도 저장하고 `changedOverlaps: true` — 겹친 기간에는 값을 고르지 않는다. 변수 행을 잠근다(승인 때 값 재확인과 줄 세움). 감사 `variable.value.create` |
 | PUT | variables/:id/values/:valueId | admin, editor | 값 고치기 `{ value?, validFrom?, validTo?, note?, confirmPeriod? }` — 기간을 넣거나 `confirmPeriod: true` 면 기간 미확정 값이 확정된다. 감사 `variable.value.update`(전후) |
 | DELETE | variables/:id/values/:valueId | admin, editor | 값 지우기. 감사 `variable.value.delete` |
-| GET | versions/:versionId/variable-bindings | JWT | 그 버전 본문의 연결(풀지 않은 것) — 다른 회사 버전은 404 |
+| GET | versions/:versionId/variable-bindings | JWT | 그 버전 본문의 연결(풀지 않은 것) — 다른 회사 버전은 404. 열람자가 초안·검토 중 버전을 물으면 404(연결은 미승인 문구와 앞뒤 문맥을 담는다, T-138 후속) |
 | POST | versions/:versionId/variable-bindings | admin, editor | **오늘 시행 중인 버전이나 시행 예정 버전의 문구를 변수에 잇기**(버전마다 따로, T-132 ⑥) `{ variableId, start, end, text }` — 위치는 저장된 본문의 UTF-16 [start, end). 조문을 잠근 뒤 한국 날짜로 오늘 시행본·시행 예정본인지 다시 보고 아니거나 `text` 가 본문 그 구간과 다르면(그 사이 바뀜) 409, 다른 연결과 겹치면 409, 앞뒤 공백이 있으면 400. 그 버전 시행일에 맞는 값과 같은 문구면 `valueId`(직전 적용값)를 적는다. 조문을 잠근다(발행 때 연결 옮기기와 줄 세움). 감사 `variable.binding.create` |
 | DELETE | variable-bindings/:id | admin, editor | 연결 풀기 — 지우지 않고 `released` 로 남긴다. 감사 `variable.binding.release`. 조문을 잠그고 다시 본다 — **오늘 시행본이나 시행 예정본의 연결만** 푼다(T-132 ⑥: 미래 시행 개정이 있어 오늘 본문이 archived 여도 풀린다). 그 버전이 이제 시행 중도 시행 예정도 아니면 409(폐지됐으면 폐지 안내). 그 버전의 연결만 푼다 — 시행 예정본에 복사된 자식 연결은 그대로 |
 

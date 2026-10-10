@@ -285,7 +285,10 @@ function ArticleBodyText({
           </span>
           <span className="text-gray-600">{highlightText(pending.content, highlightQuery)}</span>
         </span>
-        {!joHeadWithRows && <span className="hidden print:inline text-gray-400">시행중 버전이 없습니다.</span>}
+        {/* 폐지 뒤 다시 쓴 초안이면 공식 문서처럼 "삭제 <날짜>"(PDF·한글·TXT 와 같게) */}
+        {(noCurrentTextMarker(article) || !joHeadWithRows) && (
+          <span className="hidden print:inline text-gray-400">{noCurrentTextMarker(article) ?? '시행중 버전이 없습니다.'}</span>
+        )}
       </>
     );
   }

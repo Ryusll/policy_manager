@@ -70,7 +70,9 @@ export class VariablesController {
   @Get('versions/:versionId/variable-bindings')
   @ApiOperation({ summary: '이 버전 본문의 변수 연결 (T-109)' })
   listBindings(@Request() req: any, @Param('versionId') versionId: string) {
-    return this.variablesService.listForVersion(req.user.tenantId, versionId);
+    // 초안·검토 중 버전의 연결(미승인 문구와 그 앞뒤)은 편집 권한자에게만(T-138 후속)
+    const issuedOnly = req.user.role !== 'admin' && req.user.role !== 'editor';
+    return this.variablesService.listForVersion(req.user.tenantId, versionId, { issuedOnly });
   }
 
   @Post('versions/:versionId/variable-bindings')

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { holdPrintRoot } from '../lib/printRoot';
 import { apiErrorMessage } from '../lib/apiError';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -105,8 +106,7 @@ import {
   isDraftOnlyArticle,
   nextScheduled,
   versionDisplayState,
-  type VersionDisplayState,
-} from '../lib/versionState';
+  type VersionDisplayState, groupScheduledByJo } from '../lib/versionState';
 import { formatVersionDates, versionDates } from '../lib/versionDates';
 import { VersionDatesLine } from '../components/VersionDatesLine';
 import { SpeechControls } from '../components/SpeechControls';
@@ -159,6 +159,20 @@ function StateBadge({ state, title, compact }: { state: VersionDisplayState; tit
 }
 
 const ymd = (d?: string | null) => (d ? d.slice(0, 10) : '');
+
+/** 조문의 지금 행 자리 — 링크(앵커)는 이 번호로 만들고 찾는다. 오늘 자리(화면 번호)와 다를 수 있다(T-127 `live*`) */
+function liveAnchorOf<T extends { number: number; branchNumber?: number | null; clauseNumber?: number | null; itemNumber?: number | null }>(
+  a: T & { liveNumber?: number; liveBranchNumber?: number | null; liveClauseNumber?: number | null; liveItemNumber?: number | null },
+) {
+  if (a.liveNumber == null) return a;
+  return {
+    ...a,
+    number: a.liveNumber,
+    branchNumber: a.liveBranchNumber ?? null,
+    clauseNumber: a.liveClauseNumber ?? null,
+    itemNumber: a.liveItemNumber ?? null,
+  };
+}
 
 function toKoreanOrdinal(n: number) {
   return `제${n}`;
@@ -770,13 +784,14 @@ export default function PolicyDetailPage() {
     let found: { ch: any; hit: any } | null = null;
 
     if (anchor) {
-      for (const ch of policy.chapters) {
-        const hit = findByAnchor(ch.articles || [], anchor);
-        if (hit) {
-          found = { ch, hit };
-          break;
-        }
-      }
+      // 링크는 지금 행 번호로 만든다(즐겨찾기·검색·규정 질문·링크 복사) — 미래 시행 묶음이 조문을 옮겨 둔 동안은 화면 번호와
+      // 다르므로 지금 행 번호로 찾는다(T-127). 시행일이 지나면 둘이 같다
+      type Linkable = { id: string; number: number; branchNumber?: number | null; clauseNumber?: number | null; itemNumber?: number | null };
+      const all = (policy.chapters as { articles?: Linkable[] }[]).flatMap((ch) =>
+        (ch.articles || []).map((a) => ({ ...liveAnchorOf(a), __a: a, __ch: ch })),
+      );
+      const hit = findByAnchor(all, anchor);
+      if (hit) found = { ch: hit.__ch, hit: hit.__a };
     } else {
       const legacyId = parseLegacyArticleId(window.location.hash);
       if (legacyId) found = findChapterOf((a: any) => a.id === legacyId);
@@ -791,13 +806,13 @@ export default function PolicyDetailPage() {
   /** 현재 조문을 가리키는 안정 링크를 클립보드에 복사한다 */
   const copyArticleLink = useCallback(async () => {
     if (!selectedArticle) return;
-    const url = `${window.location.origin}${window.location.pathname}${articleHash(selectedArticle)}`;
+    const url = `${window.location.origin}${window.location.pathname}${articleHash(liveAnchorOf(selectedArticle))}`;
     try {
       await navigator.clipboard.writeText(url);
       toast(`링크를 복사했습니다 — ${formatArticleAnchor(selectedArticle)}`, 'success');
     } catch {
       // 클립보드 권한이 없으면(비 HTTPS 등) 주소만 바꿔 사용자가 직접 복사하게 한다
-      window.location.hash = articleHash(selectedArticle).slice(1);
+      window.location.hash = articleHash(liveAnchorOf(selectedArticle)).slice(1);
       toast('클립보드를 쓸 수 없어 주소창을 갱신했습니다. 주소를 복사하세요.', 'info');
     }
   }, [selectedArticle]);
@@ -851,8 +866,11 @@ export default function PolicyDetailPage() {
       setCompareV2('');
       return;
     }
-    if (!compareV1) setCompareV1(versions[0].id);
-    if (!compareV2 && versions[1]) setCompareV2(versions[1].id);
+    // 다른 조문의 버전 id 가 남아 있으면 이 조문 것으로 — 캐시된 조문으로 돌아오면 versions 가 바로 차 있어 위에서 비우지 않는다.
+    // 남겨 두면 버전 비교(T-134 로 살아남)가 앞 조문의 차이를 보였다
+    const has = (vid: string) => versions.some((v: { id: string }) => v.id === vid);
+    if (!compareV1 || !has(compareV1)) setCompareV1(versions[0].id);
+    if (versions[1] ? !compareV2 || !has(compareV2) : !!compareV2) setCompareV2(versions[1]?.id ?? '');
   }, [versions, compareV1, compareV2]);
 
   const segmentVersionWorkflow = useMemo(() => {
@@ -1142,11 +1160,14 @@ export default function PolicyDetailPage() {
       policiesApi.updateArticle(id!, selectedChapterId, selectedArticle!.id, payload),
     onSuccess: (updated: any) => {
       qc.invalidateQueries({ queryKey: ['policy', id] });
+      // 고친 칸만 — 응답은 지금 행이라, 미래 시행 묶음이 옮겨 둔 조문이면 번호·제목·장이 오늘 자리와 다르다(T-127)
       setSelectedArticle((prev: any) =>
         prev && updated?.id === prev.id
           ? {
               ...prev,
-              ...updated,
+              hasPrecedent: updated.hasPrecedent,
+              hasRelatedLaw: updated.hasRelatedLaw,
+              hasRelatedRule: updated.hasRelatedRule,
             }
           : prev,
       );
@@ -1165,7 +1186,20 @@ export default function PolicyDetailPage() {
       }),
     onSuccess: (updated: any) => {
       qc.invalidateQueries({ queryKey: ['policy', id] });
-      setSelectedArticle((prev: any) => (prev && updated?.id === prev.id ? { ...prev, ...updated } : prev));
+      // 고친 칸만(위와 같은 까닭)
+      setSelectedArticle((prev: any) =>
+        prev && updated?.id === prev.id
+          ? {
+              ...prev,
+              hasPrecedent: updated.hasPrecedent,
+              hasRelatedLaw: updated.hasRelatedLaw,
+              hasRelatedRule: updated.hasRelatedRule,
+              relatedPrecedentNote: updated.relatedPrecedentNote,
+              relatedLawNote: updated.relatedLawNote,
+              relatedRuleNote: updated.relatedRuleNote,
+            }
+          : prev,
+      );
       setRelationNotesDraft({
         relatedPrecedentNote: updated.relatedPrecedentNote || '',
         relatedLawNote: updated.relatedLawNote || '',
@@ -1993,10 +2027,10 @@ export default function PolicyDetailPage() {
 
     window.addEventListener('keydown', onKeyDown);
     // 인쇄할 때 앱 화면은 통째로 빼고 이 창만 흐름대로 찍는다(index.css, T-133)
-    document.body.classList.add('policy-print-open');
+    const releasePrintRoot = holdPrintRoot();
     return () => {
       window.removeEventListener('keydown', onKeyDown);
-      document.body.classList.remove('policy-print-open');
+      releasePrintRoot();
     };
   }, [showFullTextModal]);
 
@@ -2812,20 +2846,20 @@ export default function PolicyDetailPage() {
           {!asOfDate && (policy?.current?.scheduledArticles?.length ?? 0) > 0 && (
             <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
               <p className="leading-relaxed">
-                <strong>시행 예정 신설 조문 {policy.current.scheduledArticles.length}건</strong> — 오늘 본문의 자리를 아직
+                <strong>시행 예정 신설 조문 {groupScheduledByJo(policy.current.scheduledArticles as PolicyScheduledArticle[]).length}건</strong> — 오늘 본문의 자리를 아직
                 다른 조문이 쓰고 있어 본문에는 넣지 않았습니다. 시행일부터 보입니다.
               </p>
               <ul className="mt-1.5 flex flex-wrap gap-1.5">
-                {policy.current.scheduledArticles.map((a: PolicyScheduledArticle) => (
-                  <li key={a.id}>
+                {groupScheduledByJo(policy.current.scheduledArticles as PolicyScheduledArticle[]).map((g) => (
+                  <li key={g.key}>
                     <button
                       type="button"
-                      disabled={!a.effectiveDate}
-                      onClick={() => a.effectiveDate && setAsOfDate(a.effectiveDate)}
+                      disabled={!g.effectiveDate}
+                      onClick={() => g.effectiveDate && setAsOfDate(g.effectiveDate)}
                       className="rounded border border-amber-300 bg-white px-2 py-0.5 hover:bg-amber-100"
                       title="그날 시점의 본문으로 보기"
                     >
-                      {articleShortLabel(a)} {a.title || ''} · {a.effectiveDate}부터
+                      {formatArticleJo(g.number, g.branchNumber)} {g.title} · {g.effectiveDate}부터
                     </button>
                   </li>
                 ))}

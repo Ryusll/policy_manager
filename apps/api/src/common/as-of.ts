@@ -88,3 +88,19 @@ export function currentVersionsSql(tenantId: string, today: Date, opts: { active
       AND (av.effective_date IS NULL OR av.effective_date <= ${today})
     ORDER BY av.article_id, av.effective_date DESC NULLS LAST, av.version_num DESC`;
 }
+
+/**
+ * 조문 여럿의 "현재" 버전 id — `currentVersionWhere` + `CURRENT_VERSION_ORDER` 의 SQL 판(열 `id`).
+ * 중첩 include 에 `where` + `take: 1` 로 고르면 Prisma 5.22 가 조문마다 맞는 행을 모두 읽고 메모리에서 잘라,
+ * 미래 개정이 생긴 뒤로(archived 도 후보) 조문마다 발행 이력 전부를 본문째 읽었다(교차 검토, T-127 ② 후속).
+ */
+export function currentVersionIdsSql(articleIds: string[], today: Date): Prisma.Sql {
+  return Prisma.sql`
+    SELECT DISTINCT ON (article_id) id
+    FROM article_versions
+    WHERE article_id IN (${Prisma.join(articleIds)})
+      AND status IN ('published', 'archived')
+      AND (effective_date IS NULL OR effective_date <= ${today})
+    ORDER BY article_id, effective_date DESC NULLS LAST, version_num DESC`;
+}
+

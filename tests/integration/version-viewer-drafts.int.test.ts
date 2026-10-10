@@ -49,4 +49,10 @@ describe('T-138 버전 API 의 초안 — 편집 권한자에게만', () => {
     expect(forAdmin.status).toBe(200);
     expect(JSON.stringify(forAdmin.body)).toContain('비밀 초안');
   });
+
+  it('초안·검토 중 버전의 변수 연결 목록도 열람자에게는 404(T-138 후속 — 연결은 미승인 문구와 앞뒤 문맥을 담는다)', async () => {
+    expect((await api(`/versions/${draft}/variable-bindings`, { token: viewer })).status).toBe(404);
+    expect((await api(`/versions/${issued}/variable-bindings`, { token: viewer })).status).toBe(200);
+    expect((await api(`/versions/${draft}/variable-bindings`, { token: t.token })).status).toBe(200);
+  });
 });

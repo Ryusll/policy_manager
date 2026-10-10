@@ -98,19 +98,22 @@ export function buildCurrentChapters<C extends AsOfChapter<CurrentArticle>>(
       displaced: false,
     })),
   }));
-  // 얼린 계층은 오늘 시행 중이거나 폐지된 조문의 고른 버전에서만, 그것도 시행 예정 버전이 있을 때만 읽는다. 나머지는 지금 자리.
+  // 오늘 자리는 오늘 시행 중이거나 폐지된 행(고른 버전이 있는 행)으로만 정한다 — 얼린 계층은 시행 예정 버전이 있을 때만 읽고,
+  // 없으면 지금 자리. 버전 없는 조 머리·초안·시행 예정 행은 장 번호·제목을 정하는 데 넣지 않고 자리 계산 뒤 지금 행의 장에 붙인다
+  // (넣으면 placeAsOf 가 "지금 자리 행"으로 세어, 미래 시행 묶음이 바꾼 장 번호·제목이 오늘 화면에 보이고 잠금도 걸리지 않았다 —
+  // 교차 검토, T-127 ② 후속)
+  const placing = (a: A & Live) => a.currentState === 'in_force' || a.currentState === 'repealed';
   const forPlacement = live.map((ch) => ({
     ...ch,
-    articles: ch.articles.map((a) =>
-      (a.currentState === 'in_force' || a.currentState === 'repealed') && a.hasScheduled
-        ? a
-        : { ...a, versions: [] as A['versions'] },
-    ),
+    articles: ch.articles.filter(placing).map((a) => (a.hasScheduled ? a : { ...a, versions: [] as A['versions'] })),
   }));
   const placed = placeAsOf<A & Live, OutChapter>(forPlacement as unknown as OutChapter[]);
-  // 자리 계산이 끝났으니 원래 버전(초안·시행 예정 행의 빈 목록 말고 원본)을 되돌린다
+  // 자리 계산이 끝났으니 원래 버전(얼린 자리를 안 쓴 행의 빈 목록 말고 원본)을 되돌린다
   const original = new Map(live.flatMap((ch) => ch.articles).map((a) => [a.id, a]));
   for (const ch of placed) ch.articles = ch.articles.map((a) => ({ ...a, versions: original.get(a.id)!.versions }));
+  // 나머지 행은 지금 행의 장에(placeAsOf 는 입력의 장을 비어 있어도 모두 돌려준다)
+  const placedById = new Map(placed.map((ch) => [ch.id, ch]));
+  for (const ch of live) for (const a of ch.articles) if (!placing(a)) placedById.get(ch.id)?.articles.push(a);
 
   // 버전 없는 조 머리는 같은 조(지금 행 기준)의 항·호가 옮겨진 자리로 따라간다
   const moved = new Map<string, { chapterId: string; sectionId: string | null; number: number; branchNumber: number | null }>();
@@ -159,6 +162,26 @@ export function buildCurrentChapters<C extends AsOfChapter<CurrentArticle>>(
     const isVirtual = !liveCount.has(ch.id);
     if (!kept.length && (isVirtual || (liveCount.get(ch.id) ?? 0) > 0)) continue;
     out.push({ ...ch, articles: kept.sort(byPosition), ...(isVirtual ? { virtual: true as const } : {}) });
+  }
+  // 시행 예정 행이 모두 빠진 조(오늘 시행 중·폐지 행이 없는 새 조)의 버전 없는 조 머리도 뺀다 — 남기면 항 없이 머리만
+  // "시행중 버전이 없습니다"로 남았다(새 장이면 아직 없는 장째로). 빠진 목록에는 조 단위로 보이게 함께 넣는다
+  const joOf = (a: A & Live) => joKey(a.liveChapterId, a.liveNumber, a.liveBranchNumber);
+  const excludedJo = new Set(excluded.map(joOf));
+  if (excludedJo.size) {
+    const standing = new Set(
+      out.flatMap((ch) => ch.articles.filter((a) => !(isHead(a) && !a.versions.length && a.currentState === 'none')).map(joOf)),
+    );
+    for (const ch of out) {
+      ch.articles = ch.articles.filter((a) => {
+        const orphan = isHead(a) && !a.versions.length && a.currentState === 'none' && excludedJo.has(joOf(a)) && !standing.has(joOf(a));
+        if (orphan) excluded.push(a);
+        return !orphan;
+      });
+    }
+    for (let i = out.length - 1; i >= 0; i -= 1) {
+      // 그래서 비게 된 장은 감춘다(원래 조문이 있던 장 — 위 규칙과 같다)
+      if (!out[i].articles.length && (out[i].virtual || (liveCount.get(out[i].id) ?? 0) > 0)) out.splice(i, 1);
+    }
   }
 
   // 오늘 자리와 지금 행이 다른 것 — 이 동안 화면 자리로 구조를 고치면 지금 행의 엉뚱한 자리가 바뀐다

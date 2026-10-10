@@ -171,3 +171,34 @@ describe('현재 화면 조립', () => {
     expect(chapters[0].articles[0].versions).toBe(draft.versions);
   });
 });
+
+describe('교차 검토 후속 — 장 머리글과 홀로 남는 조 머리', () => {
+  it('미래 시행 묶음이 장 번호·제목을 바꿔도 버전 없는 조 머리가 있으면 오늘 화면은 옛 장, 잠금도 걸린다', () => {
+    // 지금 장 c1 은 이미 "제2장 장2"(묶음이 바꿈). 오늘 시행 중인 항은 옛 장(제1장 "그때 장")으로 얼려 있고 묶음 버전이 시행 예정
+    const head = art('c1', 3, 'none', { title: '정의' });
+    const clause = art('c1', 3, 'in_force', { clause: 1, frozen: { chapter: 'c1', chapterNumber: 1, number: 3, clause: 1 } });
+    const { chapters, displaced } = buildCurrentChapters([ch('c1', 2, [head, clause])]);
+    expect(chapters[0]).toMatchObject({ id: 'c1', number: 1, title: '그때 장' });
+    expect(chapters[0].articles.map((a) => a.id)).toEqual([head.id, clause.id]);
+    expect(displaced).toBeGreaterThan(0);
+  });
+
+  it('새 장의 새 조가 오늘 시행 중인 조와 같은 자리면 항과 함께 조 머리도 빠지고, 빈 새 장은 감춘다', () => {
+    const oh = art('c2', 2, 'in_force', { title: '옛 조' });
+    const oc1 = art('c2', 2, 'in_force', { clause: 1 });
+    const nh = art('cN', 2, 'none', { title: '새 조' });
+    const nc1 = art('cN', 2, 'scheduled', { clause: 1 });
+    const { chapters, excluded } = buildCurrentChapters([ch('c2', 1, [oh, oc1]), ch('cN', 2, [nh, nc1])]);
+    expect(labels(chapters)).toEqual(['c2:[2,2-1]']);
+    expect(excluded.map((a) => a.id).sort()).toEqual([nc1.id, nh.id].sort());
+  });
+
+  it('새 조의 항이 빠지지 않으면 조 머리는 남는다(시행 전 새 조로 제자리에)', () => {
+    const nh = art('cN', 7, 'none', { title: '새 조' });
+    const nc1 = art('cN', 7, 'scheduled', { clause: 1 });
+    const { chapters, excluded } = buildCurrentChapters([ch('c1', 1, [art('c1', 1, 'in_force')]), ch('cN', 2, [nh, nc1])]);
+    expect(labels(chapters)).toEqual(['c1:[1]', 'cN:[7,7-1]']);
+    expect(excluded).toEqual([]);
+  });
+});
+

@@ -3,6 +3,7 @@ import {
   articleBadgeState,
   articleDraftBase,
   collectArticleChangeNotes,
+  groupScheduledByJo,
   isDraftOnlyArticle,
   nextScheduled,
   noCurrentTextMarker,
@@ -143,6 +144,21 @@ describe('제정·개정이유 — 본문 목록에서 빠진 시행 예정 신�
     expect(collectArticleChangeNotes(policy, formatArticleJo)).toEqual([
       { key: 'n1', label: '제2조 (끼어든 조)', note: '다음 달 시행', effectiveDate: '2099-03-01', scheduled: true },
       { key: 'v1', label: '제1조 (목적)', note: '제정', effectiveDate: '2024-01-01', scheduled: false },
+    ]);
+  });
+});
+
+describe('본문에서 빠진 시행 예정 신설 조문 — 조 단위로 한 줄', () => {
+  it('조 머리 제목·가장 이른 시행일로 묶는다(항만 있으면 "①"처럼 조 번호가 빠졌다)', () => {
+    const rows = [
+      { liveChapterId: 'c', number: 2, branchNumber: null, clauseNumber: 1, itemNumber: null, title: '', effectiveDate: '2099-03-01' },
+      { liveChapterId: 'c', number: 2, branchNumber: null, clauseNumber: null, itemNumber: null, title: '끼어든 조', effectiveDate: null },
+      { liveChapterId: 'c', number: 2, branchNumber: null, clauseNumber: 2, itemNumber: null, title: '', effectiveDate: '2099-02-01' },
+      { liveChapterId: 'c', number: 5, branchNumber: 2, clauseNumber: null, itemNumber: null, title: '가지', effectiveDate: '2099-04-01' },
+    ];
+    expect(groupScheduledByJo(rows)).toEqual([
+      { key: 'c|2|0', number: 2, branchNumber: null, title: '끼어든 조', effectiveDate: '2099-02-01', rows: 3 },
+      { key: 'c|5|2', number: 5, branchNumber: 2, title: '가지', effectiveDate: '2099-04-01', rows: 1 },
     ]);
   });
 });

@@ -11,10 +11,9 @@ import { parseSnapshot, positionKey, type Position } from '../common/article-str
 import { placeArticle, placeAsOf } from './as-of-structure';
 import {
   AS_OF_VERSION_ORDER,
-  CURRENT_VERSION_ORDER,
   asOfState,
   asOfVersionWhere,
-  currentVersionWhere,
+  currentVersionIdsSql,
   scheduledVersionWhere,
 } from '../common/as-of';
 import { buildCurrentChapters, currentStateOf, type CurrentState } from './current-view';
@@ -220,6 +219,25 @@ export class PoliciesService {
     }));
   }
 
+  /**
+   * 조문마다 오늘 시행 중인 버전 하나(T-127 규칙). SQL 로 id 만 고른 뒤 그 버전만 읽는다 — 중첩 include 의 `take: 1` 은
+   * Prisma 5.22 가 메모리에서 잘라 조문마다 발행 이력 전부(본문 포함)를 읽었다(`currentVersionIdsSql`).
+   */
+  private async currentVersionsOf<L extends boolean>(articleIds: string[], today: Date, withLawChange: L) {
+    type Row = L extends true
+      ? Prisma.ArticleVersionGetPayload<{ include: { changeEvent: typeof VERSION_LAW_CHANGE } }>
+      : Prisma.ArticleVersionGetPayload<object>;
+    if (!articleIds.length) return new Map<string, Row>();
+    const picked = await this.prisma.$queryRaw<{ id: string }[]>(currentVersionIdsSql(articleIds, today));
+    const rows = picked.length
+      ? await this.prisma.articleVersion.findMany({
+          where: { id: { in: picked.map((p) => p.id) } },
+          ...(withLawChange ? { include: { changeEvent: VERSION_LAW_CHANGE } } : {}),
+        })
+      : [];
+    return new Map(rows.map((v) => [v.articleId, v as Row]));
+  }
+
   async findAll(tenantId: string) {
     return this.prisma.policy.findMany({
       where: { tenantId },
@@ -236,7 +254,7 @@ export class PoliciesService {
   /**
    * 규정 상세 — **"현재" = 오늘(한국 날짜) 시점의 시행본**(T-127).
    *
-   * 조문마다 `versions` 는 오늘 시행 중인 버전 0~1개다(`common/as-of.ts` 의 currentVersionWhere·CURRENT_VERSION_ORDER,
+   * 조문마다 `versions` 는 오늘 시행 중인 버전 0~1개다(`common/as-of.ts` 의 currentVersionWhere·CURRENT_VERSION_ORDER — SQL 판 currentVersionIdsSql,
    * 시행일 없는 예전 시행본도 후보). 미래 시행일로 승인한 개정은 이전 본문이 `archived` 로 내려가 있어도 시행일 전까지
    * 그 이전 본문이 현재다 — 예전에는 `published` 를 그대로 보여 줘 미래 본문이 시행 전부터 현재처럼 보였다.
    * 오늘 폐지된 조문은 `versions` 가 비어 있다.
@@ -260,13 +278,6 @@ export class PoliciesService {
             sections: { orderBy: { number: 'asc' } },
             articles: {
               include: {
-                versions: {
-                  where: currentVersionWhere(today),
-                  orderBy: CURRENT_VERSION_ORDER,
-                  take: 1,
-                  // 연혁 탭의 날짜 3종(T-111) — 개정 후보 승인 버전의 법령 시행일
-                  include: { changeEvent: VERSION_LAW_CHANGE },
-                },
                 // 목차의 "의견 있음" 점 — 처리 안 된 의견이 있을 때만 찍는다
                 _count: { select: { comments: { where: { isResolved: false } } } },
               },
@@ -285,6 +296,12 @@ export class PoliciesService {
     });
     if (!policy) throw new NotFoundException('Policy not found');
     const ids = policy.chapters.flatMap((c) => c.articles.map((a) => a.id));
+    // 조문마다 오늘 시행 중인 버전 0~1개(연혁 탭의 날짜 3종 — 법령 시행일, T-111)
+    const currentOf = await this.currentVersionsOf(ids, today, true);
+    const withCurrent = policy.chapters.map((c) => ({
+      ...c,
+      articles: c.articles.map((a) => ({ ...a, versions: currentOf.has(a.id) ? [currentOf.get(a.id)!] : [] })),
+    }));
 
     // 시행 예정 — 날짜마다 그날 이기는 버전(번호가 큰 쪽) 하나, 이른 날부터. 상세 화면만
     const scheduledOf = new Map<string, ReturnType<typeof withLawChange<Prisma.ArticleVersionGetPayload<{ include: { changeEvent: typeof VERSION_LAW_CHANGE } }>>>[]>();
@@ -304,7 +321,7 @@ export class PoliciesService {
     }
 
     // 오늘 고른 버전 + 상태. 폐지된 조문은 자리를 얼린 값에서 찾아야 해서 조립까지 버전을 들고 간다
-    const annotated = policy.chapters.map((c) => ({
+    const annotated = withCurrent.map((c) => ({
       ...c,
       articles: c.articles.map((a) => ({
         ...a,
@@ -335,6 +352,14 @@ export class PoliciesService {
       const built = buildCurrentChapters(annotated);
       chapters = built.chapters.map((c) => ({ ...c, articles: c.articles.map(present) }));
       const firstDates = [...scheduledOf.values()].map((l) => l[0]?.effectiveDate).filter((d): d is Date => !!d);
+      const excludedJoKey = (a: { liveChapterId: string; liveNumber: number; liveBranchNumber: number | null }) =>
+        `${a.liveChapterId}|${a.liveNumber}|${a.liveBranchNumber ?? 0}`;
+      const excludedJoDate = new Map<string, Date>();
+      for (const a of built.excluded) {
+        const d = scheduledOf.get(a.id)?.[0]?.effectiveDate;
+        const k = excludedJoKey(a);
+        if (d && (!excludedJoDate.has(k) || d < excludedJoDate.get(k)!)) excludedJoDate.set(k, d);
+      }
       current = {
         date: toDateOnlyString(today),
         scheduledCount: scheduledOf.size,
@@ -352,9 +377,11 @@ export class PoliciesService {
           itemNumber: a.itemNumber,
           title: a.title,
           liveChapterId: a.liveChapterId,
-          effectiveDate: scheduledOf.get(a.id)?.[0]?.effectiveDate
-            ? toDateOnlyString(scheduledOf.get(a.id)![0].effectiveDate!)
-            : null,
+          // 버전 없는 조 머리(같은 조의 항이 모두 빠져 함께 뺀 것)는 그 조의 가장 이른 시행일
+          effectiveDate: (() => {
+            const d = scheduledOf.get(a.id)?.[0]?.effectiveDate ?? excludedJoDate.get(excludedJoKey(a));
+            return d ? toDateOnlyString(d) : null;
+          })(),
           // 제정·개정이유 창 — 본문 목록에 없는 조문이라 사유를 여기서 싣는다(T-132 ⑧)
           versionId: scheduledOf.get(a.id)?.[0]?.id ?? null,
           changeNote: scheduledOf.get(a.id)?.[0]?.changeNote ?? null,
@@ -631,14 +658,12 @@ export class PoliciesService {
       where: { policyId },
       include: {
         sections: { orderBy: { number: 'asc' } },
-        articles: {
-          include: { versions: { where: currentVersionWhere(today), orderBy: CURRENT_VERSION_ORDER, take: 1 } },
-          orderBy: ARTICLE_ORDER,
-        },
+        articles: { orderBy: ARTICLE_ORDER },
       },
       orderBy: { number: 'asc' },
     });
     const ids = chapters.flatMap((c) => c.articles.map((a) => a.id));
+    const currentOf = await this.currentVersionsOf(ids, today, false);
     const scheduled = ids.length
       ? new Set(
           (
@@ -653,11 +678,15 @@ export class PoliciesService {
     const built = buildCurrentChapters(
       chapters.map((c) => ({
         ...c,
-        articles: c.articles.map((a) => ({
-          ...a,
-          currentState: currentStateOf(a.versions[0], today, scheduled.has(a.id)),
-          hasScheduled: scheduled.has(a.id),
-        })),
+        articles: c.articles.map((a) => {
+          const versions = currentOf.has(a.id) ? [currentOf.get(a.id)!] : [];
+          return {
+            ...a,
+            versions,
+            currentState: currentStateOf(versions[0], today, scheduled.has(a.id)),
+            hasScheduled: scheduled.has(a.id),
+          };
+        }),
       })),
     );
     return built.chapters.flatMap((c) => c.articles);
