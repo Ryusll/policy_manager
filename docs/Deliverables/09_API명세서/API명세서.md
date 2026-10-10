@@ -16,27 +16,14 @@
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | login | Public | 이메일/비밀번호 로그인. 응답 `user.mustChangePassword` 가 true 면 화면은 비밀번호 변경부터 시킨다(T-122) |
+| POST | login | Public | 이메일/비밀번호 로그인. 응답 `user.mustChangePassword` 가 true 면 화면은 비밀번호 변경부터 시킨다(T-122). 비밀번호가 없는 계정(예전 구글 로그인)은 401 `code: PASSWORD_NOT_SET` (T-136) |
 | POST | register | Public | 테넌트 + 최초 admin 계정 생성. **공개 회원가입이 닫힌 서버(운영 기본)에서는 403 `code: SIGNUP_CLOSED`** — 고객사는 아스트룸이 `POST /platform-admin/tenants` 로 개설한다. 개발·CI 만 `ALLOW_PUBLIC_SIGNUP=true` (T-122) |
 | GET | options | Public | 로그인 화면 설정 `{ publicSignup }` — 회원가입 링크를 보일지 (T-122) |
-| GET | google | Public | Google OAuth 시작(redirect). 서명된 `state`와 `oauth_state` 쿠키를 함께 내린다. `GOOGLE_CLIENT_ID/SECRET` 미설정 시 **503**. `mode=register`(구글로 새 조직 만들기)는 공개 회원가입이 닫혀 있으면 구글로 가기 전에 `/login?error=oauth&reason=signup_closed` 로 돌려보낸다(T-122) |
-| GET | google/callback | Public | Google OAuth 콜백. `state`의 서명·유효시간(10분)·쿠키 대조를 **코드 교환보다 먼저** 확인한다. 실패는 `{PUBLIC_URL}/login?error=oauth&reason=<사유>`로 리다이렉트 |
 | POST | refresh | Public | refreshToken으로 재발급. 서명·만료를 검증하고 **매번 새 토큰으로 회전**한다. 잘못된 토큰은 401, 빈 값은 400 |
 | POST | logout | JWT | refreshToken 무효화 |
 | POST | me | JWT | 현재 로그인 사용자 정보 |
 
-**Google 콜백 실패 사유(`reason`)** — 화면이 그대로 문구로 바꿔 보여 준다(T-42).
-
-| 사유 | 뜻 |
-|---|---|
-| `state` | `state`가 없거나 위조·만료됐거나 쿠키와 맞지 않음 |
-| `not_invited` | 그 조직에 계정이 없음. **Google 로그인은 계정을 만들지 않는다**([ADR-0018](../10_ADR_의사결정기록/ADR.md)) |
-| `other_organization` | 이 Google 계정이 다른 조직 소속 |
-| `already_registered` | 이미 가입된 Google 계정으로 `mode=register` 요청 |
-| `slug_taken` / `invalid_slug` / `missing_tenant_name` | `mode=register`의 조직 코드·이름 문제 |
-| `email_unverified` | Google이 이메일 소유를 확인하지 않은 계정 |
-| `email_linked_elsewhere` | 그 이메일이 다른 Google 계정에 연결돼 있음 |
-| `provider` / `server` | Google 응답 실패 / 서버 오류 |
+> **구글 로그인은 없앴다(T-136, 2026-10-10)** — `GET /auth/google`·`GET /auth/google/callback` 은 404 다. 비밀번호 없이 구글로만 만든 예전 계정의 로그인은 401 `code: PASSWORD_NOT_SET` 이고, 회사 관리자가 `POST /users/:id/password` 로 비밀번호를 정해 주면 들어온다(첫 로그인 때 변경).
 
 ## users (`/api/users`)
 

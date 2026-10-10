@@ -57,30 +57,14 @@ export const messages: Record<Locale, Msg> = {
       '해당 기관 코드가 없습니다. 데모 계정은 기관 코드에 demo 를 입력하세요.',
     'login.invalidCredentials':
       '이메일·비밀번호·기관 코드를 확인하세요. DB가 비어 있으면 API에서 시드(seed)를 실행해야 합니다.',
-    'login.googleOnly': '이 계정은 Google 로그인만 사용할 수 있습니다.',
+    'login.passwordNotSet': '비밀번호가 설정되지 않은 계정입니다. 회사 관리자에게 비밀번호 재설정을 요청하세요.',
     'login.tenantHint':
       '같은 기관 코드로 로그인한 사용자는 규정·검색 결과가 공유됩니다. 데모(demo)는 모두 같은 샌드박스입니다. 별도 공간이 필요하면 회원가입으로 새 기관을 만드세요.',
     'login.noAccount': '아직 계정이 없으신가요?',
     'login.registerLink': '회원가입',
     'login.askAdmin': '계정이 필요하면 회사 관리자에게 요청하세요.',
-    'login.google': 'Google로 계속하기',
-    'login.googleHint': '위에서 선택한 기관 코드로 Google 계정을 연결합니다.',
-    'login.dividerOr': '또는',
-    'login.oauthError': 'Google 로그인에 실패했습니다. 다시 시도하세요.',
     // 서버가 붙여 보내는 실패 사유(T-42). 이유를 잃으면 사용자는 같은 실패를 반복한다.
-    'login.oauth.state': '로그인 요청이 만료되었거나 올바르지 않습니다. 처음부터 다시 시도하세요.',
-    'login.oauth.not_invited': '이 기관에 등록된 계정이 아닙니다. 기관 관리자에게 계정 생성을 요청하세요.',
-    'login.oauth.signup_closed': '회원가입은 아스트룸을 통해서만 진행됩니다. 계정이 필요하면 회사 관리자에게 요청하세요.',
-    'login.oauth.other_organization': '이 Google 계정은 다른 기관에 소속되어 있습니다. 기관 코드를 확인하세요.',
-    'login.oauth.already_registered': '이미 가입된 Google 계정입니다. 로그인으로 진행하세요.',
-    'login.oauth.slug_taken': '이미 사용 중인 기관 코드입니다. 다른 코드를 쓰세요.',
-    'login.oauth.invalid_slug': '기관 코드가 올바르지 않습니다.',
-    'login.oauth.missing_tenant_name': '기관 이름을 입력하세요.',
-    'login.oauth.email_unverified': 'Google에서 이메일 확인이 끝나지 않은 계정입니다.',
-    'login.oauth.email_linked_elsewhere': '이 이메일은 다른 Google 계정에 연결되어 있습니다.',
 
-    'oauth.callbackWorking': '로그인 처리 중…',
-    'oauth.callbackError': '로그인을 완료할 수 없습니다.',
 
     'register.title': '회원가입',
     'register.subtitle': '새 기관(테넌트)을 만들고 관리자 계정으로 시작합니다.',
@@ -98,10 +82,6 @@ export const messages: Record<Locale, Msg> = {
     'register.slugInvalid': '기관 코드는 2~40자, 영문 소문자·숫자·하이픈만 사용할 수 있습니다.',
     'register.hasAccount': '이미 계정이 있으신가요?',
     'register.loginLink': '로그인',
-    'register.google': 'Google로 새 기관 만들기',
-    'register.googleHint':
-      '기관명·기관 코드를 입력한 뒤 Google로 관리자 계정을 연결합니다.',
-    'register.googleNeedTenant': '기관명과 유효한 기관 코드를 먼저 입력하세요.',
 
     'dashboard.bannerTitle': '베다(Veda)',
     'dashboard.bannerHeadline': '데모 버전 · 베다(Veda)',
@@ -480,29 +460,13 @@ export const messages: Record<Locale, Msg> = {
       'Organization code not found. For demo accounts use organization code: demo',
     'login.invalidCredentials':
       'Check email, password, and organization code. If the database is empty, run the API seed.',
-    'login.googleOnly': 'This account can only sign in with Google.',
+    'login.passwordNotSet': 'No password is set for this account. Ask your company admin to reset it.',
     'login.tenantHint':
       'Users with the same organization code share policies and search results. The demo tenant is a shared sandbox. Create a new organization via sign-up for a private space.',
     'login.noAccount': 'No account yet?',
     'login.registerLink': 'Sign up',
     'login.askAdmin': 'Need an account? Ask your company admin.',
-    'login.google': 'Continue with Google',
-    'login.googleHint': 'Links your Google account to the organization code above.',
-    'login.dividerOr': 'or',
-    'login.oauthError': 'Google sign-in failed. Please try again.',
-    'login.oauth.state': 'This sign-in request expired or was invalid. Please start again.',
-    'login.oauth.not_invited': 'No account in this organization. Ask an admin to create one for you.',
-    'login.oauth.signup_closed': 'Sign-up is handled by Astrum. Ask your company admin for an account.',
-    'login.oauth.other_organization': 'This Google account belongs to a different organization.',
-    'login.oauth.already_registered': 'This Google account is already registered. Sign in instead.',
-    'login.oauth.slug_taken': 'That organization code is taken. Choose another.',
-    'login.oauth.invalid_slug': 'That organization code is not valid.',
-    'login.oauth.missing_tenant_name': 'Organization name is required.',
-    'login.oauth.email_unverified': 'Google has not verified this account\'s email address.',
-    'login.oauth.email_linked_elsewhere': 'This email is linked to a different Google account.',
 
-    'oauth.callbackWorking': 'Completing sign-in…',
-    'oauth.callbackError': 'Could not complete sign-in.',
 
     'register.title': 'Sign up',
     'register.subtitle': 'Create a new organization and start as an admin.',
@@ -519,9 +483,6 @@ export const messages: Record<Locale, Msg> = {
     'register.slugInvalid': 'Organization code must be 2–40 chars (lowercase letters, numbers, hyphens).',
     'register.hasAccount': 'Already have an account?',
     'register.loginLink': 'Sign in',
-    'register.google': 'Create organization with Google',
-    'register.googleHint': 'Enter organization name and code, then connect your Google admin account.',
-    'register.googleNeedTenant': 'Enter organization name and a valid organization code first.',
 
     'dashboard.bannerTitle': 'Veda',
     'dashboard.bannerHeadline': 'Demo version — Veda',

@@ -3,7 +3,6 @@ import { useAuthStore } from './stores/authStore';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import OAuthCallbackPage from './pages/OAuthCallbackPage';
 import DashboardPage from './pages/DashboardPage';
 import PoliciesPage from './pages/PoliciesPage';
 import PolicyImportPage from './pages/PolicyImportPage';
@@ -57,7 +56,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
-        <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
+        {/* 구글 로그인은 없앴다(T-136) — 예전 콜백 주소로 들어오면 로그인 화면으로 */}
+        <Route path="/oauth/callback" element={<Navigate to="/login" replace />} />
         <Route
           path="/"
           element={

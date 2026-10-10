@@ -1,28 +1,19 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { authApi } from '../api/auth';
 import { useI18n } from '../i18n/useI18n';
 import { clsx } from 'clsx';
 import { AppBrandLockup } from '../components/AppBrandLockup';
 import AppFooterBranding from '../components/AppFooterBranding';
-import { googleOAuthStartUrl } from '../lib/oauth';
 
 export default function LoginPage() {
   const { t, locale, setLocale } = useI18n();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const { setAuth } = useAuthStore();
   const [form, setForm] = useState({ email: '', password: '', tenantSlug: 'demo' });
-  // 서버는 실패 사유를 `reason` 으로 붙여 준다(T-42). 모르는 코드면 일반 문구로 떨어진다.
-  const [error, setError] = useState(() => {
-    if (!searchParams.get('error')) return '';
-    const reason = searchParams.get('reason');
-    const key = `login.oauth.${reason ?? ''}`;
-    const specific = reason ? t(key) : '';
-    return specific && specific !== key ? specific : t('login.oauthError');
-  });
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { data: signupOptions } = useQuery({
     queryKey: ['auth-options'],
@@ -39,13 +30,17 @@ export default function LoginPage() {
       setAuth(data.user, data.accessToken, data.refreshToken);
       navigate('/');
     } catch (err: any) {
+      // 비밀번호 없는 계정(예전 구글 로그인으로 만든 것)은 관리자 재설정으로 안내한다(T-136)
+      if (err.response?.data?.code === 'PASSWORD_NOT_SET') {
+        setError(t('login.passwordNotSet'));
+        return;
+      }
       const apiMsg = err.response?.data?.message;
       const raw =
         typeof apiMsg === 'string' ? apiMsg : Array.isArray(apiMsg) ? String(apiMsg[0]) : '';
       const mapped: Record<string, string> = {
         'Tenant not found': t('login.tenantNotFound'),
         'Invalid credentials': t('login.invalidCredentials'),
-        'Use Google sign-in for this account': t('login.googleOnly'),
       };
       setError(mapped[raw] || raw || t('login.error'));
     } finally {
@@ -154,47 +149,6 @@ export default function LoginPage() {
                 {loading ? t('login.submitting') : t('login.submit')}
               </button>
 
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200" />
-                </div>
-                <div className="relative flex justify-center text-xs">
-                  <span className="px-2 bg-white text-gray-400">{t('login.dividerOr')}</span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                className="w-full py-2.5 border border-gray-300 bg-white text-gray-800 text-sm font-medium hover:bg-gray-50 transition-colors rounded flex items-center justify-center gap-2"
-                onClick={() => {
-                  const slug = form.tenantSlug.trim() || 'demo';
-                  window.location.href = googleOAuthStartUrl({
-                    mode: 'login',
-                    tenantSlug: slug,
-                  });
-                }}
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden>
-                  <path
-                    fill="currentColor"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  />
-                </svg>
-                {t('login.google')}
-              </button>
-              <p className="text-xs text-gray-500 text-center">{t('login.googleHint')}</p>
             </form>
 
             <div className="px-5 pb-4 text-center text-sm text-gray-600">

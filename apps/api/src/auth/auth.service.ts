@@ -8,10 +8,6 @@ import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LoginDto, RegisterDto } from './auth.dto';
-import type { GoogleOAuthProfile } from './google.strategy';
-import type { GoogleOAuthState } from './oauth-state';
-import { resolveGoogleAccount, GoogleOAuthRejection } from './google-account-resolution';
-import { publicSignupEnabled } from './signup-policy';
 
 @Injectable()
 export class AuthService {
@@ -35,8 +31,15 @@ export class AuthService {
     });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
+    // 비밀번호 없는 계정은 예전 구글 로그인으로 만든 것이다. 구글 로그인을 없앴으므로(T-136)
+    // 회사 관리자가 비밀번호를 재설정해 줘야 들어온다 — 무엇이 틀렸는지 알 수 있게 따로 알린다
     if (!user.passwordHash) {
-      throw new UnauthorizedException('Use Google sign-in for this account');
+      throw new UnauthorizedException({
+        statusCode: 401,
+        error: 'Unauthorized',
+        code: 'PASSWORD_NOT_SET',
+        message: 'Password not set for this account',
+      });
     }
 
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
@@ -68,104 +71,6 @@ export class AuthService {
     });
 
     return this.buildAuthResponse(user);
-  }
-
-  /**
-   * 콜백에서 넘어온 구글 신원을 계정으로 잇는다 (T-42).
-   *
-   * 판단은 전부 `resolveGoogleAccount` 에 있다 — 이 경로는 구글 없이는 통합
-   * 테스트로 재현할 수 없어서, 분기를 DB 밖으로 빼내야 실제로 확인할 수 있다.
-   * 여기서는 조회와 실행만 한다.
-   */
-  async completeGoogleOAuth(
-    profile: GoogleOAuthProfile,
-    state: GoogleOAuthState,
-  ) {
-    const slug = this.normalizeTenantSlug(
-      state.mode === 'register' ? state.tenantSlug : state.tenantSlug || 'demo',
-    );
-
-    const linked = await this.prisma.user.findFirst({
-      where: { oauthProvider: 'google', oauthSub: profile.googleId },
-      include: { tenant: true },
-    });
-    const tenant = slug ? await this.prisma.tenant.findUnique({ where: { slug } }) : null;
-    const userInTenant = tenant
-      ? await this.prisma.user.findUnique({
-          where: { tenantId_email: { tenantId: tenant.id, email: profile.email } },
-        })
-      : null;
-
-    const decision = resolveGoogleAccount({
-      identity: {
-        email: profile.email,
-        name: profile.name,
-        googleId: profile.googleId,
-        emailVerified: profile.emailVerified,
-      },
-      mode: state.mode,
-      tenantSlug: slug,
-      tenantName: state.tenantName ?? '',
-      linkedUser: linked ? { id: linked.id, tenantSlug: linked.tenant.slug } : null,
-      tenant: tenant ? { id: tenant.id } : null,
-      userInTenant: userInTenant
-        ? { id: userInTenant.id, oauthSub: userInTenant.oauthSub }
-        : null,
-      allowRegister: publicSignupEnabled(),
-    });
-
-    switch (decision.kind) {
-      case 'reject':
-        throw new GoogleOAuthRejection(decision.code, decision.message);
-
-      case 'authenticate': {
-        const user = await this.prisma.user.findUniqueOrThrow({
-          where: { id: decision.userId },
-          include: { tenant: true },
-        });
-        return this.buildAuthResponse(user);
-      }
-
-      case 'link': {
-        const user = await this.prisma.user.update({
-          where: { id: decision.userId },
-          data: {
-            oauthProvider: 'google',
-            oauthSub: profile.googleId,
-            name: profile.name || undefined,
-          },
-          include: { tenant: true },
-        });
-        return this.buildAuthResponse(user);
-      }
-
-      case 'createTenant': {
-        const created = await this.prisma.tenant.create({
-          data: { name: decision.tenantName, slug: decision.tenantSlug },
-        });
-        const user = await this.prisma.user.create({
-          data: {
-            tenantId: created.id,
-            email: profile.email,
-            name: profile.name,
-            passwordHash: null,
-            oauthProvider: 'google',
-            oauthSub: profile.googleId,
-            role: 'admin',
-          },
-          include: { tenant: true },
-        });
-        return this.buildAuthResponse(user);
-      }
-    }
-  }
-
-  private normalizeTenantSlug(raw: string): string {
-    return raw
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '');
   }
 
   private async buildAuthResponse(user: {

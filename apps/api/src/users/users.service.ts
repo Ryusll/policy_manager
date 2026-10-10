@@ -104,7 +104,7 @@ export class UsersService {
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
     if (!user.passwordHash) {
       throw new BadRequestException(
-        'Google 로그인 계정은 비밀번호가 없습니다. 조직 관리자에게 비밀번호 설정을 요청하세요.',
+        '비밀번호가 설정되지 않은 계정입니다. 회사 관리자에게 비밀번호 재설정을 요청하세요.',
       );
     }
     if (!(await bcrypt.compare(dto.currentPassword, user.passwordHash))) {

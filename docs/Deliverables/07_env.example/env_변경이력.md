@@ -6,9 +6,9 @@
 
 | 변수 | 용도 | 필수 여부 |
 |------|------|-----------|
-| `PUBLIC_URL` | 브라우저 접속 URL. CORS·OAuth 콜백·docker-compose 치환에 사용 | 필수 |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth 로그인 | Google 로그인 사용 시 |
-| `GOOGLE_CALLBACK_URL` | 콜백 URL이 `${PUBLIC_URL}/api/auth/google/callback`과 다를 때만 | 선택 |
+| `PUBLIC_URL` | 브라우저 접속 URL. CORS·docker-compose 치환에 사용 | 필수 |
+| ~~`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`~~ | **삭제(T-136)** — 구글 로그인을 없앴다. 넣어 두어도 쓰지 않는다 | — |
+| ~~`GOOGLE_CALLBACK_URL`~~ | **삭제(T-136)** | — |
 | `VITE_PUBLIC_COMPANY_LEGAL_NAME` / `VITE_PUBLIC_COMPANY_REG_NO` | 웹 빌드 시 법인명·사업자등록번호 표시 | 선택 |
 
 > 참고: `docker-compose.yml`에는 이 외에도 `JWT_SECRET`, `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` 등이 직접 정의되어 있음 (`.env.example`에는 없음). 관련 위험은 [15_보안검토서](../15_보안검토서/보안_검토서.md) 참고.

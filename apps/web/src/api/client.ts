@@ -16,7 +16,6 @@ const isPublicAuthRequest = (url: string | undefined) =>
   !!url &&
   (url.includes('/auth/login') ||
     url.includes('/auth/register') ||
-    url.includes('/auth/google') ||
     url.includes('/platform-branding'));
 
 client.interceptors.response.use(

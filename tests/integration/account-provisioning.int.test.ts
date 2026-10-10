@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
-import { api, BASE, createTenant, waitForApi } from './helpers';
+import { api, createTenant, waitForApi } from './helpers';
 
 /**
  * 계정 체계 — 아스트룸이 고객사를 개설하고, 고객사 마스터가 직원 계정을 발급한다 (T-122).
@@ -185,12 +185,5 @@ describe.runIf(process.env.EXPECT_SIGNUP_CLOSED === '1')('공개 회원가입이
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('SIGNUP_CLOSED');
     expect((await api('/auth/options')).body).toEqual({ publicSignup: false });
-  });
-
-  it('구글로 새 회사를 만들려 해도 구글에 가기 전에 돌려보낸다', async ({ skip }) => {
-    const res = await fetch(`${BASE}/auth/google?mode=register&tenantSlug=x1&tenantName=y`, { redirect: 'manual' });
-    if (res.status === 503) return skip(); // 구글 로그인을 설정하지 않은 서버
-    expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toContain('reason=signup_closed');
   });
 });

@@ -45,11 +45,11 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | id | uuid PK | |
 | tenantId | uuid FK → Tenant (cascade) | |
 | email | string | `@@unique([tenantId, email])` |
-| passwordHash | string? | OAuth 전용 계정은 null |
+| passwordHash | string? | 예전 구글 로그인 계정은 null — 로그인은 401 `PASSWORD_NOT_SET`, 관리자 재설정으로 들어온다(T-136) |
 | name | string | |
 | role | enum Role | admin/editor/viewer, 기본 viewer |
 | platformRole | enum PlatformRole | none/global_admin |
-| oauthProvider / oauthSub | string? | `@@unique([oauthProvider, oauthSub])` |
+| oauthProvider / oauthSub | string? | `@@unique([oauthProvider, oauthSub])`. 예전 구글 로그인 연결 기록 — T-136 이후 쓰지 않는다(열은 남김) |
 | refreshToken | string? | |
 
 ### Policy (`policies`)

@@ -21,8 +21,7 @@ cp .env.example .env
 
 `.env`에서 최소한 아래를 운영값으로 설정:
 
-- `PUBLIC_URL` — 사용자가 브라우저에 입력하는 실제 URL (예: `https://your-domain.com`). CORS·OAuth 콜백에 사용됨
-- (Google 로그인 사용 시) `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+- `PUBLIC_URL` — 사용자가 브라우저에 입력하는 실제 URL (예: `https://your-domain.com`). CORS에 사용됨
 - (웹 푸터 표기) `VITE_PUBLIC_COMPANY_LEGAL_NAME`, `VITE_PUBLIC_COMPANY_REG_NO`
 
 > **보안 필수**: `docker-compose.yml`에 하드코딩된 `JWT_SECRET`, `JWT_REFRESH_SECRET`, `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `MINIO_SECRET_KEY`는 운영 배포 전 반드시 교체할 것. 상세는 [15_보안검토서](../15_보안검토서/보안_검토서.md).
@@ -337,7 +336,6 @@ bash scripts/oracle/create-tenant.sh astrum "아스트룸" 운영자이메일 "�
 
 - [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가 (→ 7-1. `docker compose config`로 확인)
 - [ ] `ALLOW_DEFAULT_SECRETS`가 설정돼 있지 않은가
-- [ ] `PUBLIC_URL`과 Google OAuth 콜백 URL이 일치하는가
 - [ ] 배포 전 DB 백업(`pg_dump`)을 수행했는가 — 되돌리기용 스냅샷
 - [ ] **서버 밖 백업(7-3절)이 어젯밤 정상 실행됐는가** — `tail /var/log/policy-backup.log`. DB·첨부를 함께 내보내는 것은 이쪽뿐이다
 - [ ] (월 1회) `restore-offsite.sh --verify` 로 **복원되는지** 확인했는가

@@ -7,7 +7,7 @@
 - **프론트엔드**: React 18, Vite, TanStack Query, Zustand, Tailwind CSS, react-router-dom (`apps/web`)
 - **백엔드**: NestJS, Prisma, PostgreSQL (`apps/api`)
 - **인프라**: Docker Compose — postgres, redis, minio(파일 스토리지), api, web (nginx)
-- **인증**: JWT (access/refresh) + Google OAuth
+- **인증**: JWT (access/refresh), 이메일·비밀번호 로그인(고객사·계정은 아스트룸이 개설 — 구글 로그인은 T-136 에서 없앰)
 
 ## 프로젝트 구조
 
@@ -26,7 +26,7 @@ docs/
 
 ```bash
 cp .env.example .env
-# 필요 시 .env에 GOOGLE_CLIENT_ID/SECRET, VITE_PUBLIC_COMPANY_* 값 채우기
+# 필요 시 .env에 VITE_PUBLIC_COMPANY_* 값 채우기
 npm run docker:up
 ```
 
