@@ -333,6 +333,21 @@ bash scripts/oracle/create-tenant.sh astrum "아스트룸" 운영자이메일 "�
 - **로그인 세션(T-137)**: 배포 직후에도 이미 로그인한 사람은 튕기지 않는다 — 옛 갱신 토큰은 다음 갱신 때 한 번만 기기 세션으로 옮겨진다. 세션 수명은 `AUTH_REMEMBER_TTL`(자동 로그인, 기본 30d)·`AUTH_SESSION_TTL`(기본 12h). 특정 사람을 모든 기기에서 내보내려면 관리자가 비밀번호를 재설정한다
 - **요금제 변경은 통합 관리 › 테넌트 플랜에서 플랫폼 관리자가 한다**(가격 확정 전 임시 운영 방침, T-125 · [ADR-0022](../10_ADR_의사결정기록/ADR.md)). 운영은 **결제 미사용**이다 — Oracle compose 가 `PAYMENT_PROVIDER` 를 넘기지 않으므로 고객사의 결제 시작은 403, 결제 웹훅도 받지 않는다. 운영에 `PAYMENT_PROVIDER=mock` 을 넣지 않는다(돈을 받지 않고 요금제를 올린다). 확인: `curl -s -X POST https://<도메인>/api/billing/webhook -H 'Content-Type: application/json' -d '{"type":"ping"}'` 가 403 `PAYMENT_DISABLED` 면 정상(데이터는 바뀌지 않는다)
 
+## 7-8. 지운 파일은 서버에서 따로 지운다
+
+`package.py` 묶음을 기존 `~/policy_manager` 위에 풀기 때문에, **저장소에서 지운 파일이 서버에는 남는다.** 남은 소스는 이미지 빌드에 그대로 들어가므로, 지운 의존성을 불러오는 파일이 남으면 빌드가 깨진다(2026-10-11 배포 때 구글 로그인 파일로 실제로 발생할 뻔했다).
+
+배포마다 풀기 전에 서버 소스 목록과 묶음 목록을 비교해, 묶음에 없는 파일만 지운다(읽기 전용 목록 → 확인 → 삭제).
+
+```bash
+ssh <서버> "cd ~/policy_manager && find apps scripts -type f -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/uploads/*' | sort" > server-files.txt
+python3 - <묶음.tar.gz> server-files.txt <<'PY'
+import tarfile, sys
+pkg = {m.name.split('/', 1)[1] for m in tarfile.open(sys.argv[1]).getmembers() if m.isfile()}
+print('\n'.join(f for f in map(str.strip, open(sys.argv[2])) if f and f not in pkg))
+PY
+```
+
 ## 8. 운영 체크리스트
 
 - [ ] `.env`의 시크릿이 기본값이 아닌 운영값으로 교체되었는가 (→ 7-1. `docker compose config`로 확인)
