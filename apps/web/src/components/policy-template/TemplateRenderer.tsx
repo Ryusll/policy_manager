@@ -249,6 +249,15 @@ function ArticleBodyText({
       <>
         {highlightText(current, highlightQuery)}
         {scheduled ? <ScheduledNote scheduled={scheduled} /> : null}
+        {/* 폐지 예정(T-132 ③) — 오늘은 시행 중이라 공식 문서에는 본문 그대로, 화면에만 표시 */}
+        {article.repealScheduledOn ? (
+          <span
+            className="print:hidden ml-1.5 inline-flex items-center rounded border border-dashed border-red-300 bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-800 align-middle"
+            title="이 날부터 시행에서 빠집니다. 그때까지는 이 본문이 시행 중입니다."
+          >
+            폐지 예정 · {String(article.repealScheduledOn).slice(0, 10)}부터
+          </span>
+        ) : null}
       </>
     );
   }

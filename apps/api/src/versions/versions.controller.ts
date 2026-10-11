@@ -10,6 +10,8 @@ import {
   RejectVersionDto,
   PublishDraftsDto,
   FillEffectiveDateDto,
+  ArchiveVersionDto,
+  WithdrawVersionDto,
 } from './versions.dto';
 import { Roles } from '../common/guards/decorators';
 
@@ -126,8 +128,27 @@ export class VersionsController {
   @Post('versions/:id/archive')
   @Roles('admin')
   @HttpCode(200)
-  @ApiOperation({ summary: '폐지 — 게시본을 내리고 오늘(한국 날짜)부터 조문을 시행에서 뺀다(repealedOn). 응답의 remainingPublished 가 0이면 조문에 게시본이 없다 (T-10, T-126)' })
-  archive(@Request() req: any, @Param('id') id: string) {
-    return this.versionsService.archive(req.user.tenantId, id, req.user.id);
+  @ApiOperation({
+    summary:
+      '폐지 — 게시본을 내리고 폐지 시행일(비우면 오늘, 한국 날짜)부터 조문을 시행에서 뺀다(repealedOn). 미래 날짜면 그날까지 지금 본문이 시행 중(T-132 ③). 응답의 remainingPublished 가 0이면 조문에 게시본이 없다 (T-10, T-126)',
+  })
+  archive(@Request() req: any, @Param('id') id: string, @Body() dto: ArchiveVersionDto) {
+    return this.versionsService.archive(req.user.tenantId, id, req.user.id, { repealedOn: dto?.repealedOn });
+  }
+
+  @Post('versions/:id/cancel-repeal')
+  @Roles('admin')
+  @HttpCode(200)
+  @ApiOperation({ summary: '폐지 예정 취소 — 아직 오지 않은 폐지 시행일을 지운다. 지난 폐지는 취소하지 않는다 (T-132 ③)' })
+  cancelRepeal(@Request() req: any, @Param('id') id: string) {
+    return this.versionsService.cancelRepeal(req.user.tenantId, id, req.user.id);
+  }
+
+  @Post('versions/:id/withdraw')
+  @Roles('admin')
+  @HttpCode(200)
+  @ApiOperation({ summary: '시행 예정 철회 — 승인했지만 시행일 전인 마지막 버전을 초안으로 되돌린다 (T-132 ②)' })
+  withdraw(@Request() req: any, @Param('id') id: string, @Body() dto: WithdrawVersionDto) {
+    return this.versionsService.withdraw(req.user.tenantId, id, req.user.id, dto.reason);
   }
 }

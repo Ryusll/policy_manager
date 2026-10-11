@@ -160,6 +160,9 @@ export default function DashboardPage() {
                         {item.articleCount > 0 && (
                           <span className="ml-1.5 text-xs text-gray-500">조문 {item.articleCount}개 개정</span>
                         )}
+                        {item.repealCount > 0 && (
+                          <span className="ml-1.5 text-xs text-red-700">조문 {item.repealCount}개 폐지</span>
+                        )}
                       </span>
                       <span className="text-xs text-gray-500 tabular-nums shrink-0">{item.dateKey}</span>
                     </Link>

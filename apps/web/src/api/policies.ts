@@ -67,6 +67,8 @@ export type ScheduledChange = {
   articleCount: number;
   /** 첫 조문 — "제3조 수당" */
   firstArticle: string;
+  /** 그날 폐지되는 조문 수(T-132 ③) */
+  repealCount?: number;
 };
 
 export const policiesApi = {
@@ -299,9 +301,14 @@ export const versionsApi = {
   reject: (id: string, reason: string) =>
     client.post('/versions/' + id + '/reject', { reason }).then((r) => r.data),
   /** 폐지 — 응답의 `remainingPublished` 가 0이면 이 조문에 게시본이 없다 (T-10) */
-  /** 게시본 폐지 — 폐지 시행일은 서버가 오늘(한국 날짜)로 정한다(T-126) */
-  archive: (id: string): Promise<{ remainingPublished: number; repealedOn: string }> =>
-    client.post('/versions/' + id + '/archive').then((r) => r.data),
+  /** 게시본 폐지 — 폐지 시행일(비우면 오늘, 한국 날짜). 미래면 그날부터 시행에서 빠진다(T-126, T-132 ③) */
+  archive: (id: string, repealedOn?: string): Promise<{ remainingPublished: number; repealedOn: string }> =>
+    client.post('/versions/' + id + '/archive', repealedOn ? { repealedOn } : {}).then((r) => r.data),
+  /** 폐지 예정 취소 — 아직 오지 않은 폐지 시행일을 지운다(T-132 ③) */
+  cancelRepeal: (id: string) => client.post('/versions/' + id + '/cancel-repeal').then((r) => r.data),
+  /** 시행 예정 철회 — 승인했지만 시행일 전인 마지막 버전을 초안으로 되돌린다(T-132 ②) */
+  withdraw: (id: string, reason: string): Promise<{ restoredVersionId: string | null; candidateId: string | null; withdrawnEffectiveDate: string }> =>
+    client.post('/versions/' + id + '/withdraw', { reason }).then((r) => r.data),
   diff: (v1: string, v2: string) =>
     client.get('/versions/diff', { params: { v1, v2 } }).then((r) => r.data),
   /** 시행된 적 없는 조문의 초안을 한꺼번에 시행 (관리자). 이미 시행 중인 조문의 개정 초안은 제외 */

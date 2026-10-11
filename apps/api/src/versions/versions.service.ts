@@ -600,35 +600,208 @@ export class VersionsService {
   }
 
   /**
-   * 폐지 — 게시된 버전을 내리고 **오늘(한국 날짜)부터** 조문을 시행에서 뺀다 (T-10, 폐지 시행일 T-126).
+   * 폐지 — 게시된 버전을 내리고 **폐지 시행일부터** 조문을 시행에서 뺀다 (T-10, 폐지 시행일 T-126, 미래 폐지 T-132 ③).
    *
    * 폐지 시행일(`repealedOn`)을 남겨야 시점 조회가 "새 버전에 밀려 내려간 버전"과 "폐지"를 가른다 — 없으면
-   * 폐지 뒤 날짜에도 조문이 옛 본문으로 시행 중으로 나온다. 날짜는 고르지 않는다(사용자 지시로 코덱스 자문):
-   * 미래 폐지는 "현재" 화면이 시행 예정을 가르게 된 뒤(T-127)에, 소급 폐지는 하지 않는다.
+   * 폐지 뒤 날짜에도 조문이 옛 본문으로 시행 중으로 나온다. 소급 폐지는 하지 않는다(사용자 지시로 코덱스 자문).
    *
    * 조문 행을 잠그고(승인과 같은 잠금) 다시 확인한다 — 시행일이 기록돼 있고 오늘 시행 중인 그 버전만 폐지한다.
    * 시행일이 없거나, 아직 시행 전이거나, 오늘 뒤에 시행될 버전이 따로 있으면 폐지가 그날 이후를 다 덮지 못해 거부한다.
    * 이 조문의 마지막 게시본이면 조문이 **전문 보기·인쇄에서 본문 없이 남는다**. 정당한 폐지라 막지는 않고,
    * 그렇게 됐는지를 응답으로 알려 화면이 말하게 한다.
+   *
+   * @param opts.repealedOn 폐지 시행일(YYYY-MM-DD) — 비우면 오늘. 오늘이나 그 뒤만. 미래면 그날부터 시행에서
+   *   빠지고 그때까지는 지금 본문이 시행 중이다(승인처럼 상태는 바로 archived, 날짜가 가른다)
    */
-  async archive(tenantId: string, versionId: string, userId: string) {
+  async archive(tenantId: string, versionId: string, userId: string, opts: { repealedOn?: string } = {}) {
     const version = await this.findOne(tenantId, versionId);
     if (version.status !== 'published') {
       throw new BadRequestException('Only published versions can be archived');
     }
+    let on: Date | undefined;
+    if (opts.repealedOn) {
+      const d = parseDateOnly(opts.repealedOn);
+      if (!d) throw new BadRequestException('폐지 시행일은 YYYY-MM-DD 형식이어야 합니다.');
+      on = d;
+    }
     return this.prisma.$transaction(async (tx) => {
       await lockArticle(tx, version.articleId);
-      return this.archiveLocked(tx, tenantId, { id: versionId, articleId: version.articleId }, userId);
+      return this.archiveLocked(tx, tenantId, { id: versionId, articleId: version.articleId }, userId, on);
     });
+  }
+
+  /**
+   * 폐지 예정 취소(T-132 ③) — 아직 오지 않은 폐지 시행일을 지운다. 이미 지난 폐지는 취소하지 않는다(새 버전으로 다시 시행, T-126).
+   * 이 버전이 조문의 마지막 발행이면(뒤에 승인한 버전이 없으면) 다시 published 로 둔다.
+   */
+  async cancelRepeal(tenantId: string, versionId: string, userId: string) {
+    const version = await this.findOne(tenantId, versionId);
+    return this.prisma.$transaction(async (tx) => {
+      await lockArticle(tx, version.articleId);
+      const today = todayDateOnly();
+      const fresh = await tx.articleVersion.findUniqueOrThrow({ where: { id: versionId }, select: { repealedOn: true } });
+      if (!fresh.repealedOn) throw new BadRequestException('폐지 예정이 없는 버전입니다 — 화면을 새로 고쳐 확인하세요.');
+      if (fresh.repealedOn.getTime() <= today.getTime()) {
+        throw new BadRequestException(
+          `이미 ${toDateOnlyString(fresh.repealedOn)}에 폐지됐습니다 — 다시 시행하려면 새 버전을 올려 승인하세요.`,
+        );
+      }
+      const published = await tx.articleVersion.count({ where: { articleId: version.articleId, status: 'published' } });
+      const row = await tx.articleVersion.update({
+        where: { id: versionId },
+        data: { repealedOn: null, ...(published === 0 ? { status: 'published' as const } : {}) },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId,
+          action: 'version.repeal_cancel',
+          entityType: 'ArticleVersion',
+          entityId: versionId,
+          details: { articleId: version.articleId, repealedOn: toDateOnlyString(fresh.repealedOn) },
+        },
+      });
+      return row;
+    });
+  }
+
+  /**
+   * 시행 예정 철회(T-132 ②) — 승인했지만 시행일 전인 버전을 초안으로 되돌린다(고쳐서 다시 올릴 수 있다). 조문 잠금 안에서:
+   * - 조문의 마지막 발행(시행일이 가장 늦은 판)만 — 뒤 판은 앞 판을 바탕으로 썼다
+   * - 재파싱 묶음 버전은 하나만 철회하지 않는다 — 승인 때 조문 행을 새 자리로 옮겨, 버전만 거두면 계층이 어긋난다
+   * - 승인 때 앞 시행본에서 옮겨 온 변수 연결은 거둔다(다시 승인하면 그때 다시 옮긴다)
+   * - 남은 published 가 없으면 지금 가장 늦은 발행을 다시 published 로(폐지된 판이면 그대로)
+   * - 개정 후보로 승인한 버전이면 그 후보를 반려로 돌린다(사유: 승인 철회)
+   */
+  async withdraw(tenantId: string, versionId: string, userId: string, reason: string) {
+    const note = reason?.trim();
+    if (!note) throw new BadRequestException('철회 사유를 입력하세요.');
+    const version = await this.findOne(tenantId, versionId);
+    const result = await this.prisma.$transaction(async (tx) => {
+      await lockArticle(tx, version.articleId);
+      const today = todayDateOnly();
+      const issued = await tx.articleVersion.findMany({
+        where: { articleId: version.articleId, status: { in: ['published', 'archived'] } },
+        select: { id: true, versionNum: true, effectiveDate: true, repealedOn: true, reparseItemId: true, sourceCandidateId: true },
+      });
+      const target = issued.find((v) => v.id === versionId);
+      if (!target) throw new ConflictException('그 사이 이 버전이 바뀌었습니다 — 화면을 새로 고쳐 확인하세요.');
+      if (!target.effectiveDate || target.effectiveDate.getTime() <= today.getTime()) {
+        throw new BadRequestException('이미 시행된 버전은 철회할 수 없습니다 — 고치려면 새 버전을 올리세요.');
+      }
+      const E = toDateOnlyString(target.effectiveDate);
+      if (target.reparseItemId) {
+        throw new ConflictException(
+          '재파싱 묶음으로 승인한 버전은 하나만 철회할 수 없습니다(승인 때 조문 자리를 함께 옮겼습니다) — 원문을 다시 비교해 새 묶음으로 바로잡으세요.',
+        );
+      }
+      const later = issued.find(
+        (v) =>
+          v.id !== target.id &&
+          v.effectiveDate &&
+          (v.effectiveDate.getTime() > target.effectiveDate!.getTime() ||
+            (v.effectiveDate.getTime() === target.effectiveDate!.getTime() && v.versionNum > target.versionNum)),
+      );
+      if (later) {
+        throw new ConflictException(
+          `더 늦게 시행될 버전(v${later.versionNum}, ${toDateOnlyString(later.effectiveDate!)} 시행)이 있습니다 — 그 버전부터 철회하세요.`,
+        );
+      }
+      const row = await tx.articleVersion.update({
+        where: { id: versionId },
+        data: {
+          status: 'draft',
+          approvedBy: null,
+          approvedAt: null,
+          publishedAt: null,
+          publishedAtFromApproval: false,
+          effectiveDate: null,
+          reviewNote: `시행 예정 철회(${E} 시행이었음): ${note}`,
+        },
+      });
+      await tx.variableBinding.updateMany({
+        where: { versionId, origin: 'inherited', state: { not: 'released' } },
+        data: { state: 'released' },
+      });
+      let restoredVersionId: string | null = null;
+      if ((await tx.articleVersion.count({ where: { articleId: version.articleId, status: 'published' } })) === 0) {
+        const head = await tx.articleVersion.findFirst({
+          where: { articleId: version.articleId, status: 'archived' },
+          orderBy: [{ effectiveDate: { sort: 'desc', nulls: 'last' } }, { versionNum: 'desc' }],
+          select: { id: true, repealedOn: true },
+        });
+        if (head && !head.repealedOn) {
+          await tx.articleVersion.update({ where: { id: head.id }, data: { status: 'published' } });
+          restoredVersionId = head.id;
+        }
+      }
+      let candidateId: string | null = null;
+      if (target.sourceCandidateId) {
+        const cand = await tx.amendmentCandidate.findUnique({
+          where: { id: target.sourceCandidateId },
+          select: { id: true, reviewState: true, revision: true },
+        });
+        if (cand?.reviewState === 'approved') {
+          await tx.amendmentCandidate.update({
+            where: { id: cand.id },
+            data: { reviewState: 'rejected', lockVersion: { increment: 1 } },
+          });
+          await tx.amendmentStateChange.create({
+            data: { tenantId, candidateId: cand.id, fromState: 'approved', toState: 'rejected', revision: cand.revision, reason: `승인 철회 — ${note}`, actorId: userId },
+          });
+          candidateId = cand.id;
+        }
+      }
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId,
+          action: 'version.withdraw',
+          entityType: 'ArticleVersion',
+          entityId: versionId,
+          details: { articleId: version.articleId, effectiveDate: E, reason: note, restoredVersionId, candidateId },
+        },
+      });
+      return { ...row, restoredVersionId, candidateId, withdrawnEffectiveDate: E };
+    });
+
+    const policy = version.article?.chapter?.policy;
+    const article = version.article;
+    if (policy && article) {
+      await this.revisionNotify.dispatchPolicyRevisionWithdrawn({
+        tenantId,
+        policyId: policy.id,
+        policyTitle: policy.title,
+        policyCode: policy.code,
+        articleId: article.id,
+        articleLabel: `${formatJo(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`,
+        versionId,
+        effectiveDate: result.withdrawnEffectiveDate,
+        reason: note,
+        actorId: userId,
+        metadata: policy.metadata,
+      });
+    }
+    return result;
   }
 
   /**
    * 폐지 본체 — 그 조문을 잠근 트랜잭션 안에서 부른다. 재파싱 승인 뒤 "원문에 없는 조문 폐지"가 검토 항목 결과와 한 트랜잭션에
    * 묶으려고 따로 둔다(T-131 — 폐지만 커밋되고 항목 결과가 빠지는 일이 없게)
    */
-  async archiveLocked(tx: Prisma.TransactionClient, tenantId: string, version: { id: string; articleId: string }, userId: string) {
+  async archiveLocked(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    version: { id: string; articleId: string },
+    userId: string,
+    on?: Date,
+  ) {
     const versionId = version.id;
     const today = todayDateOnly();
+    const repealOn = on ?? today;
+    if (repealOn.getTime() < today.getTime()) {
+      throw new BadRequestException(`폐지 시행일은 오늘(${toDateOnlyString(today)})이나 그 뒤여야 합니다 — 소급해 폐지할 수 없습니다.`);
+    }
     const history = await tx.articleVersion.findMany({
       where: { articleId: version.articleId, status: { in: ['published', 'archived'] } },
       select: { id: true, status: true, effectiveDate: true, versionNum: true },
@@ -664,7 +837,7 @@ export class VersionsService {
 
     const row = await tx.articleVersion.update({
       where: { id: versionId },
-      data: { status: 'archived', repealedOn: today },
+      data: { status: 'archived', repealedOn: repealOn },
     });
     const remainingPublished = await tx.articleVersion.count({
       where: { articleId: version.articleId, status: 'published' },
@@ -676,7 +849,12 @@ export class VersionsService {
         action: 'version.archive',
         entityType: 'ArticleVersion',
         entityId: versionId,
-        details: { articleId: version.articleId, repealedOn: toDateOnlyString(today), remainingPublished },
+        details: {
+          articleId: version.articleId,
+          repealedOn: toDateOnlyString(repealOn),
+          scheduled: repealOn.getTime() > today.getTime(),
+          remainingPublished,
+        },
       },
     });
     return { ...row, remainingPublished };
@@ -702,8 +880,12 @@ export async function assertAfterRepeal(tx: Prisma.TransactionClient, articleId:
     select: { repealedOn: true },
   });
   if (repeal?.repealedOn && effective.getTime() < repeal.repealedOn.getTime()) {
+    const D = toDateOnlyString(repeal.repealedOn);
+    // 폐지 예정(T-132 ③) — 그 전 시행일로 승인하면 새 버전이 폐지 예정을 덮어 폐지가 조용히 사라진다
     throw new BadRequestException(
-      `이 조문은 ${toDateOnlyString(repeal.repealedOn)}에 폐지됐습니다 — 다시 시행하려면 시행일을 그날이나 그 뒤로 정하세요.`,
+      repeal.repealedOn.getTime() > todayDateOnly().getTime()
+        ? `이 조문은 ${D}에 폐지될 예정입니다 — 그 전 시행일로 승인하려면 폐지 예정을 먼저 취소하고, 폐지 뒤 다시 시행하려면 시행일을 그날이나 그 뒤로 정하세요.`
+        : `이 조문은 ${D}에 폐지됐습니다 — 다시 시행하려면 시행일을 그날이나 그 뒤로 정하세요.`,
     );
   }
 }

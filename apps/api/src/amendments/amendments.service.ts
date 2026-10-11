@@ -758,6 +758,16 @@ export class AmendmentsService {
           `이 조문은 ${toDateOnlyString(asOf!.repealedOn!)}에 폐지돼 ${E}에 시행 중이 아닙니다 — 이 후보는 승인할 수 없으니 반려로 닫으세요.`,
         );
       }
+      // 폐지 예정(T-132 ③)이 시행일 뒤에 있으면 승인하지 않는다 — 새 버전이 폐지 예정을 덮어 폐지가 조용히 사라진다
+      const pendingRepeal = history
+        .filter((v) => v.repealedOn && v.repealedOn.getTime() > effective.getTime())
+        .sort((a, b) => b.repealedOn!.getTime() - a.repealedOn!.getTime())[0];
+      if (pendingRepeal) {
+        throw blocked(
+          'repealed',
+          `이 조문은 ${toDateOnlyString(pendingRepeal.repealedOn!)}에 폐지될 예정이라 ${E} 시행으로 승인할 수 없습니다 — 규정 화면에서 폐지 예정을 먼저 취소하세요.`,
+        );
+      }
       if (asOf?.id !== cand.baseVersionId) {
         throw blocked(
           'base_mismatch',

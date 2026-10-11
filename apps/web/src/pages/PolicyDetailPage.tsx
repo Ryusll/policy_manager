@@ -331,6 +331,14 @@ function TocArticleButton({
       {badge === 'in_force' && upcoming ? (
         <StateBadge state="scheduled" compact title={`v${upcoming.versionNum} · ${ymd(upcoming.effectiveDate)}부터 시행 예정`} />
       ) : null}
+      {badge === 'in_force' && article.repealScheduledOn ? (
+        <span
+          className="inline-flex whitespace-nowrap rounded border border-dashed border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] text-red-800"
+          title={`${article.repealScheduledOn}부터 폐지 — 그때까지는 시행 중`}
+        >
+          폐지 예정
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -613,6 +621,11 @@ export default function PolicyDetailPage() {
   const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [archiveTarget, setArchiveTarget] = useState<any>(null);
+  // 폐지 시행일(T-132 ③) — 비우면 오늘
+  const [archiveDate, setArchiveDate] = useState('');
+  // 시행 예정 철회(T-132 ②)
+  const [withdrawTarget, setWithdrawTarget] = useState<any>(null);
+  const [withdrawReason, setWithdrawReason] = useState('');
   // 변수 연결 창(T-109) — 시행 중인 버전의 문구를 변수에 잇는다
   const [bindingTarget, setBindingTarget] = useState<{ id: string; versionNum: number; content: string; articleId: string } | null>(null);
   const [versionActionMsg, setVersionActionMsg] = useState('');
@@ -1276,17 +1289,51 @@ export default function PolicyDetailPage() {
   });
 
   const archiveMutation = useMutation({
-    mutationFn: (versionId: string) => versionsApi.archive(versionId),
+    mutationFn: (p: { versionId: string; repealedOn?: string }) => versionsApi.archive(p.versionId, p.repealedOn),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
       qc.invalidateQueries({ queryKey: ['policy', id] });
       qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
       setArchiveTarget(null);
-      const from = res?.repealedOn ? `${String(res.repealedOn).slice(0, 10)}부터 시행에서 빠집니다` : '';
+      const day = res?.repealedOn ? String(res.repealedOn).slice(0, 10) : '';
+      // 미래 폐지(T-132 ③) — 그날까지는 지금 본문이 시행 중이다
+      if (day && day > serviceToday()) {
+        setVersionActionMsg(`폐지 예정으로 정했습니다 — ${day}부터 시행에서 빠지고, 그때까지는 지금 본문이 시행 중입니다. 그 전에는 취소할 수 있습니다.`);
+        return;
+      }
+      const from = day ? `${day}부터 시행에서 빠집니다` : '';
       setVersionActionMsg(
         res?.remainingPublished === 0
           ? `폐지했습니다${from ? ` — ${from}` : ''}. 이 조문에는 게시된 본문이 남아 있지 않습니다 — 전문 보기·인쇄에서 본문 없이 나옵니다.`
           : `폐지했습니다${from ? ` — ${from}` : ''}.`,
+      );
+    },
+  });
+
+  // 폐지 예정 취소(T-132 ③)
+  const cancelRepealMutation = useMutation({
+    mutationFn: (versionId: string) => versionsApi.cancelRepeal(versionId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
+      setVersionActionMsg('폐지 예정을 취소했습니다 — 이 조문은 그대로 시행됩니다.');
+    },
+    onError: (err) => toast(apiErrorMessage(err, '폐지 예정을 취소하지 못했습니다.'), 'error'),
+  });
+
+  // 시행 예정 철회(T-132 ②) — 초안으로 돌아간다
+  const withdrawMutation = useMutation({
+    mutationFn: (p: { versionId: string; reason: string }) => versionsApi.withdraw(p.versionId, p.reason),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
+      qc.invalidateQueries({ queryKey: ['policy', id] });
+      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
+      setWithdrawTarget(null);
+      setWithdrawReason('');
+      setVersionActionMsg(
+        `시행 예정(${res.withdrawnEffectiveDate})을 철회했습니다 — 그 버전은 초안으로 돌아갔고, 지금 본문이 그대로 시행됩니다.` +
+          (res.candidateId ? ' 이 버전을 승인했던 개정 후보는 반려로 돌렸습니다.' : ''),
       );
     },
   });
@@ -3530,7 +3577,8 @@ export default function PolicyDetailPage() {
                             v{version.versionNum}
                           </span>
                           <StateBadge state={versionDisplayState(version, { currentId: currentVersionId })} />
-                          {version.repealedOn && (
+                          {/* 폐지 예정(오늘 시행 중)은 오른쪽 「폐지 예정 · 날짜부터」가 말한다 — 여기서는 지난 폐지만(T-132 ③) */}
+                          {version.repealedOn && String(version.repealedOn).slice(0, 10) <= serviceToday() && (
                             <span className="text-[11px] text-red-700">· {String(version.repealedOn).slice(0, 10)} 폐지</span>
                           )}
                         </div>
@@ -3579,13 +3627,58 @@ export default function PolicyDetailPage() {
                               변수 연결{version._count?.variableBindings ? ` ${version._count.variableBindings}` : ''}
                             </button>
                           )}
+                          {/* 시행 예정 철회(T-132 ②) — 가장 늦은 시행 예정 버전만, 재파싱 묶음 버전은 묶음으로 */}
+                          {user?.role === 'admin' &&
+                            !version.reparseItemId &&
+                            versionDisplayState(version, { currentId: currentVersionId }) === 'scheduled' &&
+                            selectedDraftBase.kind === 'scheduled' &&
+                            liveSelectedArticle?.scheduledVersions?.at(-1)?.id === version.id && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                withdrawMutation.reset();
+                                setWithdrawReason('');
+                                setWithdrawTarget(version);
+                              }}
+                              className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1"
+                            >
+                              <Undo2 size={12} /> 시행 예정 철회
+                            </button>
+                          )}
+                          {/* 폐지 예정(T-132 ③) — 오늘은 시행 중, 그날부터 빠진다. 그 전에는 취소할 수 있다 */}
+                          {version.id === currentVersionId && version.repealedOn && String(version.repealedOn).slice(0, 10) > serviceToday() && (
+                            <span className="text-[11px] text-red-800 bg-red-50 border border-dashed border-red-200 rounded px-1.5 py-0.5" data-testid="repeal-scheduled">
+                              폐지 예정 · {String(version.repealedOn).slice(0, 10)}부터
+                            </span>
+                          )}
+                          {version.id === currentVersionId &&
+                            version.repealedOn &&
+                            String(version.repealedOn).slice(0, 10) > serviceToday() &&
+                            user?.role === 'admin' && (
+                            <button
+                              type="button"
+                              disabled={cancelRepealMutation.isPending}
+                              onClick={() => {
+                                if (window.confirm(`${String(version.repealedOn).slice(0, 10)} 폐지 예정을 취소할까요? 이 조문은 그대로 시행됩니다.`)) {
+                                  cancelRepealMutation.mutate(version.id);
+                                }
+                              }}
+                              className="text-xs text-gray-500 hover:text-navy-700 hover:underline flex items-center gap-1"
+                            >
+                              <Undo2 size={12} /> 폐지 예정 취소
+                            </button>
+                          )}
                           {/* 폐지는 오늘 시행 중인 게시본만 — 시행 예정 개정이 있는 동안은 지금 본문이 archived 라 서버가 받지 않는다 */}
                           {version.status === 'published' &&
                             versionDisplayState(version, { currentId: currentVersionId }) === 'in_force' &&
                             user?.role === 'admin' && (
                             <button
                               type="button"
-                              onClick={() => setArchiveTarget(version)}
+                              onClick={() => {
+                                archiveMutation.reset();
+                                setArchiveDate('');
+                                setArchiveTarget(version);
+                              }}
                               className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1"
                             >
                               <Archive size={12} /> 폐지
@@ -5476,6 +5569,53 @@ export default function PolicyDetailPage() {
         />
       )}
 
+      {withdrawTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
+            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">시행 예정 철회</div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-700">
+                <span className="font-mono text-xs bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">v{withdrawTarget.versionNum}</span>{' '}
+                ({String(withdrawTarget.effectiveDate ?? '').slice(0, 10)} 시행 예정)을 철회할까요?
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
+                <p>이 버전은 <strong>초안으로 돌아가고</strong> 지금 본문이 그대로 시행됩니다. 초안을 고쳐 다시 검토·승인할 수 있습니다.</p>
+                <p>개정 알림을 받는 사람에게 철회를 알립니다. 개정 후보로 승인한 버전이면 그 후보는 반려로 돌아갑니다.</p>
+              </div>
+              <label className="block">
+                <span className="text-xs font-medium text-gray-600">철회 사유</span>
+                <textarea
+                  className="input resize-none w-full mt-1"
+                  rows={3}
+                  value={withdrawReason}
+                  onChange={(e) => setWithdrawReason(e.target.value)}
+                  placeholder="예: 시행일 재검토 — 노사 협의 뒤 다시 정함"
+                  autoFocus
+                />
+              </label>
+              {withdrawMutation.isError && (
+                <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {apiErrorMessage(withdrawMutation.error, '철회하지 못했습니다.')}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={!withdrawReason.trim() || withdrawMutation.isPending}
+                  onClick={() => withdrawMutation.mutate({ versionId: withdrawTarget.id, reason: withdrawReason.trim() })}
+                >
+                  {withdrawMutation.isPending ? '처리 중…' : '철회'}
+                </button>
+                <button type="button" className="btn-secondary" onClick={() => setWithdrawTarget(null)}>
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {archiveTarget && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
@@ -5487,21 +5627,44 @@ export default function PolicyDetailPage() {
                 </span>{' '}
                 을(를) 폐지할까요?
               </p>
-              {/* 폐지 시행일은 오늘(한국 날짜)로 정해진다 — 고르지 않는다(T-126). 게시본이 하나뿐이면 조문이 본문 없이
-                  남는다. 정당한 폐지도 있으므로 막지 않고 알린다. */}
-              <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
-                <p>
-                  <strong>오늘({serviceToday()})부터 이 조문은 시행에서 빠집니다.</strong> 그날부터의 시점 조회·신구조문대비표·법령
-                  영향 분석에 나오지 않고, 그 전 날짜에는 지금 본문이 그대로 나옵니다.
-                </p>
-                <p>
-                  이 버전은 게시 상태에서 내려가고 내용과 이력은 남습니다. 폐지는 되돌릴 수 없습니다 — 다시 시행하려면 새
-                  버전을 올려 오늘이나 그 뒤 시행일로 승인하세요.
-                </p>
-                <p>
-                  이 조문의 <strong>마지막 게시본이면 전문 보기·인쇄에 본문 없이 나옵니다.</strong>
-                </p>
+              {/* 폐지 시행일 — 비우면 오늘(한국 날짜), 미래 날짜면 그날부터 빠지고 그때까지는 시행 중(T-132 ③). 소급은 없다(T-126) */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="archive-date">
+                  폐지 시행일
+                </label>
+                <input
+                  id="archive-date"
+                  type="date"
+                  className="input w-full"
+                  min={serviceToday()}
+                  value={archiveDate}
+                  onChange={(e) => setArchiveDate(e.target.value)}
+                />
+                <p className="text-[11px] text-gray-500 mt-1">비워두면 오늘({serviceToday()})부터 빠집니다. 지난 날짜로는 폐지할 수 없습니다.</p>
               </div>
+              {archiveDate && archiveDate > serviceToday() ? (
+                <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1" data-testid="archive-future-note">
+                  <p>
+                    <strong>{archiveDate}부터 이 조문은 시행에서 빠집니다.</strong> 그때까지는 지금 본문이 그대로 시행되고, 화면에
+                    「폐지 예정」으로 보입니다.
+                  </p>
+                  <p>그날 전에는 「폐지 예정 취소」로 되돌릴 수 있습니다. 그 사이 다른 시행일로 개정을 승인하려면 폐지 예정을 먼저 취소하세요.</p>
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
+                  <p>
+                    <strong>오늘({serviceToday()})부터 이 조문은 시행에서 빠집니다.</strong> 그날부터의 시점 조회·신구조문대비표·법령
+                    영향 분석에 나오지 않고, 그 전 날짜에는 지금 본문이 그대로 나옵니다.
+                  </p>
+                  <p>
+                    이 버전은 게시 상태에서 내려가고 내용과 이력은 남습니다. 폐지는 되돌릴 수 없습니다 — 다시 시행하려면 새
+                    버전을 올려 오늘이나 그 뒤 시행일로 승인하세요.
+                  </p>
+                  <p>
+                    이 조문의 <strong>마지막 게시본이면 전문 보기·인쇄에 본문 없이 나옵니다.</strong>
+                  </p>
+                </div>
+              )}
               {archiveMutation.isError && (
                 <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
                   {(archiveMutation.error as any)?.response?.data?.message || '폐지하지 못했습니다.'}
@@ -5510,11 +5673,11 @@ export default function PolicyDetailPage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => archiveMutation.mutate(archiveTarget.id)}
+                  onClick={() => archiveMutation.mutate({ versionId: archiveTarget.id, repealedOn: archiveDate || undefined })}
                   disabled={archiveMutation.isPending}
                   className="btn-primary"
                 >
-                  {archiveMutation.isPending ? '처리 중…' : '폐지'}
+                  {archiveMutation.isPending ? '처리 중…' : archiveDate && archiveDate > serviceToday() ? '폐지 예정으로 정하기' : '폐지'}
                 </button>
                 <button type="button" onClick={() => setArchiveTarget(null)} className="btn-secondary">
                   취소

@@ -174,49 +174,60 @@ export class PoliciesService {
    */
   async findScheduledChanges(tenantId: string, limit = 10) {
     const today = todayDateOnly();
+    const articleSelect = {
+      id: true,
+      number: true,
+      branchNumber: true,
+      title: true,
+      chapter: { select: { policy: { select: { id: true, code: true, title: true, isActive: true } } } },
+    } as const;
     const rows = await this.prisma.articleVersion.findMany({
       where: { ...scheduledVersionWhere(today), article: { chapter: { policy: { tenantId } } } },
       orderBy: [{ effectiveDate: 'asc' }, { article: { number: 'asc' } }],
-      select: {
-        effectiveDate: true,
-        article: {
-          select: {
-            id: true,
-            number: true,
-            branchNumber: true,
-            title: true,
-            chapter: { select: { policy: { select: { id: true, code: true, title: true, isActive: true } } } },
-          },
-        },
-      },
+      select: { effectiveDate: true, article: { select: articleSelect } },
+    });
+    // 폐지 예정(T-132 ③) — 오늘은 시행 중이고 이 날부터 빠지는 조문
+    const repeals = await this.prisma.articleVersion.findMany({
+      where: { repealedOn: { gt: today }, status: { in: ['published', 'archived'] }, article: { chapter: { policy: { tenantId } } } },
+      orderBy: [{ repealedOn: 'asc' }, { article: { number: 'asc' } }],
+      select: { repealedOn: true, article: { select: articleSelect } },
     });
     const groups = new Map<
       string,
-      { policyId: string; code: string; title: string; isActive: boolean; effectiveDate: string; articleIds: Set<string>; firstArticle: string }
-    >();
-    for (const r of rows) {
-      const p = r.article.chapter.policy;
-      const date = toDateOnlyString(r.effectiveDate!);
-      const key = `${p.id}|${date}`;
-      const g = groups.get(key);
-      if (g) {
-        g.articleIds.add(r.article.id);
-        continue;
+      {
+        policyId: string;
+        code: string;
+        title: string;
+        isActive: boolean;
+        effectiveDate: string;
+        articleIds: Set<string>;
+        repealIds: Set<string>;
+        firstArticle: string;
       }
-      groups.set(key, {
+    >();
+    const add = (date: Date, article: (typeof rows)[number]['article'], kind: 'amend' | 'repeal') => {
+      const p = article.chapter.policy;
+      const day = toDateOnlyString(date);
+      const key = `${p.id}|${day}`;
+      const g = groups.get(key) ?? {
         policyId: p.id,
         code: p.code,
         title: p.title,
         isActive: p.isActive,
-        effectiveDate: date,
-        articleIds: new Set([r.article.id]),
-        firstArticle: `${formatJo(r.article.number, r.article.branchNumber)}${r.article.title ? ` ${r.article.title}` : ''}`,
-      });
-    }
-    return [...groups.values()].slice(0, Math.min(Math.max(limit, 1), 50)).map(({ articleIds, ...g }) => ({
-      ...g,
-      articleCount: articleIds.size,
-    }));
+        effectiveDate: day,
+        articleIds: new Set<string>(),
+        repealIds: new Set<string>(),
+        firstArticle: `${formatJo(article.number, article.branchNumber)}${article.title ? ` ${article.title}` : ''}`,
+      };
+      (kind === 'amend' ? g.articleIds : g.repealIds).add(article.id);
+      groups.set(key, g);
+    };
+    for (const r of rows) add(r.effectiveDate!, r.article, 'amend');
+    for (const r of repeals) add(r.repealedOn!, r.article, 'repeal');
+    return [...groups.values()]
+      .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate) || a.title.localeCompare(b.title))
+      .slice(0, Math.min(Math.max(limit, 1), 50))
+      .map(({ articleIds, repealIds, ...g }) => ({ ...g, articleCount: articleIds.size, repealCount: repealIds.size }));
   }
 
   /**
@@ -339,6 +350,8 @@ export class PoliciesService {
         ...(opts.detail
           ? {
               repealedOn: a.currentState === 'repealed' && picked?.repealedOn ? toDateOnlyString(picked.repealedOn) : null,
+              // 폐지 예정(T-132 ③) — 오늘은 시행 중, 이 날부터 시행에서 빠진다
+              repealScheduledOn: inForce && picked?.repealedOn ? toDateOnlyString(picked.repealedOn) : null,
               scheduledVersions: (scheduledOf.get(a.id) ?? []).map((v) => ({ ...v, phase: 'scheduled' as const })),
             }
           : {}),
@@ -365,6 +378,11 @@ export class PoliciesService {
         scheduledCount: scheduledOf.size,
         // 오늘 자리가 지금 행과 다른 조문·장 수(미래 시행 구조 변경) — 0 이 아니면 화면이 구조 편집을 막는다
         structureChanges: built.displaced,
+        // 폐지 예정인 조문 수(T-132 ③) — 오늘은 시행 중
+        repealScheduledCount: annotated.reduce(
+          (n, c) => n + c.articles.filter((a) => a.currentState === 'in_force' && a.versions[0]?.repealedOn).length,
+          0,
+        ),
         nextScheduledDate: firstDates.length
           ? toDateOnlyString(new Date(Math.min(...firstDates.map((d) => d.getTime()))))
           : null,

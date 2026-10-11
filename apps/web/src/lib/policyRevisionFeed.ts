@@ -81,6 +81,8 @@ export type UpcomingItem = {
   daysLeft: number;
   /** 그날 시행되는 조문 개정 수(승인된 미래 시행 개정, T-132 ⑤). 규정 시행일만 있으면 0 */
   articleCount: number;
+  /** 그날 폐지되는 조문 수(T-132 ③) */
+  repealCount: number;
   firstArticle: string | null;
 };
 
@@ -90,14 +92,14 @@ export type UpcomingItem = {
  */
 export function mergeUpcoming(
   policies: RevisionFeedPolicy[],
-  scheduled: { policyId: string; code: string; title: string; effectiveDate: string; articleCount: number; firstArticle: string }[],
+  scheduled: { policyId: string; code: string; title: string; effectiveDate: string; articleCount: number; firstArticle: string; repealCount?: number }[],
   limit = 5,
   today = todayKey(),
 ): UpcomingItem[] {
   const items = new Map<string, UpcomingItem>();
   for (const p of upcomingEffective(policies, Number.MAX_SAFE_INTEGER, today)) {
     const key = `${p.id}|${p.dateKey}`;
-    items.set(key, { key, policyId: p.id, code: p.code, title: p.title, dateKey: p.dateKey, daysLeft: p.daysLeft, articleCount: 0, firstArticle: null });
+    items.set(key, { key, policyId: p.id, code: p.code, title: p.title, dateKey: p.dateKey, daysLeft: p.daysLeft, articleCount: 0, repealCount: 0, firstArticle: null });
   }
   for (const c of scheduled) {
     const dk = dateKey(c.effectiveDate);
@@ -112,6 +114,7 @@ export function mergeUpcoming(
       dateKey: dk,
       daysLeft: daysBetween(today, dk),
       articleCount: (prev?.articleCount ?? 0) + c.articleCount,
+      repealCount: (prev?.repealCount ?? 0) + (c.repealCount ?? 0),
       firstArticle: prev?.firstArticle ?? c.firstArticle,
     });
   }

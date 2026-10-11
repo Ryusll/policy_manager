@@ -77,4 +77,46 @@ export class RevisionNotifyService {
     await this.prisma.userNotification.createMany({ data: rows });
     return { sent: rows.length };
   }
+
+  /**
+   * 시행 예정 철회 알림(T-132 ②) — 승인 때 "시행 예정"으로 알린 개정을 거뒀다는 것. 받는 사람은 승인 알림과 같다.
+   */
+  async dispatchPolicyRevisionWithdrawn(params: {
+    tenantId: string;
+    policyId: string;
+    policyTitle: string;
+    policyCode: string;
+    articleId: string;
+    articleLabel: string;
+    versionId: string;
+    /** 철회한 버전의 사내 시행일(YYYY-MM-DD) */
+    effectiveDate: string;
+    reason: string;
+    actorId: string;
+    metadata: unknown;
+  }) {
+    const cfg = parseRevisionNotifyFromMetadata(params.metadata);
+    const recipientIds = await this.resolveRecipientIds(params.tenantId, cfg);
+    const rows = recipientIds
+      .filter((uid) => uid !== params.actorId)
+      .map((userId) => ({
+        tenantId: params.tenantId,
+        userId,
+        kind: 'policy_revision',
+        title: `[개정 철회 · ${params.effectiveDate} 시행 예정이었음] ${params.policyTitle}`,
+        body: [
+          `규정: ${params.policyCode} · ${params.policyTitle}`,
+          `조문: ${params.articleLabel}`,
+          `철회한 시행일: ${params.effectiveDate} — 지금 본문이 그대로 시행됩니다`,
+          `철회 사유: ${params.reason}`,
+        ].join('\n'),
+        policyId: params.policyId,
+        articleId: params.articleId,
+        versionId: params.versionId,
+      }));
+    if (!rows.length) return { sent: 0 };
+    await this.prisma.userNotification.createMany({ data: rows });
+    return { sent: rows.length };
+  }
 }
+

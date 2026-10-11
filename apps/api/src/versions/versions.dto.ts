@@ -78,3 +78,21 @@ export class RejectVersionDto {
   @MaxLength(2000)
   reason: string;
 }
+
+/** 폐지(T-126) — 폐지 시행일. 비우면 오늘, 미래면 그날부터 시행에서 빠진다(T-132 ③) */
+export class ArchiveVersionDto {
+  @ApiProperty({ required: false, description: '폐지 시행일(YYYY-MM-DD) — 오늘이나 그 뒤. 비우면 오늘' })
+  @IsOptional()
+  @IsDateString()
+  repealedOn?: string;
+}
+
+/** 시행 예정 철회(T-132 ②) — 사유 필수 */
+export class WithdrawVersionDto {
+  @ApiProperty({ description: '철회 사유 — 초안의 메모와 감사 기록, 알림에 남는다' })
+  @IsString()
+  @MinLength(1, { message: '철회 사유를 입력하세요.' })
+  @MaxLength(500)
+  reason: string;
+}
+
