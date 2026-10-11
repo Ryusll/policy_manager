@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { parseSnapshot, positionKey, type Position } from '../common/article-structure';
+import { parseSnapshot, positionKey, type Position, type StructureSnapshot } from '../common/article-structure';
 import { placeArticle, placeAsOf } from './as-of-structure';
 import {
   AS_OF_VERSION_ORDER,
@@ -103,6 +103,106 @@ async function assertNoFrozenClash(
 
 const labelOf = (p: Position) =>
   `${formatJo(p.number, p.branchNumber)}${p.clauseNumber ? `제${p.clauseNumber}항` : ''}${p.itemNumber ? `제${p.itemNumber}목` : ''}`;
+
+/** 조 단위 자리 — 조 번호는 장을 가로질러 문서 전체에서 이어진다 */
+const joKeyOf = (p: Pick<Position, 'number' | 'branchNumber'>) => `${p.number}|${p.branchNumber ?? 0}`;
+
+/**
+ * 미래 시행 구조 변경(재파싱 묶음, T-110 ②)이 옮겨 둔 조문 — 시행 예정 버전이 있고, 오늘 시행 중인 버전에 얼린 자리가 지금 행과
+ * 다른 것(T-132 ⑦). 그날까지 오늘 자리는 얼린 값이고 지금 행은 그날부터의 자리다. 규정 상세의 `displaced` 와 같은 기준이다.
+ */
+async function scheduledMoves(tx: Prisma.TransactionClient, policyId: string, today: Date) {
+  const scheduled = await tx.articleVersion.findMany({
+    where: { article: { chapter: { policyId } }, ...scheduledVersionWhere(today) },
+    orderBy: { effectiveDate: 'asc' },
+    select: { articleId: true, effectiveDate: true },
+  });
+  const firstDate = new Map<string, Date>();
+  for (const s of scheduled) if (!firstDate.has(s.articleId)) firstDate.set(s.articleId, s.effectiveDate!);
+  if (!firstDate.size) return [];
+  const picked = await tx.$queryRaw<{ id: string }[]>(currentVersionIdsSql([...firstDate.keys()], today));
+  if (!picked.length) return [];
+  const frozen = await tx.articleVersion.findMany({
+    where: { id: { in: picked.map((p) => p.id) }, structure: { not: Prisma.DbNull } },
+    select: { articleId: true, structure: true, repealedOn: true },
+  });
+  const rows = new Map(
+    (
+      await tx.article.findMany({
+        where: { id: { in: frozen.map((f) => f.articleId) } },
+        select: { id: true, chapterId: true, number: true, branchNumber: true, clauseNumber: true, itemNumber: true },
+      })
+    ).map((r) => [r.id, r]),
+  );
+  const out: { articleId: string; today: StructureSnapshot; live: Position & { chapterId: string }; date: Date }[] = [];
+  for (const f of frozen) {
+    const snap = parseSnapshot(f.structure);
+    const live = rows.get(f.articleId);
+    // 폐지된 조문은 오늘 자리를 쓰지 않는다
+    if (!snap || !live || asOfState(f, today) !== 'in_force') continue;
+    if (positionKey(snap) === positionKey(live) && snap.chapter.id === live.chapterId) continue;
+    out.push({ articleId: f.articleId, today: snap, live, date: firstDate.get(f.articleId)! });
+  }
+  return out;
+}
+
+/**
+ * 미래 시행 구조 변경을 기다리는 동안의 구조 편집(T-132 ⑦). 편집은 지금 행(그날부터의 자리)을 고치는데, 그 사이 오늘 자리는
+ * 얼린 값이라 둘이 어긋나는 조가 있다. 그런 조에 조문을 넣거나 다른 조문을 옮겨 넣으면 그날 전까지의 시점 조회에서 한 조가
+ * 두 자리로 갈리거나 남의 조와 겹친다(얼린 자리는 그 조문에 시행 예정 버전이 있을 때만 쓰여, 새 행에는 오늘 자리가 없다).
+ * - 오늘 자리와 그날부터의 자리가 다른 조(오늘 조와 그날 조 모두) — 조를 넣거나 다른 조문을 옮겨 넣지 못한다
+ * - 같은 조 안에서 항·목 번호만 바뀐 조문의 오늘 자리 — 그 자리에 새 조문을 넣지 못한다
+ * 이미 그 조에 있는 조문의 번호·제목을 고치는 것(조가 그대로)과 옮겨질 조문 자신을 오늘 조로 되돌리는 것은 된다 — 그날부터의
+ * 자리만 바뀐다. 순서 재정렬은 따로 막는다(`assertNoScheduledMoves`).
+ */
+/**
+ * 조 순서 재정렬은 미래 시행 구조 변경이 조문을 옮겨 둔 동안 하지 않는다(T-132 ⑦) — 오늘 자리와 그날부터의 자리가 섞인 목록을
+ * 한 번에 다시 매기면 옮겨질 조문의 오늘 자리(얼린 값)는 그대로라 한 조가 두 자리로 갈린다. 화면도 그동안 막는다.
+ */
+async function assertNoScheduledMoves(tx: Prisma.TransactionClient, policyId: string) {
+  const moves = await scheduledMoves(tx, policyId, todayDateOnly());
+  if (!moves.length) return;
+  const first = moves.reduce((a, b) => (b.date < a.date ? b : a));
+  throw new BadRequestException(
+    `시행 예정 구조 변경(${toDateOnlyString(first.date)} 시행, 재파싱 묶음)이 조문 자리를 옮기는 중이라 조 순서를 다시 매길 수 없습니다 — ` +
+      '그날 뒤에 하세요. 조·항 추가와 번호·제목 고치기는 할 수 있습니다.',
+  );
+}
+
+async function assertNotIntoMovingJo(
+  tx: Prisma.TransactionClient,
+  policyId: string,
+  targets: { articleId?: string; position: Position; label: string }[],
+) {
+  if (!targets.length) return;
+  const moves = await scheduledMoves(tx, policyId, todayDateOnly());
+  if (!moves.length) return;
+  const flux = new Map<string, (typeof moves)[number][]>();
+  const held = new Map<string, (typeof moves)[number]>();
+  for (const m of moves) {
+    held.set(positionKey(m.today), m);
+    if (joKeyOf(m.today) !== joKeyOf(m.live) || m.today.chapter.id !== m.live.chapterId) {
+      for (const key of new Set([joKeyOf(m.today), joKeyOf(m.live)])) flux.set(key, [...(flux.get(key) ?? []), m]);
+    }
+  }
+  for (const t of targets) {
+    const f = flux.get(joKeyOf(t.position))?.find((m) => m.articleId !== t.articleId);
+    if (f) {
+      throw new BadRequestException(
+        `${t.label}: 이 조는 ${toDateOnlyString(f.date)}에 시행되는 구조 변경(재파싱 묶음)으로 자리가 바뀌는 중입니다` +
+          `(오늘 ${formatJo(f.today.number, f.today.branchNumber)} → 그날부터 ${formatJo(f.live.number, f.live.branchNumber)}). ` +
+          '이 조에 조문을 넣거나 옮겨 넣는 것은 그날 뒤에 하세요 — 본문 개정은 그대로 할 수 있습니다.',
+      );
+    }
+    const h = held.get(positionKey(t.position));
+    if (h && h.articleId !== t.articleId) {
+      throw new BadRequestException(
+        `${t.label}: 이 자리는 ${toDateOnlyString(h.date)} 전까지 다른 조문이 쓰고 있습니다(시행 예정 구조 변경이 그날 옮깁니다) — ` +
+          '그날 뒤에 넣거나 다른 번호를 쓰세요.',
+      );
+    }
+  }
+}
 
 @Injectable()
 export class PoliciesService {
@@ -1113,6 +1213,13 @@ export class PoliciesService {
 
     const article = await this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
+      const position = {
+        number: dto.number,
+        branchNumber: dto.branchNumber ?? null,
+        clauseNumber: dto.clauseNumber ?? null,
+        itemNumber: dto.itemNumber ?? null,
+      };
+      await assertNotIntoMovingJo(tx, policyId, [{ position, label: labelOf(position) }]);
       return tx.article.create({
       data: {
         chapterId,
@@ -1175,6 +1282,10 @@ export class PoliciesService {
           itemNumber: (dto.itemNumber !== undefined ? dto.itemNumber : article.itemNumber) ?? null,
         };
         await assertNoFrozenClash(tx, policyId, [{ articleId, position, label: labelOf(position) }]);
+        // 다른 조로 옮길 때만 — 같은 조 안의 항·목·제목 고치기는 그날부터의 자리만 바꾼다(T-132 ⑦)
+        if (joKeyOf(position) !== joKeyOf(article)) {
+          await assertNotIntoMovingJo(tx, policyId, [{ articleId, position, label: labelOf(position) }]);
+        }
       }
       return tx.article.update({ where: { id: articleId }, data: data as any });
     });
@@ -1239,20 +1350,18 @@ export class PoliciesService {
         }
         if (changes.length === 0) return 0;
         const rowById = new Map(rows.map((r) => [r.id, r]));
-        await assertNoFrozenClash(
-          tx,
-          policyId,
-          changes
-            .filter((c) => {
-              const r = rowById.get(c.id)!;
-              return r.number !== c.number || (r.branchNumber ?? null) !== (c.branchNumber ?? null);
-            })
-            .map((c) => {
-              const r = rowById.get(c.id)!;
-              const position = { number: c.number, branchNumber: c.branchNumber ?? null, clauseNumber: r.clauseNumber, itemNumber: r.itemNumber };
-              return { articleId: c.id, position, label: labelOf(position) };
-            }),
-        );
+        const moves = changes
+          .filter((c) => {
+            const r = rowById.get(c.id)!;
+            return r.number !== c.number || (r.branchNumber ?? null) !== (c.branchNumber ?? null);
+          })
+          .map((c) => {
+            const r = rowById.get(c.id)!;
+            const position = { number: c.number, branchNumber: c.branchNumber ?? null, clauseNumber: r.clauseNumber, itemNumber: r.itemNumber };
+            return { articleId: c.id, position, label: labelOf(position) };
+          });
+        await assertNoScheduledMoves(tx, policyId);
+        await assertNoFrozenClash(tx, policyId, moves);
         for (const c of changes) {
           await tx.article.update({
             where: { id: c.id },

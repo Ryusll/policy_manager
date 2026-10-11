@@ -47,6 +47,7 @@ import { highlightText } from '../lib/highlightSearch';
 import PlanModal from '../components/PlanModal';
 import { ArticleBodyInline } from '../components/ArticleBodyInline';
 import {
+  type ArticleLabelParts,
   articleShortLabel,
   countDistinctJo,
   formatArticleJo,
@@ -159,6 +160,9 @@ function StateBadge({ state, title, compact }: { state: VersionDisplayState; tit
 }
 
 const ymd = (d?: string | null) => (d ? d.slice(0, 10) : '');
+
+/** 오늘 자리에만 남은 장(T-127 `virtual` — 시행 예정 구조 변경으로 그날 없어지는 장)에는 조·절을 넣거나 빼지 않는다(T-132 ⑦) */
+const VIRTUAL_CHAPTER_MESSAGE = '이 장은 오늘 자리에만 남은 장입니다(시행 예정 구조 변경으로 그날 없어집니다) — 여기에는 조·절을 넣거나 뺄 수 없습니다.';
 
 /** 조문의 지금 행 자리 — 링크(앵커)는 이 번호로 만들고 찾는다. 오늘 자리(화면 번호)와 다를 수 있다(T-127 `live*`) */
 function liveAnchorOf<T extends { number: number; branchNumber?: number | null; clauseNumber?: number | null; itemNumber?: number | null }>(
@@ -740,24 +744,6 @@ export default function PolicyDetailPage() {
     selectedArticle?.relatedRuleNote,
   ]);
 
-  useEffect(() => {
-    if (!selectedArticle) return;
-    setArticleMetaDraft({
-      number: Number(selectedArticle.number) || 1,
-      branchNumber: selectedArticle.branchNumber ?? '',
-      clauseNumber: selectedArticle.clauseNumber ?? '',
-      itemNumber: selectedArticle.itemNumber ?? '',
-      title: selectedArticle.title ?? '',
-    });
-  }, [
-    selectedArticle?.id,
-    selectedArticle?.number,
-    selectedArticle?.branchNumber,
-    selectedArticle?.clauseNumber,
-    selectedArticle?.itemNumber,
-    selectedArticle?.title,
-  ]);
-
   const { data: policy, isLoading } = useQuery({
     queryKey: ['policy', id],
     queryFn: () => policiesApi.get(id!),
@@ -859,13 +845,77 @@ export default function PolicyDetailPage() {
   // 비워 두면 오늘로 승인된다
   const approveTooEarly = !!approveMinDate && (approveEffectiveDate || serviceToday()) < approveMinDate;
   // 미래 시행 구조 변경(재파싱 묶음, T-110 ②)으로 오늘 자리와 지금 행이 다른 조문·장이 있다(T-127). 목차·본문은 오늘 자리로
-  // 보이는데 편집 호출은 지금 행 기준이라, 그동안 화면 자리로 조·항·절·장을 넣거나 순서·번호·제목을 고치면 엉뚱한 자리가 바뀐다
-  const structureLocked = Number(policy?.current?.structureChanges ?? 0) > 0;
-  const guardStructureEdit = useCallback((): boolean => {
-    if (!structureLocked) return true;
-    toast('시행 예정 구조 변경이 있어 지금은 목차 구조를 고칠 수 없습니다. 본문 개정은 그대로 할 수 있습니다.', 'error');
+  // 보이고, 구조 편집은 지금 행 — 그날부터의 자리 — 을 고친다(T-132 ⑦). 자리가 바뀌는 중인 조에 조문을 넣거나 옮겨 넣는 것은
+  // 서버가 막는다(`assertNotIntoMovingJo`). 화면은 미리 알리고, 편집 칸은 지금 행 값으로 채운다
+  const structureScheduled = Number(policy?.current?.structureChanges ?? 0) > 0;
+  // 조 순서 재정렬은 그동안 막는다 — 오늘 자리와 그날부터의 자리가 섞인 목록을 한 번에 다시 매기게 된다
+  const guardReorder = useCallback((): boolean => {
+    if (!structureScheduled) return true;
+    toast(
+      '시행 예정 구조 변경(재파싱 묶음)이 있는 동안은 조 순서를 다시 매길 수 없습니다 — 그날 뒤에 하세요. 조·항 추가와 번호·제목 고치기는 할 수 있습니다.',
+      'error',
+    );
     return false;
-  }, [structureLocked]);
+  }, [structureScheduled]);
+  const policyChapters: any[] | undefined = policy?.chapters;
+  const scheduledArticles: PolicyScheduledArticle[] | undefined = policy?.current?.scheduledArticles;
+  const nextScheduledDate: string | null = policy?.current?.nextScheduledDate ?? null;
+  /** 자리가 바뀌는 중인 조(오늘 조와 그날부터의 조, 조 번호 기준 — 서버 `assertNotIntoMovingJo` 와 같다) */
+  const movingJos = useMemo(() => {
+    const m = new Map<string, { today: string; live: string; date: string }>();
+    if (!structureScheduled) return m;
+    for (const ch of policyChapters ?? []) {
+      for (const a of ch.articles ?? []) {
+        if (!a.displaced || a.liveNumber == null) continue;
+        if (a.number === a.liveNumber && (a.branchNumber ?? 0) === (a.liveBranchNumber ?? 0) && ch.id === a.liveChapterId) continue;
+        const info = {
+          today: formatArticleJo(a.number, a.branchNumber),
+          live: formatArticleJo(a.liveNumber, a.liveBranchNumber),
+          date: ymd(a.scheduledVersions?.[0]?.effectiveDate ?? nextScheduledDate),
+        };
+        m.set(`${a.number}|${a.branchNumber ?? 0}`, info);
+        m.set(`${a.liveNumber}|${a.liveBranchNumber ?? 0}`, info);
+      }
+    }
+    return m;
+  }, [structureScheduled, policyChapters, nextScheduledDate]);
+  /** 지금 행 자리로 본 장의 조문 — 새 조·항 번호와 조 머리 유무는 지금 행으로 센다(화면 번호는 오늘 자리일 수 있다) */
+  const liveRowsOf = useCallback(
+    (chapterId: string) => {
+      const rows: ArticleLabelParts[] = [];
+      for (const ch of policyChapters ?? []) {
+        for (const a of ch.articles ?? []) if ((a.liveChapterId ?? ch.id) === chapterId) rows.push(liveAnchorOf(a));
+      }
+      for (const a of scheduledArticles ?? []) if (a.liveChapterId === chapterId) rows.push(a);
+      return rows;
+    },
+    [policyChapters, scheduledArticles],
+  );
+  // 지금 행(그날부터의 자리)으로 채운다 — 저장도 지금 행을 고친다. 오늘 자리와 다르면 칸 아래에 알린다(T-132 ⑦)
+  useEffect(() => {
+    const a = liveSelectedArticle;
+    if (!a) return;
+    const live = a.liveNumber != null;
+    setArticleMetaDraft({
+      number: Number(live ? a.liveNumber : a.number) || 1,
+      branchNumber: (live ? a.liveBranchNumber : a.branchNumber) ?? '',
+      clauseNumber: (live ? a.liveClauseNumber : a.clauseNumber) ?? '',
+      itemNumber: (live ? a.liveItemNumber : a.itemNumber) ?? '',
+      title: (live ? a.liveTitle : a.title) ?? '',
+    });
+  }, [
+    liveSelectedArticle?.id,
+    liveSelectedArticle?.number,
+    liveSelectedArticle?.branchNumber,
+    liveSelectedArticle?.clauseNumber,
+    liveSelectedArticle?.itemNumber,
+    liveSelectedArticle?.title,
+    liveSelectedArticle?.liveNumber,
+    liveSelectedArticle?.liveBranchNumber,
+    liveSelectedArticle?.liveClauseNumber,
+    liveSelectedArticle?.liveItemNumber,
+    liveSelectedArticle?.liveTitle,
+  ]);
 
   const { data: versions = [] } = useQuery({
     queryKey: ['versions', selectedArticle?.id],
@@ -983,13 +1033,16 @@ export default function PolicyDetailPage() {
     [],
   );
   const openAddSectionForm = useCallback((chapter: any) => {
-    if (!guardStructureEdit()) return;
+    if (chapter?.virtual) {
+      toast(VIRTUAL_CHAPTER_MESSAGE, 'error');
+      return;
+    }
     const nextNo = ((chapter?.sections || []).reduce(
       (max: number, s: any) => Math.max(max, Number(s.number) || 0),
       0,
     ) || 0) + 1;
     setNewSection({ chapterId: chapter.id, number: nextNo, title: '' });
-  }, [guardStructureEdit]);
+  }, []);
 
   const [policyRevisionDate, setPolicyRevisionDate] = useState('');
   const [policyEffectiveDate, setPolicyEffectiveDate] = useState('');
@@ -1059,10 +1112,14 @@ export default function PolicyDetailPage() {
       sectionId?: string,
     ) => {
       if (!id || !canEdit) return;
-      if (!guardStructureEdit()) return;
+      // 장 id 는 지금 행의 장이다 — 오늘 화면에 없는 장(그날부터 생기는 장)일 수도 있어 못 찾아도 그대로 쓴다
       let ch: any = chapterId
-        ? policy?.chapters?.find((c: any) => c.id === chapterId)
-        : policy?.chapters?.find((c: any) => c.suppressHeader);
+        ? policyChapters?.find((c) => c.id === chapterId) ?? { id: chapterId }
+        : policyChapters?.find((c) => c.suppressHeader && !c.virtual);
+      if (ch?.virtual) {
+        toast(VIRTUAL_CHAPTER_MESSAGE, 'error');
+        return;
+      }
       if (!ch) {
         ch = await policiesApi.createChapter(id, {
           number: 1,
@@ -1071,8 +1128,12 @@ export default function PolicyDetailPage() {
         });
         await qc.invalidateQueries({ queryKey: ['policy', id] });
       }
-      // 조 번호는 법령·규정 관례대로 문서 전체에서 이어진다(장이 바뀌어도 1로 돌아가지 않음).
-      const jo = preset?.number ?? nextJoNumberForPolicy(policy?.chapters);
+      // 조 번호는 법령·규정 관례대로 문서 전체에서 이어진다(장이 바뀌어도 1로 돌아가지 않음). 구조 변경 예정 동안은 오늘 자리·
+      // 지금 행·시행 예정 신설 조문 번호를 모두 넘겨야 어느 날에도 겹치지 않는다(T-132 ⑦)
+      const rows = (policyChapters ?? []).flatMap((c) => c.articles ?? []);
+      const jo =
+        preset?.number ??
+        nextJoNumberForPolicy([{ articles: rows }, { articles: rows.map(liveAnchorOf) }, { articles: scheduledArticles ?? [] }]);
       setNewArticle({
         chapterId: ch.id,
         sectionId,
@@ -1090,13 +1151,35 @@ export default function PolicyDetailPage() {
         relatedRuleNote: '',
       });
     },
-    [id, canEdit, policy?.chapters, qc, guardStructureEdit],
+    [id, canEdit, policyChapters, scheduledArticles, qc],
+  );
+
+  // 항 추가 — 지금 행의 장·조로(T-132 ⑦). 자리가 바뀌는 중인 조는 그날 뒤에(서버도 막는다)
+  const addHangAt = useCallback(
+    (chapter: any, jo: number, branch?: number | null) => {
+      const moving = movingJos.get(`${jo}|${branch ?? 0}`);
+      if (moving) {
+        toast(
+          `이 조는 ${moving.date}부터 자리가 바뀝니다(오늘 ${moving.today} → 그날부터 ${moving.live}, 시행 예정 재파싱 묶음) — 항은 그날 뒤에 넣으세요. 본문 개정은 그대로 할 수 있습니다.`,
+          'error',
+        );
+        return;
+      }
+      const head = (chapter?.articles || []).find((a: any) => a.number === jo && (a.branchNumber ?? null) === (branch ?? null));
+      const liveChapterId: string = head?.liveChapterId ?? chapter.id;
+      void openAddArticleForm(liveChapterId, {
+        number: jo,
+        ...(branch ? { branchNumber: branch } : {}),
+        clauseNumber: nextClauseNumberForJo(liveRowsOf(liveChapterId), jo, branch),
+      });
+    },
+    [movingJos, openAddArticleForm, liveRowsOf],
   );
 
   const addArticleMutation = useMutation({
     mutationFn: async (form: NonNullable<typeof newArticle>) => {
-      const ch = policy?.chapters?.find((c: any) => c.id === form.chapterId);
-      const payloads = buildArticleCreateRequests(form, ch?.articles || []);
+      // 조 머리 유무는 지금 행으로 본다(구조 변경 예정 동안 화면 번호는 오늘 자리, T-132 ⑦)
+      const payloads = buildArticleCreateRequests(form, liveRowsOf(form.chapterId));
       let last: any;
       for (const body of payloads) {
         last = await policiesApi.createArticle(id!, form.chapterId, body);
@@ -1158,9 +1241,18 @@ export default function PolicyDetailPage() {
             ? null
             : Number(articleMetaDraft.itemNumber),
       }),
-    onSuccess: (updated: any) => {
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      setSelectedArticle((prev: any) => (prev && updated?.id === prev.id ? { ...prev, ...updated } : prev));
+    onSuccess: async (updated: any) => {
+      if (!structureScheduled) {
+        qc.invalidateQueries({ queryKey: ['policy', id] });
+        setSelectedArticle((prev: any) => (prev && updated?.id === prev.id ? { ...prev, ...updated } : prev));
+        return;
+      }
+      // 응답은 지금 행이라 오늘 자리(화면)와 다를 수 있다 — 다시 읽은 규정의 그 조문으로(T-132 ⑦)
+      await qc.invalidateQueries({ queryKey: ['policy', id] });
+      const fresh = (qc.getQueryData<any>(['policy', id])?.chapters ?? [])
+        .flatMap((c: any) => c.articles ?? [])
+        .find((a: any) => a.id === updated?.id);
+      setSelectedArticle((prev: any) => (prev && fresh && fresh.id === prev.id ? { ...prev, ...fresh } : prev));
     },
   });
 
@@ -2263,7 +2355,7 @@ export default function PolicyDetailPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      if (!guardStructureEdit()) return;
+                      if (!guardReorder()) return;
                       setReorderError('');
                       setReorderOpen(true);
                     }}
@@ -2305,13 +2397,7 @@ export default function PolicyDetailPage() {
                       selectedArticle={selectedArticle}
                       onSelect={selectTocArticle}
                       canEdit={canEdit}
-                      onAddHang={(jo, branch) =>
-                        openAddArticleForm(chapter.id, {
-                          number: jo,
-                          ...(branch ? { branchNumber: branch } : {}),
-                          clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo, branch),
-                        })
-                      }
+                      onAddHang={(jo, branch) => addHangAt(chapter, jo, branch)}
                     />
                     {canEdit && (
                       <button
@@ -2357,13 +2443,7 @@ export default function PolicyDetailPage() {
                       selectedArticle={selectedArticle}
                       onSelect={selectTocArticle}
                       canEdit={canEdit}
-                      onAddHang={(jo, branch) =>
-                        openAddArticleForm(chapter.id, {
-                          number: jo,
-                          ...(branch ? { branchNumber: branch } : {}),
-                          clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo, branch),
-                        })
-                      }
+                      onAddHang={(jo, branch) => addHangAt(chapter, jo, branch)}
                     />
                     {(chapter.sections || []).map((section: any) => (
                       <div key={section.id}>
@@ -2375,7 +2455,8 @@ export default function PolicyDetailPage() {
                             <button
                               type="button"
                               onClick={() => {
-                                if (guardStructureEdit()) removeSectionMutation.mutate({ chapterId: chapter.id, sectionId: section.id });
+                                if (chapter.virtual) toast(VIRTUAL_CHAPTER_MESSAGE, 'error');
+                                else removeSectionMutation.mutate({ chapterId: chapter.id, sectionId: section.id });
                               }}
                               className="ml-auto text-[11px] text-gray-400 hover:text-red-600"
                               title="절 삭제 (조문은 유지됩니다)"
@@ -2396,13 +2477,7 @@ export default function PolicyDetailPage() {
                           selectedArticle={selectedArticle}
                           onSelect={selectTocArticle}
                           canEdit={canEdit}
-                          onAddHang={(jo, branch) =>
-                            openAddArticleForm(chapter.id, {
-                              number: jo,
-                              ...(branch ? { branchNumber: branch } : {}),
-                              clauseNumber: nextClauseNumberForJo(chapter.articles || [], jo, branch),
-                            })
-                          }
+                          onAddHang={(jo, branch) => addHangAt(chapter, jo, branch)}
                         />
                         {canEdit && (
                           <button
@@ -2537,7 +2612,7 @@ export default function PolicyDetailPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      if (guardStructureEdit()) setShowAddChapter(true);
+                      setShowAddChapter(true);
                     }}
                     className="w-full flex items-center justify-center gap-1.5 rounded border border-dashed border-gray-300 bg-white py-2 text-xs text-gray-500 hover:border-navy-400 hover:bg-navy-50/30 hover:text-navy-800 transition-colors"
                   >
@@ -2877,15 +2952,16 @@ export default function PolicyDetailPage() {
             </div>
           )}
 
-          {canEdit && !asOfDate && structureLocked && (
+          {canEdit && !asOfDate && structureScheduled && (
             <div
               className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900"
               data-testid="structure-locked-notice"
             >
               <p className="leading-relaxed">
                 <strong>시행 예정 구조 변경</strong> — 승인된 재파싱 묶음이 조문 자리·장을 바꾸는데 아직 시행일 전이라, 목차와 본문은
-                오늘 자리로 보입니다. 그동안 조·항·절·장 추가, 조 순서 재정렬, 번호·제목 고치기는 막아 둡니다 — 화면 자리와 지금 자리가
-                달라 엉뚱한 조문이 바뀝니다. 본문 개정은 그대로 할 수 있습니다.
+                오늘 자리로 보입니다. 번호·제목을 고치면 <b>그날부터의 자리</b>(지금 행)가 바뀌고 오늘 자리는 그대로입니다 — 옮겨질 조문은
+                편집 칸에 그날부터의 번호가 나옵니다. 자리가 바뀌는 중인 조에 조문을 넣거나 옮겨 넣는 것과 조 순서 재정렬은 그날 뒤에 할
+                수 있습니다. 본문 개정은 그대로 할 수 있습니다.
               </p>
             </div>
           )}
@@ -3460,19 +3536,24 @@ export default function PolicyDetailPage() {
                     <button
                       type="button"
                       onClick={() => saveArticleMetaMutation.mutate()}
-                      disabled={saveArticleMetaMutation.isPending || structureLocked}
-                      title={structureLocked ? '시행 예정 구조 변경이 있는 동안은 번호·제목을 고칠 수 없습니다' : undefined}
+                      disabled={saveArticleMetaMutation.isPending}
                       className="btn-primary text-xs py-1.5 shrink-0"
                     >
                       구조 저장
                     </button>
                   </div>
-                  {structureLocked && (
-                    <p className="text-[11px] text-amber-800 mt-2" data-testid="structure-locked-note">
-                      시행 예정 구조 변경(재파싱 묶음)이 있어 지금은 번호·제목을 고칠 수 없습니다. 여기 보이는 번호는 오늘 자리이고
-                      {selectedArticle?.displaced && selectedArticle?.liveNumber != null
-                        ? ` 이 조문 행은 이미 ${formatArticleJo(selectedArticle.liveNumber, selectedArticle.liveBranchNumber)} 자리로 옮겨져 있습니다.`
-                        : ' 지금 행과 다를 수 있습니다.'}
+                  {saveArticleMetaMutation.isError && (
+                    <p className="text-[11px] text-red-700 mt-2" role="alert">
+                      {apiErrorMessage(saveArticleMetaMutation.error, '구조를 저장하지 못했습니다.')}
+                    </p>
+                  )}
+                  {liveSelectedArticle?.displaced && liveSelectedArticle?.liveNumber != null && (
+                    <p className="text-[11px] text-amber-800 mt-2" data-testid="structure-live-note">
+                      이 조문은{' '}
+                      {ymd(liveSelectedArticle.scheduledVersions?.[0]?.effectiveDate ?? policy?.current?.nextScheduledDate ?? null) || '시행 예정일'}
+                      부터 {formatArticleAnchor(liveAnchorOf(liveSelectedArticle))}
+                      {liveSelectedArticle.liveTitle ? ` (${liveSelectedArticle.liveTitle})` : ''} 자리입니다(시행 예정 재파싱 묶음). 위 칸은 그
+                      자리(지금 행)라 고치면 그날부터 적용되고, 오늘 자리({formatArticleAnchor(liveSelectedArticle)})는 그대로입니다.
                     </p>
                   )}
                   <p className="text-[11px] text-gray-500 mt-2">
@@ -4923,8 +5004,8 @@ export default function PolicyDetailPage() {
                   />
                   <p className="text-[11px] text-gray-500 mt-1">
                     {(() => {
-                      const ch = policy?.chapters?.find((c: any) => c.id === newArticle.chapterId);
-                      const arts = ch?.articles || [];
+                      // 조 머리 유무는 지금 행으로(저장도 그렇게 나눈다, T-132 ⑦)
+                      const arts = liveRowsOf(newArticle.chapterId);
                       let hint = titleFieldHint(newArticle);
                       if (
                         newArticle.clauseNumber != null &&

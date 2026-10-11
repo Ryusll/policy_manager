@@ -426,6 +426,33 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
       expect(futureView.find((a: any) => a.id === ids['2'])).toMatchObject({ number: 3 });
     });
 
+    it('시행일 전에도 구조를 고칠 수 있다 — 지금 행(그날부터의 자리)을 고치고, 자리가 바뀌는 중인 조에 넣는 것만 막는다(T-132 ⑦)', async () => {
+      const { policyId, ids } = await commitPolicy(t.token, [node('L1', '가', '하나 본문'), node('L2', '나', '둘 본문'), node('L3', '다', '셋 본문')]);
+      const sid = await session(t.token, [node('L1', '가', '하나 본문'), node('L2', '끼어든 조', '새 둘째 조 본문'), node('L3', '나', '둘 본문'), node('L4', '다', '셋 본문')]);
+      let review = (await api(`/regulation-parse/${sid}/reparse`, { method: 'POST', token: editorToken, json: { policyId } })).body;
+      review = (await api(`/reparse-reviews/${review.id}/apply`, { method: 'POST', token: editorToken })).body;
+      review = (await api(`/reparse-reviews/${review.id}/submit`, { method: 'POST', token: editorToken })).body;
+      const future = kstDay(30);
+      expect((await api(`/reparse-reviews/${review.id}/approve`, { method: 'POST', token: t.token, json: { effectiveDate: future, changeNote: '다음 달 시행' } })).status).toBe(201);
+      const chapterId = articlesOf((await api(`/policies/${policyId}`, { token: t.token })).body).find((a: any) => a.id === ids['1']).liveChapterId;
+      const add = (json: Record<string, unknown>) =>
+        api(`/policies/${policyId}/chapters/${chapterId}/articles`, { method: 'POST', token: t.token, json: { title: '', content: '새 본문', ...json } });
+      // 나: 오늘 제2조 → 그날 제3조, 다: 오늘 제3조 → 그날 제4조 — 제2·3·4조에는 넣지 못한다
+      for (const number of [2, 3, 4]) {
+        const r = await add({ number, clauseNumber: 1 });
+        expect(r.status, `제${number}조`).toBe(400);
+        expect(String(r.body.message)).toContain(`${future}에 시행되는 구조 변경`);
+      }
+      expect((await add({ number: 5, title: '새 조' })).status).toBe(201);
+      // 나의 제목 고치기 — 그날부터의 제목만 바뀌고 오늘은 그대로
+      const put = await api(`/policies/${policyId}/chapters/${chapterId}/articles/${ids['2']}`, { method: 'PUT', token: t.token, json: { title: '나 고침' } });
+      expect(put.status).toBe(200);
+      const detail = (await api(`/policies/${policyId}`, { token: t.token })).body;
+      expect(articlesOf(detail).find((a: any) => a.id === ids['2'])).toMatchObject({ number: 2, title: '나', liveNumber: 3, liveTitle: '나 고침' });
+      const futureView = articlesOf((await api(`/policies/${policyId}/as-of?date=${future}`, { token: t.token })).body);
+      expect(futureView.find((a: any) => a.id === ids['2'])).toMatchObject({ number: 3, title: '나 고침' });
+    });
+
     it('승인 뒤 원문에 없는 조문 — 유지로 닫거나 관리자가 오늘 폐지, 승인 전에는 따로 정하지 않는다', async () => {
       const { policyId, ids } = await commitPolicy(t.token, [node('L1', '가', '하나 본문'), node('L2', '나', '둘 본문'), node('L3', '다', '셋 본문'), node('L4', '라', '넷 본문')]);
       const sid = await session(t.token, [node('L1', '가', '하나 본문 고침'), node('L2', '나', '둘 본문')]);
