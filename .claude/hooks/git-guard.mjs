@@ -146,11 +146,15 @@ function afterBash() {
   const resp = input.tool_response || {};
   const stdout = typeof resp === 'string' ? resp : `${resp.stdout || ''}\n${resp.output || ''}`;
   const commitCall = gitCalls(command, root, input.cwd).find((c) => c.sub === 'commit' && c.mainTree);
+  if (!commitCall) return;
   const m = stdout.match(/^\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,40})\]/m);
-  if (!commitCall || !m) return;
-  const hash = m[1];
-  const state = readState(commitsFile, { hashes: [] });
-  writeState(commitsFile, { hashes: [...state.hashes.slice(-50), hash] });
+  // -q 로 해시가 안 찍혔으면 HEAD 를 훑기만 한다 — 다른 세션의 커밋일 수 있어 amend 허용 목록에는 넣지 않는다
+  const hash = m ? m[1] : run('git', ['rev-parse', '--short', 'HEAD'], root).out;
+  if (!hash) return;
+  if (m) {
+    const state = readState(commitsFile, { hashes: [] });
+    writeState(commitsFile, { hashes: [...state.hashes.slice(-50), hash] });
+  }
   const files = run('git', ['show', '--name-only', '--format=', hash], root).out.split('\n').filter(Boolean);
   const local = files.filter((f) => isLocalOnly(f, cfg.git.localOnly));
   const leaks = scanDiff(run('git', ['show', '--format=', '--no-color', hash], root, 15000).raw);

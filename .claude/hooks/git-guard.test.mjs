@@ -145,6 +145,14 @@ test('10 커밋 뒤: 새어 나간 값을 다시 훑고, 이 세션 커밋만 am
   const r = bash('git commit -m leak', 'PostToolUse', { tool_response: { stdout: `[develop ${head()}] leak\n` } });
   assert.equal(r.json?.decision, 'block');
   assert.match(r.json.reason, /push 하지 말고/);
+  // -q 로 해시가 안 찍혀도 HEAD 를 훑는다. 그렇다고 그 커밋을 이 세션 것으로 치지는 않는다
+  const quiet = bash('git commit -q -m leak', 'PostToolUse', { tool_response: { stdout: '' } });
+  assert.equal(quiet.json?.decision, 'block');
+  writeText('apps/api/src/peer2.ts', 'export const p2 = 1;\n');
+  g('add', 'apps/api/src/peer2.ts');
+  g('commit', '-q', '-m', 'peer commit');
+  assert.equal(bash('git commit -q -m x', 'PostToolUse', { tool_response: { stdout: '' } }).out, '');
+  assert.equal(decision(bash('git commit --amend -m x')), 'deny', '-q 커밋 뒤 HEAD 가 내 것이라고 가정하지 않는다');
   assert.ok(fs.existsSync(dir));
 });
 
