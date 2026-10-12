@@ -1,0 +1,93 @@
+{
+  "size": {
+    "maxLines": 300,
+    "warnRatio": 0.8,
+    "legacyGrowth": 150,
+    "include": [
+      "apps/api/src/",
+      "apps/web/src/",
+      "scripts/",
+      ".claude/hooks/"
+    ],
+    "extensions": [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".mjs",
+      ".cjs",
+      ".py",
+      ".sh"
+    ],
+    "exclude": [
+      "/node_modules/",
+      "/dist/",
+      "/i18n/",
+      ".d.ts"
+    ]
+  },
+  "checks": {
+    "afterEdit": [],
+    "beforeStop": [
+      { "run": "npm run typecheck", "when": ["apps/", "tests/"] },
+      { "run": "npx vitest run", "when": ["apps/", "tests/"] },
+      {
+        "run": "npx eslint --no-warn-ignored {files}",
+        "when": ["apps/", "tests/", "scripts/", ".claude/hooks/"],
+        "files": [".ts", ".tsx", ".js", ".mjs", ".cjs"]
+      },
+      { "run": "node --test \".claude/hooks/*.test.mjs\"", "when": [".claude/"] }
+    ],
+    "timeoutSec": 180
+  },
+  "stopRetries": 2,
+  "git": {
+    "protectedBranches": ["main"],
+    "localOnly": [
+      ".env",
+      ".env.oracle",
+      ".claude/settings.local.json",
+      "docker-compose.override.yml",
+      "scripts/dev-local.sh",
+      "docs/Deliverables/16_Runbook_배포롤백/OracleCloud_신규구축_절차서_macOS.md"
+    ],
+    "localOnlyLines": ["\"dev:local\""],
+    "mineOverride": "GIT_GUARD_MINE=1"
+  },
+  "ledger": "docs/Deliverables/17_작업관리대장/작업관리대장.md",
+  "migrations": "apps/api/prisma/migrations/",
+  "agents": {
+    "task-explainer": {
+      "write": [],
+      "shell": ["git log", "git show", "git diff", "git blame", "git grep", "git status", "git ls-files", "head", "tail", "wc"]
+    },
+    "code-explorer": {
+      "write": [],
+      "shell": ["git log", "git show", "git diff", "git blame", "git grep", "git status", "git ls-files", "head", "tail", "wc"]
+    },
+    "adversarial-reviewer": {
+      "write": [],
+      "shell": ["git log", "git show", "git diff", "git blame", "git grep", "git status", "git ls-files", "head", "tail", "wc"]
+    }
+  },
+  "agentModels": {
+    "Explore": "sonnet",
+    "Plan": "sonnet",
+    "code-explorer": "sonnet",
+    "task-explainer": "sonnet"
+  },
+  "readNudge": {
+    "threshold": 6
+  },
+  "doneGate": {
+    "requireReview": true,
+    "reviewer": "adversarial-reviewer"
+  },
+  "rules": {
+    "dir": ".claude/rules/",
+    "newFile": "deny"
+  },
+  "claudeMd": {
+    "maxLines": 200,
+    "targetLines": 100
+  }
+}
