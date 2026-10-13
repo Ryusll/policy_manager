@@ -771,6 +771,9 @@ model Law {
   effectiveDate   DateTime? @map("effective_date") @db.Date
   /// 현재 수신본의 지문. 이 값이 바뀌면 개정이다 (조항 지문을 순서대로 이어 해시)
   versionKey      String?   @map("version_key")
+  /// 조항의 조별 시행일 표기(effectiveNotes)를 쓴 읽기 규칙의 판(T-144). null = 아직 읽지 않음.
+  /// 지금 규칙(EFFECTIVE_NOTES_VERSION)과 다르면 주기 동기화가 같은 판이어도 한 번 다시 읽는다
+  effectiveNotesVersion Int? @map("effective_notes_version")
   /// 마지막 확인 시도 시각. T-104 가 오래된 순으로 고른다 — 실패해도 갱신해야
   /// 고장 난 법령 하나가 매번 맨 앞에 서서 나머지를 막지 않는다
   lastCheckedAt   DateTime? @map("last_checked_at")
@@ -820,6 +823,10 @@ model LawArticle {
   /// 내용 지문. 변경 감지(T-103)의 기준. `v<정규화규칙버전>:<sha256>` 형식
   versionKey    String    @map("version_key")
   effectiveDate DateTime? @map("effective_date") @db.Date
+  /// 조마다 다른 시행일 표기(T-144, PAT-06) — `[{date, scope, scopeText, source, raw}]`. 법제처의 구조화된 조문시행일자는 늘 판 시행일과
+  /// 같아, 다른 날짜는 `[시행일: …]` 글자 표기로만 온다. null = 아직 수집 안 함(T-144 이전에 등록), [] = 읽었지만 표기 없음.
+  /// 항·호 행도 상위 조의 것을 들고 있다(그 항·호의 확정 시행일이 아니다). 계획용 날짜는 바꾸지 않는다 — 알려 주는 기록
+  effectiveNotes Json?    @map("effective_notes")
   /// 원문 순서
   sortOrder     Int       @map("sort_order")
   /// 법령에서 사라진 시각(T-124). 사라진 조항은 **지우지 않고 표시만 한다** — 지우면 회사들이 걸어 둔
@@ -934,6 +941,9 @@ model LawChangeEvent {
   promulgatedDate DateTime? @map("promulgated_date") @db.Date
   /// 법령 시행일. 사내 규정 시행일(ArticleVersion.effectiveDate)과 다르다
   lawEffectiveDate DateTime? @map("law_effective_date") @db.Date
+  /// 그때의 조별 시행일 표기 스냅샷(T-144) — `{mst, inherited, before, after}`. before null = 그때 수집 안 함, after null = 사라진 조항.
+  /// 조문이 이후 판에서 바뀌어도 "그때 어땠나"가 남게 이벤트에 둔다. 표기가 양쪽 다 없으면 null
+  effectiveInfo Json? @map("effective_info")
   /// 수신경로 — T-104 가 poll 을 쓴다. 지금은 register() 호출부가 전부 manual
   receivedVia LawEventChannel @map("received_via")
   detectedAt  DateTime        @default(now()) @map("detected_at")

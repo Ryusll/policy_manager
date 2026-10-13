@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import type { EffectiveNote } from '../common/effective-notes';
 
 /** PDF 추출 한 줄 (폰트 메타는 선택) */
 export interface RegulationParseLine {
@@ -19,6 +20,8 @@ export interface RegulationArticleNode {
   depth: number;
   pageNumber: number | null;
   sortOrder: number;
+  /** 조마다 다른 시행일 표기(법제처 `[시행일: …]`, T-144) — 있을 때만. 법제처 매퍼만 채운다 */
+  effectiveNotes?: EffectiveNote[];
   children?: RegulationArticleNode[];
 }
 

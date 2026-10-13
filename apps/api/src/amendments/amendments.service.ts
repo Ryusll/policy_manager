@@ -6,6 +6,7 @@ import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-o
 import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notify.types';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { impactReferenceDate } from '../law-changes/law-impact';
+import { presentEventEffective } from '../laws/law-effective-info';
 import { VariablesService } from '../variables/variables.service';
 import { lockArticleRow } from '../common/row-locks';
 import {
@@ -48,6 +49,7 @@ const SOURCE_SELECT = {
   afterVersionKey: true,
   promulgatedDate: true,
   lawEffectiveDate: true,
+  effectiveInfo: true,
   law: { select: { lawName: true } },
   lawArticle: { select: { label: true } },
 } satisfies Prisma.LawChangeEventSelect;
@@ -1251,6 +1253,7 @@ export class AmendmentsService {
             beforeContent: true,
             afterContent: true,
             lawEffectiveDate: true,
+            effectiveInfo: true,
             promulgatedDate: true,
             law: { select: { lawName: true } },
             lawArticle: { select: { label: true } },
@@ -1356,6 +1359,8 @@ export class AmendmentsService {
         beforeContent: e.beforeContent,
         afterContent: e.afterContent,
         lawEffectiveDate: dateOnly(e.lawEffectiveDate),
+        // 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로이고, 알려 주기 위한 기록
+        effectiveNotes: presentEventEffective(e.effectiveInfo),
         promulgatedDate: dateOnly(e.promulgatedDate),
       },
     };
@@ -1406,6 +1411,8 @@ export class AmendmentsService {
         changeType: event.changeType,
         promulgatedDate: dateOnly(event.promulgatedDate),
         lawEffectiveDate: dateOnly(event.lawEffectiveDate),
+        // 만들 때의 스냅샷(T-144) — 이후 판에서 표기가 바뀌어도 그때 어땠는지 남는다
+        effectiveNotes: presentEventEffective(event.effectiveInfo),
         beforeVersionKey: event.beforeVersionKey,
         afterVersionKey: event.afterVersionKey,
       },

@@ -8,6 +8,9 @@ import type { RegulationArticleNode } from '../regulation-parse/regulation-tree.
 import { buildLawArticleRows } from './law-rows';
 import { lawAggregateVersionKey } from './law-version-key';
 import { detectLawArticleChanges, type ExistingLawArticleSnapshot } from './law-change-detect';
+import { eventEffectiveInfo } from './law-effective-info';
+import { EFFECTIVE_NOTES_VERSION, readEffectiveNotes } from '../common/effective-notes';
+import { TX_OPTIONS } from './law-tx';
 
 /** 법제처 DRF. 지금은 유일한 법령원이다 */
 const DEFAULT_SOURCE = {
@@ -23,12 +26,6 @@ function toDate(value: string | null | undefined): Date | null {
   if (!m) return null;
   return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 }
-
-/**
- * 조항 수백 건을 한 트랜잭션에서 upsert 한다(근로기준법 478건). Prisma 기본 5초는 작은
- * 서버(Oracle A1)에서 넘칠 수 있고, 넘치면 등록·동기화가 통째로 롤백된다.
- */
-const TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
 
 type LawArticleRows = ReturnType<typeof buildLawArticleRows>['rows'];
 
@@ -93,12 +90,14 @@ export class LawsService {
     const fields = this.lawFields(meta, version);
 
     return this.prisma.$transaction(async (tx) => {
+      const where = { sourceId_externalId: { sourceId: source.id, externalId: mst } };
+      const prior = await tx.law.findUnique({ where, select: { effectiveNotesVersion: true } });
       const law = await tx.law.upsert({
-        where: { sourceId_externalId: { sourceId: source.id, externalId: mst } },
+        where,
         update: fields,
         create: { sourceId: source.id, externalId: mst, ...fields },
       });
-      await this.saveArticles(tx, law.id, meta, version, receivedVia);
+      await this.saveArticles(tx, law.id, meta, version, receivedVia, prior?.effectiveNotesVersion ?? null);
       return { ...law, articleCount: version.rows.length, skipped: version.skipped };
     }, TX_OPTIONS);
   }
@@ -118,11 +117,12 @@ export class LawsService {
     const version = this.prepareVersion(mst, meta, tree);
     try {
       return await this.prisma.$transaction(async (tx) => {
+        const prior = await tx.law.findUnique({ where: { id: lawId }, select: { effectiveNotesVersion: true } });
         const law = await tx.law.update({
           where: { id: lawId },
           data: { externalId: mst, ...this.lawFields(meta, version) },
         });
-        const events = await this.saveArticles(tx, law.id, meta, version, receivedVia);
+        const events = await this.saveArticles(tx, law.id, meta, version, receivedVia, prior?.effectiveNotesVersion ?? null);
         return { law, events };
       }, TX_OPTIONS);
     } catch (e) {
@@ -169,6 +169,8 @@ export class LawsService {
       promulgatedDate: toDate(meta.promulgationDate),
       effectiveDate: version.lawEffectiveDate,
       versionKey: version.versionKey,
+      // T-144: 조항의 시행일 표기를 이 판의 읽기 규칙으로 썼다 — 동기화가 같은 규칙이면 다시 읽지 않는다
+      effectiveNotesVersion: EFFECTIVE_NOTES_VERSION,
       lastCheckedAt: new Date(),
       lastCheckError: null,
       sourceUrl: meta.sourceUrl,
@@ -177,6 +179,7 @@ export class LawsService {
 
   /**
    * 조항을 nodeKey 기준으로 갱신하고, 달라진 조항을 `LawChangeEvent` 로 남긴다(T-103).
+   * @param beforeRules 저장 전 법령 행의 표기 읽기 판(T-144) — 이벤트의 앞뒤 표기를 같은 규칙으로 읽었는지 가린다
    * @returns 만들어진 변경 이벤트 수
    */
   private async saveArticles(
@@ -185,6 +188,7 @@ export class LawsService {
     meta: LawDetailMeta,
     version: PreparedVersion,
     receivedVia: LawEventChannel,
+    beforeRules: number | null,
   ): Promise<number> {
     const { rows, lawEffectiveDate } = version;
 
@@ -192,8 +196,10 @@ export class LawsService {
     // 이미 사라진 조항(T-124)은 빼야 동기화마다 "삭제됨" 이벤트가 되풀이되지 않는다
     const existingBefore = await tx.lawArticle.findMany({
       where: { lawId, deletedAt: null },
-      select: { id: true, nodeKey: true, content: true, versionKey: true },
+      select: { id: true, nodeKey: true, content: true, versionKey: true, effectiveNotes: true },
     });
+    // T-144: 이벤트에 남길 "그때의" 조별 시행일 표기 — null = 그때는 수집하지 않았다
+    const notesBefore = new Map(existingBefore.map((a) => [a.nodeKey, readEffectiveNotes(a.effectiveNotes)]));
     const existingArticles: ExistingLawArticleSnapshot[] = existingBefore.map((a) => ({
       lawArticleId: a.id,
       nodeKey: a.nodeKey,
@@ -213,9 +219,10 @@ export class LawsService {
           title: row.title,
           content: row.content,
           versionKey: row.versionKey,
-          // 법제처는 조문별 시행일을 따로 주기도 하지만 매퍼가 아직 옮기지 않는다.
-          // 법령 시행일을 그대로 쓴다 — T-103 에서 조문별 값이 들어오면 거기서 갈린다.
+          // 계획용 날짜는 판 시행일 그대로다. 법제처의 구조화된 조문시행일자는 늘 판 시행일과 같고(T-144 조사), 조마다 다른 날은
+          // 글자 표기뿐이라 날짜와 범위를 `effectiveNotes` 에 따로 남긴다 — 범위를 잘못 읽어 기준일을 옮기지 않으려는 것이다
           effectiveDate: lawEffectiveDate,
+          effectiveNotes: row.effectiveNotes as unknown as Prisma.InputJsonValue,
           sortOrder: row.sortOrder,
           // 사라졌던 조항이 다시 나타나면 되살린다(같은 행이라 걸어 둔 연결이 그대로 이어진다)
           deletedAt: null,
@@ -231,6 +238,7 @@ export class LawsService {
           content: row.content,
           versionKey: row.versionKey,
           effectiveDate: lawEffectiveDate,
+          effectiveNotes: row.effectiveNotes as unknown as Prisma.InputJsonValue,
           sortOrder: row.sortOrder,
         },
       });
@@ -243,20 +251,32 @@ export class LawsService {
     // 있어야 이벤트에 담을 수 있다(그 뒤 deleteMany 가 SetNull 로 FK 만 끊는다).
     const changes = detectLawArticleChanges(existingArticles, rows, articleIdByNodeKey);
     if (changes.length) {
+      const rowByNodeKey = new Map(rows.map((r) => [r.nodeKey, r]));
       await tx.lawChangeEvent.createMany({
-        data: changes.map((change) => ({
-          lawId,
-          lawArticleId: change.lawArticleId,
-          nodeKey: change.nodeKey,
-          changeType: change.type,
-          beforeContent: change.type === 'created' ? null : change.before.content,
-          afterContent: change.type === 'deleted' ? null : change.after.content,
-          beforeVersionKey: change.type === 'created' ? null : change.before.versionKey,
-          afterVersionKey: change.type === 'deleted' ? null : change.after.versionKey,
-          promulgatedDate: toDate(meta.promulgationDate),
-          lawEffectiveDate,
-          receivedVia,
-        })),
+        data: changes.map((change) => {
+          // T-144: 그때의 시행일 표기 스냅샷 — 본문이 바뀐 이벤트에만 붙는다(표기만 바뀐 판은 이벤트를 만들지 않는다)
+          const info = eventEffectiveInfo({
+            nodeKey: change.nodeKey,
+            mst: meta.mst,
+            before: change.type === 'created' ? null : (notesBefore.get(change.nodeKey) ?? null),
+            after: change.type === 'deleted' ? null : (rowByNodeKey.get(change.nodeKey)?.effectiveNotes ?? null),
+            beforeRules,
+          });
+          return {
+            lawId,
+            lawArticleId: change.lawArticleId,
+            nodeKey: change.nodeKey,
+            changeType: change.type,
+            beforeContent: change.type === 'created' ? null : change.before.content,
+            afterContent: change.type === 'deleted' ? null : change.after.content,
+            beforeVersionKey: change.type === 'created' ? null : change.before.versionKey,
+            afterVersionKey: change.type === 'deleted' ? null : change.after.versionKey,
+            promulgatedDate: toDate(meta.promulgationDate),
+            lawEffectiveDate,
+            effectiveInfo: info ? (info as unknown as Prisma.InputJsonValue) : undefined,
+            receivedVia,
+          };
+        }),
       });
     }
 

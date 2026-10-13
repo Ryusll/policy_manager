@@ -28,6 +28,7 @@ import {
 import { buildCommitPlan } from './commit-rows';
 import { buildNewPolicyRecords, insertNewPolicy, newPolicyAudits } from '../policies/new-policy-records';
 import type { AuditEntry } from '../audit/audit.service';
+import { withoutEffectiveNotes } from '../common/effective-notes';
 
 interface PdfExtractJson {
   ok: boolean;
@@ -290,7 +291,7 @@ export class RegulationParseService {
         fileName: meta.title,
         mimeType: 'application/vnd.lawgokr+json',
         status: 'ready',
-        parseTree: tree as unknown as object,
+        parseTree: { ...tree, roots: withoutEffectiveNotes(tree.roots) } as unknown as object,
         extractMeta: { source: 'lawgokr', ...meta } as unknown as object,
       },
     });
@@ -309,7 +310,7 @@ export class RegulationParseService {
     if (row.committedPolicyId) {
       throw new BadRequestException('커밋된 세션의 트리는 수정할 수 없습니다.');
     }
-    const roots = assertTree(body.roots);
+    const roots = withoutEffectiveNotes(assertTree(body.roots));
     // 조건부로 고친다(T-131) — 확인한 뒤 반영·등록이 원문을 쓰면 고치지 않는다(쓴 원문의 트리가 바뀌면 반영한 묶음과 어긋난다)
     const changed = await this.prisma.regulationParseSession.updateMany({
       where: { id, tenantId, committedPolicyId: null, status: { not: 'committed' } },

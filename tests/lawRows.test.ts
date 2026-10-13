@@ -160,3 +160,42 @@ describe('buildLawArticleRows — 그 밖의 규칙', () => {
     expect(rows[0].versionKey).toMatch(/^v1:[0-9a-f]{64}$/);
   });
 });
+
+describe('buildLawArticleRows — 조별 시행일 표기 (T-144, PAT-06)', () => {
+  const REF = '[본조신설 2019.12.31][시행일: 2027.1.1] 제81조의11제1항제1호나목(…), 제81조의11제3항제1호';
+  const units = [
+    {
+      조문번호: '81',
+      조문가지번호: '11',
+      조문여부: '조문',
+      조문제목: '지급명세서 등 제출 불성실 가산세',
+      조문내용: '제81조의11(지급명세서 등 제출 불성실 가산세)',
+      조문시행일자: '20260101',
+      조문참고자료: REF,
+      항: [
+        { 항번호: '①', 항내용: '① 소득을 지급하는 자가 …', 호: [{ 호번호: '1.', 호내용: '1. 지급명세서를 제출하지 아니한 경우' }] },
+        { 항번호: '②', 항내용: '② 제1항에도 불구하고 …' },
+      ],
+    },
+    { 조문번호: '82', 조문여부: '조문', 조문제목: '다른 조', 조문내용: '제82조(다른 조) 본문.', 조문시행일자: '20260101' },
+  ];
+  const rows = buildLawArticleRows(buildTreeFromJoUnits(units, '2026-01-01').roots).rows;
+
+  it('조 행과 그 아래 항·호 행이 같은 표기를 들고 있다 — 항·호의 확정 시행일이 아니라 상위 조의 안내', () => {
+    const own = rows.filter((r) => r.articleNo === 81);
+    expect(own.map((r) => r.nodeKey)).toEqual(['81의11//', '81의11/1/', '81의11/1/1', '81의11/2/']);
+    for (const r of own) {
+      expect(r.effectiveNotes).toHaveLength(1);
+      expect(r.effectiveNotes[0]).toMatchObject({ date: '2027-01-01', scope: 'partial', source: '조문참고자료' });
+    }
+  });
+
+  it('표기가 없는 조는 빈 배열 — "읽었지만 없음"(null=수집 안 함 과 구분)', () => {
+    expect(rows.filter((r) => r.articleNo === 82).map((r) => r.effectiveNotes)).toEqual([[]]);
+  });
+
+  it('표기는 본문 지문(versionKey)에 영향을 주지 않는다 — 표기만 달라진 판이 "본문 개정"으로 잡히지 않게', () => {
+    const without = buildLawArticleRows(buildTreeFromJoUnits([{ ...units[0], 조문참고자료: '' }], '2026-01-01').roots).rows;
+    expect(without.map((r) => r.versionKey)).toEqual(rows.filter((r) => r.articleNo === 81).map((r) => r.versionKey));
+  });
+});

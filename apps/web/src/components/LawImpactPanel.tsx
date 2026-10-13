@@ -6,6 +6,7 @@ import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { formatArticleAnchor } from '../lib/articleAnchor';
 import { toast } from '../stores/toastStore';
 import AmendmentCandidatePreview from './AmendmentCandidatePreview';
+import EffectiveNotesLine from './EffectiveNotesLine';
 
 /**
  * 법령 변경 하나가 우리 회사의 어느 조문에 걸리는지 (T-105).
@@ -67,6 +68,8 @@ export default function LawImpactPanel({ eventId }: { eventId: string }) {
           </p>
         </div>
       </div>
+
+      <EffectiveNotesLine info={event.effectiveNotes} />
 
       {data.impacted.some((i) => i.baseVersion) && (
         <div className="flex flex-wrap items-center gap-2">

@@ -4,6 +4,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { labelFromNodeKey } from '../laws/law-rows';
+import { presentEventEffective } from '../laws/law-effective-info';
 import { impactReferenceDate } from './law-impact';
 import { CANDIDATE_SELECT, presentCandidate } from '../amendments/amendment-present';
 
@@ -17,6 +18,7 @@ const EVENT_SELECT = {
   afterContent: true,
   promulgatedDate: true,
   lawEffectiveDate: true,
+  effectiveInfo: true,
   receivedVia: true,
   detectedAt: true,
   law: { select: { lawName: true } },
@@ -41,6 +43,8 @@ function presentEvent(e: EventRow) {
     afterContent: e.afterContent,
     promulgatedDate: dateOnly(e.promulgatedDate),
     lawEffectiveDate: dateOnly(e.lawEffectiveDate),
+    // 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로이고, 알려 주기 위한 기록. 없으면 null
+    effectiveNotes: presentEventEffective(e.effectiveInfo),
     receivedVia: e.receivedVia,
     detectedAt: e.detectedAt,
   };

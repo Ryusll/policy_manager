@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { RegulationArticleNode } from '../regulation-parse/regulation-tree.builder';
+import { articleEffectiveNotes } from '../common/effective-notes';
 import {
   LawDetailMeta,
   LawGoKrHang,
@@ -224,7 +225,11 @@ function parseHeading(unit: LawGoKrJoUnit): {
  * 편/장/절은 서열 스택으로 중첩한다(편이 없는 법령이면 장이 곧 최상위가 된다).
  * 조는 현재 열려 있는 가장 깊은 제목 아래로, 항·호·목은 조 아래로 붙는다.
  */
-export function buildTreeFromJoUnits(units: LawGoKrJoUnit[]): { roots: RegulationArticleNode[] } {
+export function buildTreeFromJoUnits(
+  units: LawGoKrJoUnit[],
+  /** 이 판의 시행일 — 조문시행일자가 이것과 다르면 표기로 남긴다(T-144) */
+  versionEffectiveDate: string | null = null,
+): { roots: RegulationArticleNode[] } {
   const cursor = new TreeCursor();
   const headingStack: { rank: number; node: RegulationArticleNode }[] = [];
 
@@ -256,6 +261,9 @@ export function buildTreeFromJoUnits(units: LawGoKrJoUnit[]): { roots: Regulatio
       articleTitle: text(unit.조문제목) || label,
       content: stripArticleHead(text(unit.조문내용), unit),
     });
+    // 조마다 다른 시행일 표기(T-144) — 있을 때만 단다. 없으면 칸 자체를 만들지 않는다(트리 JSON 을 키우지 않게)
+    const notes = articleEffectiveNotes(unit, versionEffectiveDate, toIsoDate);
+    if (notes.length) article.effectiveNotes = notes;
 
     for (const hang of asArray(unit.항)) mapHang(cursor, article, hang);
   }
@@ -308,7 +316,7 @@ export function mapLawDetail(
 ): { meta: LawDetailMeta; tree: { roots: RegulationArticleNode[] } } {
   return {
     meta: mapLawDetailMeta(detail, mst),
-    tree: buildTreeFromJoUnits(asArray(detail.조문?.조문단위)),
+    tree: buildTreeFromJoUnits(asArray(detail.조문?.조문단위), toIsoDate(detail.기본정보?.시행일자)),
   };
 }
 

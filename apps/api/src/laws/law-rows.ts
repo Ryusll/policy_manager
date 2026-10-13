@@ -1,6 +1,7 @@
 import { RegulationArticleNode } from '../regulation-parse/regulation-tree.builder';
 import { classifyNorm } from '../regulation-parse/commit-rows';
 import { lawVersionKey } from './law-version-key';
+import type { EffectiveNote } from '../common/effective-notes';
 
 /**
  * 법제처 조항 트리 → `LawArticle` 행 (T-100).
@@ -32,6 +33,11 @@ export type LawArticleRow = {
   content: string;
   versionKey: string;
   sortOrder: number;
+  /**
+   * 이 조에 붙은 시행일 표기(T-144) — 항·호 행도 **상위 조의 것을 그대로** 들고 있다(그 항·호의 확정 시행일이 아니다).
+   * 표기가 없으면 빈 배열. 법제처 매퍼가 만든 트리만 들어오므로 "읽었는데 없음"이다
+   */
+  effectiveNotes: EffectiveNote[];
 };
 
 export type LawRowsResult = {
@@ -118,7 +124,7 @@ export function buildLawArticleRows(roots: RegulationArticleNode[]): LawRowsResu
   };
 
   /** 현재 열려 있는 조. 항·호는 이 맥락 위에서 만들어진다 */
-  type JoCtx = { no: number; branch: number | null; label: string };
+  type JoCtx = { no: number; branch: number | null; label: string; notes: EffectiveNote[] };
 
   const visitHo = (nodes: RegulationArticleNode[], jo: JoCtx, clause: number | null, clauseLabel: string) => {
     for (const node of nodes) {
@@ -148,6 +154,7 @@ export function buildLawArticleRows(roots: RegulationArticleNode[]): LawRowsResu
         label: `${clauseLabel}${ordinalLabel(ho.no, ho.branch, '호')}`,
         title: null,
         content: (node.content || '').trim(),
+        effectiveNotes: jo.notes,
       });
       // 호 아래 목은 행을 만들지 않고 호 본문에 합친다
       for (const child of children) appendTo(row, child);
@@ -170,6 +177,7 @@ export function buildLawArticleRows(roots: RegulationArticleNode[]): LawRowsResu
           label,
           title: null,
           content: (node.content || '').trim(),
+          effectiveNotes: jo.notes,
         });
         visitHo(children, jo, no, label);
         continue;
@@ -209,6 +217,7 @@ export function buildLawArticleRows(roots: RegulationArticleNode[]): LawRowsResu
         no: jo.no,
         branch: jo.branch,
         label: ordinalLabel(jo.no, jo.branch, '조'),
+        notes: node.effectiveNotes ?? [],
       };
       emit({
         nodeKey: `${numberWithBranch(jo.no, jo.branch)}//`,
@@ -218,6 +227,7 @@ export function buildLawArticleRows(roots: RegulationArticleNode[]): LawRowsResu
         label: ctx.label,
         title: (node.articleTitle || '').trim() || null,
         content: (node.content || '').trim(),
+        effectiveNotes: ctx.notes,
       });
       visitHang(children, ctx);
     }

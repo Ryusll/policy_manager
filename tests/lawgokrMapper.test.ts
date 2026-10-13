@@ -276,3 +276,66 @@ describe('메타·값 변환', () => {
     expect(item.shortTitle).toBeNull();
   });
 });
+
+describe('buildTreeFromJoUnits — 조별 시행일 표기 (T-144, PAT-06)', () => {
+  // 소득세법 제164조의3 실응답 — 조문시행일자는 판 시행일과 같고, 늦게 시행되는 일부는 조문참고자료의 글자 표기로만 온다
+  const 조 = (over: Partial<LawGoKrJoUnit> = {}): LawGoKrJoUnit => ({
+    조문번호: '164',
+    조문가지번호: '3',
+    조문여부: '조문',
+    조문제목: '간이지급명세서의 제출',
+    조문내용: '제164조의3(간이지급명세서의 제출) 원천징수의무자는 …',
+    조문시행일자: '20260101',
+    조문참고자료: '[본조신설 2018.12.31][제목개정 2021.3.16][시행일: 2027.1.1] 제164조의3제1항 중 "제1호의 소득"의 개정부분',
+    ...over,
+  });
+
+  it('참고자료의 표기를 조 노드에 단다 — 날짜·범위·출처, 본문은 그대로', () => {
+    const [node] = buildTreeFromJoUnits([조()], '2026-01-01').roots;
+    expect(node.effectiveNotes).toEqual([
+      {
+        date: '2027-01-01',
+        scope: 'partial',
+        scopeText: '제164조의3제1항 중 "제1호의 소득"의 개정부분',
+        source: '조문참고자료',
+        raw: '[시행일: 2027.1.1]',
+      },
+    ]);
+    expect(node.content).toBe('원천징수의무자는 …');
+  });
+
+  it('표기가 없는 조는 칸 자체를 만들지 않는다(트리 JSON 을 키우지 않는다)', () => {
+    const [node] = buildTreeFromJoUnits([조({ 조문참고자료: '[본조신설 2018.12.31]' })], '2026-01-01').roots;
+    expect('effectiveNotes' in node).toBe(false);
+  });
+
+  it('조문시행일자가 판 시행일과 다르면 표기로 남기고, 판 시행일을 모르면(null) 비교하지 않는다', () => {
+    const differing = 조({ 조문시행일자: '20270701', 조문참고자료: '' });
+    expect(buildTreeFromJoUnits([differing], '2026-01-01').roots[0].effectiveNotes?.[0]).toMatchObject({ date: '2027-07-01', source: '조문시행일자', scope: 'unknown' });
+    expect('effectiveNotes' in buildTreeFromJoUnits([differing]).roots[0]).toBe(false);
+  });
+
+  it('조문내용 안의 표기(법령 시행일보다 앞서는 조)도 읽는다 — 본문에서 지우지는 않는다', () => {
+    const 중대재해: LawGoKrJoUnit = {
+      조문번호: '16',
+      조문여부: '조문',
+      조문제목: '정부의 사업주 등에 대한 지원 및 보고',
+      조문내용: '제16조(정부의 사업주 등에 대한 지원 및 보고)[시행일 : 2021.1.26] 제16조',
+      조문시행일자: '20220127',
+    };
+    const [node] = buildTreeFromJoUnits([중대재해], '2022-01-27').roots;
+    expect(node.effectiveNotes).toEqual([
+      { date: '2021-01-26', scope: 'unknown', scopeText: '제16조', source: '조문내용', raw: '[시행일 : 2021.1.26]' },
+    ]);
+    expect(node.content).toContain('[시행일 : 2021.1.26]');
+  });
+
+  it('mapLawDetail 은 기본정보의 시행일자를 판 시행일로 넘긴다', () => {
+    const detail = {
+      기본정보: { 시행일자: '20260101', 법령명_한글: '시험법' },
+      조문: { 조문단위: [조({ 조문시행일자: '20270701', 조문참고자료: '' })] },
+    } as any;
+    const { tree } = mapLawDetail(detail, '1');
+    expect(tree.roots[0].effectiveNotes?.[0]).toMatchObject({ date: '2027-07-01', source: '조문시행일자' });
+  });
+});

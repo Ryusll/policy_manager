@@ -1,4 +1,5 @@
 import client from './client';
+import type { EffectiveNote } from '../lib/effectiveNotes';
 
 /**
  * 법령 (T-100). 테넌트 공용 — 등록된 법령은 모든 회사가 같이 본다(ADR-0020).
@@ -35,6 +36,8 @@ export type LawArticle = {
   content: string;
   versionKey: string;
   effectiveDate: string | null;
+  /** 조별 시행일 표기(T-144) — null = 아직 읽지 않음, [] = 없음. 항·호 행은 상위 조의 것 */
+  effectiveNotes?: EffectiveNote[] | null;
   sortOrder: number;
 };
 

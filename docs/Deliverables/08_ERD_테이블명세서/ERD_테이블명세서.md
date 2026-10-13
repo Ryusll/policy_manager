@@ -266,6 +266,7 @@ id, code(unique, 예 `law.go.kr`), name, baseUrl, isActive.
 | promulgatedDate | date? | 공포일 |
 | effectiveDate | date? | **법령 시행일** (≠ 사내 규정 시행일) |
 | versionKey | string? | 현재 수신본의 지문. 바뀌면 개정. 조항 지문을 **문서 순서대로** 이어 해시한다 |
+| effectiveNotesVersion | int? | 조항의 조별 시행일 표기를 쓴 **읽기 규칙의 판**(T-144, 마이그레이션 `20261012010000_law_effective_notes`). null = 아직 읽지 않음(T-144 이전 등록). 등록·새 판 저장이 지금 판을 남기고, 주기 동기화는 이 값이 지금 규칙과 다를 때만 같은 판을 다시 읽어 표기를 맞춘다 |
 | lastCheckedAt | datetime? | 마지막 확인 **시도** 시각. 실패해도 갱신한다 — 고장 난 법령 하나가 매번 맨 앞에 서지 않게 |
 | lastCheckError | text? | 마지막 확인이 실패했으면 사유, 성공이면 null — **"개정 없음"과 "확인 못 함"을 가른다** (T-104) |
 
@@ -274,7 +275,8 @@ id, code(unique, 예 `law.go.kr`), name, baseUrl, isActive.
 #### LawArticle (`law_articles`) — 법령조항, 테넌트 공용 ✅ 구현됨
 lawId FK, **nodeKey**, articleNo(조), clauseNo(항, null 허용), itemNo(호, null 허용),
 label(사람이 읽는 표기), title?, content(text), versionKey, effectiveDate?, sortOrder,
-deletedAt?(법령에서 사라진 시각 — T-124, 마이그레이션 `20261010030000_law_article_deleted_at`).
+deletedAt?(법령에서 사라진 시각 — T-124, 마이그레이션 `20261010030000_law_article_deleted_at`),
+**effectiveNotes?**(Json — 조마다 다른 시행일 표기 `[{date, scope, scopeText, source, raw}]`, T-144 PAT-06, 마이그레이션 `20261012010000_law_effective_notes`. null = 아직 수집 안 함(T-144 이전 등록), `[]` = 읽었지만 표기 없음. 항·호 행도 상위 조의 것을 들고 있다. `effectiveDate` 는 계속 판 시행일이다).
 `@@unique([lawId, nodeKey])`, 인덱스 `[lawId, sortOrder]`.
 
 **사라진 조항은 지우지 않는다(T-124).** 동기화에서 응답에 없는 조항은 `deletedAt` 만 채운다 — 지우면 회사들이 걸어 둔
@@ -320,7 +322,7 @@ deletedAt?(법령에서 사라진 시각 — T-124, 마이그레이션 `20261010
 `Article.relatedLawNote`(자유 텍스트 메모)를 대체하는 것이 아니라 **기계가 따라갈 수 있는 형태를 새로 만드는 것**이다.
 
 #### LawChangeEvent (`law_change_events`) — 변경 이벤트, 테넌트 공용 ✅ 구현됨 (T-103)
-lawId FK(cascade), lawArticleId FK?(**SetNull**), nodeKey, changeType(enum LawChangeType: created/modified/deleted), beforeContent(text?), afterContent(text?), beforeVersionKey?, afterVersionKey?, promulgatedDate(공포일), lawEffectiveDate(법령 시행일), receivedVia(enum LawEventChannel: poll/manual/webhook — **수신경로**), detectedAt.
+lawId FK(cascade), lawArticleId FK?(**SetNull**), nodeKey, changeType(enum LawChangeType: created/modified/deleted), beforeContent(text?), afterContent(text?), beforeVersionKey?, afterVersionKey?, promulgatedDate(공포일), lawEffectiveDate(법령 시행일), receivedVia(enum LawEventChannel: poll/manual/webhook — **수신경로**), detectedAt, **effectiveInfo?**(Json — 그때의 조별 시행일 표기 스냅샷 `{mst, inherited, before, after, rules, beforeRules}`, T-144. rules·beforeRules = 뒤·앞 표기를 읽은 규칙의 판(다르면 앞뒤를 견주지 않는다). before null = 그때 수집 안 함, after null = 사라진 조항. 본문이 바뀐 이벤트에만, 앞뒤 표기가 모두 없으면 null).
 amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. null 이면 동기화가 끝날 때 처리하고, 한 회사라도 실패하면 비워 둬 다음 실행에서 다시 처리한다. 기능 도입 전 이벤트는 마이그레이션이 감지 시각으로 채웠다).
 인덱스 `[lawArticleId, detectedAt]`, `[lawId, detectedAt]`, `[lawEffectiveDate]`, `[amendmentsProcessedAt]`.
 

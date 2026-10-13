@@ -4,6 +4,7 @@ import type { LawSyncTrigger } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { LawsService } from './laws.service';
+import { collectEffectiveNotes } from './law-effective-collect';
 import { AmendmentsService } from '../amendments/amendments.service';
 import {
   decideVersion,
@@ -22,6 +23,7 @@ interface SyncTarget {
   lawName: string;
   externalId: string;
   externalLawId: string | null;
+  effectiveNotesVersion: number | null;
 }
 
 function errorText(e: unknown): string {
@@ -64,7 +66,7 @@ export class LawSyncService {
       const targets = await this.prisma.law.findMany({
         orderBy: [{ lastCheckedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
         take: limit,
-        select: { id: true, lawName: true, externalId: true, externalLawId: true },
+        select: { id: true, lawName: true, externalId: true, externalLawId: true, effectiveNotesVersion: true },
       });
       // 순차 처리 — 법제처 호출량은 인증값 단위로 제한된다
       for (const law of targets) results.push(await this.syncOne(law));
@@ -147,14 +149,23 @@ export class LawSyncService {
         const { events } = await this.laws.applyNewVersion(law.id, decision.mst, 'poll');
         return { ...base, outcome: 'updated', toMst: decision.mst, events };
       }
+      // T-144: 같은 판이면 본문을 다시 받지 않으므로, 조별 시행일 표기를 아직 지금 규칙으로 읽지 않은(T-144 이전 등록·규칙 변경)
+      // 법령은 여기서 한 번 맞춘다. 이벤트는 만들지 않는다. 실패해도 법령은 "개정 없음"이 맞으니 결과는 그대로 두고, 실패는
+      // 결과의 note 로 알린다(법령의 판이 그대로라 다음 주기에 다시 시도한다)
+      const notesError = await collectEffectiveNotes(this.prisma, this.lawGoKr, law).then(
+        (written) => {
+          if (written) this.log.log(`조별 시행일 표기 ${written}건을 다시 읽어 맞췄습니다 [${law.lawName}]`);
+          return null;
+        },
+        (e) => errorText(e),
+      );
+      if (notesError) this.log.warn(`조별 시행일 표기를 채우지 못했습니다 [${law.lawName}]: ${notesError}`);
       await this.markChecked(law.id, null);
-      return {
-        ...base,
-        outcome: 'unchanged',
-        ...(decision.kind === 'older'
-          ? { note: `법제처 검색 결과(MST ${decision.candidate})가 저장된 판보다 오래돼 그대로 뒀습니다.` }
-          : {}),
-      };
+      const notes = [
+        decision.kind === 'older' ? `법제처 검색 결과(MST ${decision.candidate})가 저장된 판보다 오래돼 그대로 뒀습니다.` : null,
+        notesError ? `조별 시행일 표기를 채우지 못했습니다(다음 동기화에서 다시 시도): ${notesError}` : null,
+      ].filter(Boolean);
+      return { ...base, outcome: 'unchanged', ...(notes.length ? { note: notes.join(' ') } : {}) };
     } catch (e) {
       const error = errorText(e);
       this.log.warn(`법령 동기화 실패 [${law.lawName}]: ${error}`);

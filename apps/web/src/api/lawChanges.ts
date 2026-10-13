@@ -1,4 +1,5 @@
 import client from './client';
+import type { EventEffectiveNotes } from '../lib/effectiveNotes';
 import type { LawRelationType } from './lawLinks';
 import type { AmendmentCandidate } from './amendments';
 
@@ -32,6 +33,8 @@ export type LawChangeEvent = {
   afterContent: string | null;
   promulgatedDate: string | null;
   lawEffectiveDate: string | null;
+  /** 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로. 없으면 null */
+  effectiveNotes?: EventEffectiveNotes | null;
   receivedVia: string;
   detectedAt: string;
 };

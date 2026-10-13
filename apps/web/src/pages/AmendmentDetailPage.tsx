@@ -18,6 +18,7 @@ import {
 } from '../api/amendments';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
+import EffectiveNotesLine from '../components/EffectiveNotesLine';
 import { formatArticleAnchor } from '../lib/articleAnchor';
 import { serviceToday } from '../lib/serviceDate';
 import { versionDates } from '../lib/versionDates';
@@ -182,6 +183,7 @@ function Header({ data }: { data: AmendmentDetail }) {
         {data.createdBy ? `만든 사람 ${data.createdByName ?? '알 수 없음'}` : '자동 생성'} ·{' '}
         {new Date(data.createdAt).toLocaleString('ko-KR')}
       </p>
+      <EffectiveNotesLine info={data.event.effectiveNotes} />
     </div>
   );
 }

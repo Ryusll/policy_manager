@@ -15,6 +15,8 @@ import { lawsApi, type LawArticle } from '../api/laws';
 import { lawLinksApi, RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { ConfirmBadge } from '../components/LawLinksPanel';
 import LawChangeList from '../components/LawChangeList';
+import EffectiveNotesLine, { EffectiveNotesMark } from '../components/EffectiveNotesLine';
+import { lawArticleEffectiveNotes } from '../lib/effectiveNotes';
 import { useAuthStore } from '../stores/authStore';
 
 export default function LawDetailPage() {
@@ -139,6 +141,7 @@ function ArticleRow({ article, selected, onClick }: { article: LawArticle; selec
           {article.label}
         </span>
         {article.title && <span className="text-gray-500 truncate">{article.title}</span>}
+        {depth === 0 && <EffectiveNotesMark notes={article.effectiveNotes} />}
       </button>
     </li>
   );
@@ -176,6 +179,9 @@ function SelectedArticlePanel({ article, canEdit }: { article: LawArticle; canEd
       </div>
       <div className="p-4 border-b border-gray-200 bg-gray-50/60">
         <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{article.content}</p>
+        <div className="mt-2 empty:hidden">
+          <EffectiveNotesLine info={lawArticleEffectiveNotes(article)} />
+        </div>
       </div>
 
       <div className="p-4">

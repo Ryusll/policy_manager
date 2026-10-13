@@ -16,6 +16,13 @@ import {
   OneOrMany,
 } from './lawgokr.types';
 import { RegulationArticleNode } from '../regulation-parse/regulation-tree.builder';
+import { EFFECTIVE_NOTES_VERSION } from '../common/effective-notes';
+
+/**
+ * 법령 본문 매핑 결과의 캐시 키. v2 — 트리 노드에 조별 시행일 표기가 붙었다(T-144). 표기 읽기 규칙의 판(`n1`)도 넣는다 —
+ * 규칙을 고쳐 판을 올리면 옛 규칙으로 매핑한 캐시(최대 하루)를 읽어 새 판 번호로 찍는 일이 없게
+ */
+export const lawDetailCacheKey = (mst: string) => `lawgokr:law:v2:n${EFFECTIVE_NOTES_VERSION}:${mst}`;
 
 /**
  * T-53. 법제처 국가법령정보 공동활용 OPEN API 프록시.
@@ -189,7 +196,7 @@ export class LawGoKrService {
       throw new NotFoundException('법령일련번호(MST)는 숫자여야 합니다.');
     }
 
-    const cacheKey = `lawgokr:law:v1:${key}`;
+    const cacheKey = lawDetailCacheKey(key);
     const cached = await this.cache.get<{ meta: LawDetailMeta; tree: { roots: RegulationArticleNode[] } }>(cacheKey);
     if (cached) return cached;
 

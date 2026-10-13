@@ -1,4 +1,5 @@
 import client from './client';
+import type { EventEffectiveNotes } from '../lib/effectiveNotes';
 
 /**
  * 개정 후보 (T-106). 법령 변경을 규칙으로 우리 조문에 옮긴 **초안**이다 —
@@ -150,6 +151,8 @@ export type AmendmentDetail = AmendmentCandidate & {
     beforeContent: string | null;
     afterContent: string | null;
     lawEffectiveDate: string | null;
+    /** 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로. 없으면 null */
+    effectiveNotes?: EventEffectiveNotes | null;
     promulgatedDate: string | null;
   };
 };

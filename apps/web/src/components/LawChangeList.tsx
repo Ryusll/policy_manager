@@ -10,6 +10,8 @@ import {
   type LawChangeListItem,
 } from '../api/lawChanges';
 import LawImpactPanel from './LawImpactPanel';
+import { effectiveNotesDates } from '../lib/effectiveNotes';
+import { useI18n } from '../i18n/useI18n';
 
 const CHANGE_TYPE_STYLE: Record<string, string> = {
   created: 'bg-green-50 text-green-800 border-green-200',
@@ -102,6 +104,7 @@ function Row({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   const body = (
     <>
       <span className={clsx('px-1.5 py-0.5 rounded border text-[11px] shrink-0', CHANGE_TYPE_STYLE[ev.changeType])}>
@@ -116,6 +119,16 @@ function Row({
         {' · '}
         {RECEIVED_VIA_LABEL[ev.receivedVia] ?? ev.receivedVia} {new Date(ev.detectedAt).toLocaleDateString('ko-KR')}
       </span>
+      {ev.effectiveNotes && (
+        <span
+          className="px-1.5 py-0.5 rounded text-[11px] bg-amber-50 text-amber-800 border border-amber-200 shrink-0"
+          title={t(ev.effectiveNotes.notes.length ? 'effectiveNotes.badgeTitle' : 'effectiveNotes.badgeRemovedTitle', {
+            dates: effectiveNotesDates(ev.effectiveNotes),
+          })}
+        >
+          {t(ev.effectiveNotes.notes.length ? 'effectiveNotes.badge' : 'effectiveNotes.badgeRemoved')}
+        </span>
+      )}
       <span className="ml-auto flex items-center gap-1.5 shrink-0">
         <span
           className={clsx(
