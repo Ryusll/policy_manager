@@ -1,6 +1,7 @@
 import { RegulationArticleNode } from '../regulation-parse/regulation-tree.builder';
 import { classifyNorm } from '../regulation-parse/commit-rows';
 import { lawVersionKey } from './law-version-key';
+import { parseNodeKey } from './law-node-key';
 import type { EffectiveNote } from '../common/effective-notes';
 
 /**
@@ -93,12 +94,12 @@ function ordinalLabel(no: number, branch: number | null, unit: '조' | '호'): s
  * 형식이 어긋나면 nodeKey 를 그대로 돌려준다 — 빈칸보다 낫다.
  */
 export function labelFromNodeKey(nodeKey: string): string {
-  const m = /^(\d+)(?:의(\d+))?\/(\d*)\/(?:(\d+)(?:의(\d+))?)?$/.exec(nodeKey);
-  if (!m) return nodeKey;
-  const [, jo, joBranch, clause, ho, hoBranch] = m;
-  let label = ordinalLabel(Number(jo), joBranch ? Number(joBranch) : null, '조');
-  if (clause) label += `제${Number(clause)}항`;
-  if (ho) label += ordinalLabel(Number(ho), hoBranch ? Number(hoBranch) : null, '호');
+  // 형식 해석은 law-node-key.ts 하나 — 영향 범위(위아래 조항) 계산과 같은 규칙(T-148)
+  const p = parseNodeKey(nodeKey);
+  if (!p) return nodeKey;
+  let label = ordinalLabel(p.joNo, p.joBranch, '조');
+  if (p.clause) label += `제${Number(p.clause)}항`;
+  if (p.itemNo !== null) label += ordinalLabel(p.itemNo, p.itemBranch, '호');
   return label;
 }
 

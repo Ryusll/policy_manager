@@ -220,6 +220,7 @@ export const REVIEW_FLAG_LABEL: Record<string, string> = {
   unexplained_change: '근거 없는 변경',
   variable_conflict: '변수 값과 법령 개정이 같은 자리',
   variable_unresolved: '변수 값 미정',
+  parent_link: '상위 조항 연결로 찾음',
 };
 
 export const RULE_LABEL: Record<string, string> = {

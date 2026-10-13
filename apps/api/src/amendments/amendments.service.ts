@@ -6,6 +6,7 @@ import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-o
 import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notify.types';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { impactReferenceDate } from '../law-changes/law-impact';
+import { tenantsReached } from '../law-changes/law-link-reach';
 import { presentEventEffective } from '../laws/law-effective-info';
 import { VariablesService } from '../variables/variables.service';
 import { lockArticleRow } from '../common/row-locks';
@@ -26,6 +27,7 @@ import {
 } from '../law-changes/law-changes.service';
 import { diffLawText } from './amendment-text';
 import { generateRuleCandidate, RULES, RULESET_VERSION, TEMPLATES } from './amendment-rules';
+import { articlesWithCandidates, capConfidence, PARENT_LINK_FLAG } from './amendment-reach';
 import { CANDIDATE_SELECT, currentState, presentCandidate } from './amendment-present';
 import { contentHash, hasSubstantiveChange, historyFingerprint } from './amendment-revision';
 import { diffCandidate, relinkDiff, type AppliedRule } from './amendment-diff';
@@ -165,7 +167,8 @@ export class AmendmentsService {
   async generateForEvent(
     tenantId: string,
     eventId: string,
-    opts: { asOf?: string; plannedEffectiveDate?: string; userId: string | null; notify?: boolean; articleId?: string },
+    // onlyNew — 자동 생성: 이 변경으로 이미 후보가 있는 조문은 건너뛴다(T-148, amendment-reach.ts)
+    opts: { asOf?: string; plannedEffectiveDate?: string; userId: string | null; notify?: boolean; articleId?: string; onlyNew?: boolean },
   ): Promise<GenerateResult> {
     const event = await this.prisma.lawChangeEvent.findUnique({ where: { id: eventId }, select: SOURCE_SELECT });
     if (!event) throw new NotFoundException('변경 이벤트를 찾을 수 없습니다.');
@@ -189,10 +192,14 @@ export class AmendmentsService {
       return { ...result, noSubstantiveChange: true };
     }
 
-    const impacted = (await this.lawChanges.impactedArticles(tenantId, event.lawArticleId, asOfDate)).filter(
+    const reached = (await this.lawChanges.impactedArticles(tenantId, event.lawArticleId, asOfDate)).filter(
       // "다시 만들기"(T-107)는 그 조문만 — 같은 이벤트의 다른 조문까지 새로 만들지 않는다
       (item) => !opts.articleId || item.article.id === opts.articleId,
     );
+    const had = opts.onlyNew
+      ? await articlesWithCandidates(this.prisma, tenantId, event.id, reached.map((i) => i.article.id))
+      : new Set<string>();
+    const impacted = reached.filter((item) => !had.has(item.article.id));
     const rows: Prisma.AmendmentCandidateCreateManyInput[] = [];
     // 기준 본문과 함께 그 조문의 발행 이력 지문을 고정한다(T-108) — 승인 때 다시 계산해 그 사이 다른 발행을 잡는다
     const fps = await this.fingerprints(impacted.filter((i) => i.baseVersion).map((i) => i.article.id));
@@ -303,7 +310,7 @@ export class AmendmentsService {
   /**
    * 동기화가 끝날 때 부른다 — 아직 처리하지 않은 이벤트마다, 확정 연결을 가진 회사별로 후보를 만든다.
    * 한 회사가 실패해도 다른 회사는 진행하고, 실패가 있었던 이벤트는 표시하지 않아 다음 실행에서
-   * 다시 처리한다(이미 만든 후보는 중복 키로 건너뛰므로 알림도 다시 가지 않는다).
+   * 다시 처리한다(이 변경으로 이미 후보가 있는 조문은 건너뛰므로 알림도 다시 가지 않는다 — onlyNew, T-148).
    */
   async processPendingEvents(limit = 100) {
     const events = await this.prisma.lawChangeEvent.findMany({
@@ -316,16 +323,11 @@ export class AmendmentsService {
     for (const e of events) {
       let ok = true;
       if (e.lawArticleId) {
-        // 회사 경계를 넘는 조회지만 사용자에게 돌려주지 않는 시스템 처리다 — 회사별 생성은
-        // generateForEvent 가 그 회사 조건으로 다시 한다
-        const tenants = await this.prisma.lawLink.findMany({
-          where: { lawArticleId: e.lawArticleId, confirmState: 'confirmed' },
-          select: { tenantId: true },
-          distinct: ['tenantId'],
-        });
-        for (const { tenantId } of tenants) {
+        // 회사 경계를 넘는 조회지만 사용자에게 돌려주지 않는 시스템 처리다 — 바뀐 조항과 그 위 조항에 확정 연결이 닿는
+        // 회사(T-148). 회사별 생성은 generateForEvent 가 그 회사 조건으로 다시 하고, 이미 후보가 있는 조문은 건너뛴다
+        for (const tenantId of await tenantsReached(this.prisma, e.lawArticleId)) {
           try {
-            const r = await this.generateForEvent(tenantId, e.id, { userId: null, notify: true });
+            const r = await this.generateForEvent(tenantId, e.id, { userId: null, notify: true, onlyNew: true });
             if (r.created.length) {
               summary.tenants++;
               summary.created += r.created.length;
@@ -1395,6 +1397,11 @@ export class AmendmentsService {
     });
     const flags = new Set<string>(r.flags);
     if (variableEntries.some((e) => e.status === 'held')) flags.add('variable_unresolved');
+    // 위 조항(조·항)에 건 연결로 찾았으면 바뀐 항·호가 이 조문에 맞는지 사람이 본다 — 규칙이 다 반영해도 '보통'까지(T-148)
+    if (item.viaParent) flags.add(PARENT_LINK_FLAG);
+    const confidence = item.viaParent
+      ? { ...r.confidence, level: capConfidence(r.confidence.level, 'medium'), reasons: [...r.confidence.reasons, PARENT_LINK_FLAG] }
+      : r.confidence;
     const lawLabel = event.lawArticle?.label ?? labelFromNodeKey(event.nodeKey);
     const asOf = toDateOnlyString(asOfDate);
     const usedRules = [...new Set(r.applications.map((a) => a.ruleId))];
@@ -1425,9 +1432,14 @@ export class AmendmentsService {
         confirmState: item.confirmState,
         confidence: item.linkConfidence,
         confirmedAt: item.confirmedAt,
+        // 연결이 걸린 법령조항 — 바뀐 조항의 위 조항이면 viaParent(T-148)
+        lawArticleId: item.linkLawArticleId,
+        label: item.linkLabel,
+        viaParent: item.viaParent,
       },
       path: [
         { type: 'lawArticle', id: event.lawArticleId, label: `${event.law.lawName} ${lawLabel}` },
+        ...(item.viaParent ? [{ type: 'lawArticle', id: item.linkLawArticleId, label: `${event.law.lawName} ${item.linkLabel}` }] : []),
         { type: 'lawLink', id: item.linkId, label: item.relationType },
         { type: 'article', id: item.article.id, label: articlePathLabel(item.policy.title, item.article) },
       ],
@@ -1442,7 +1454,7 @@ export class AmendmentsService {
       engine: RULESET_VERSION,
       rules: Object.values(RULES).filter((x) => usedRules.includes(x.id)),
       templates: Object.values(TEMPLATES).filter((x) => usedTemplates.includes(x.id)),
-      confidence: r.confidence,
+      confidence,
       trigger: userId ? 'user' : 'system',
       // 입력 원천을 묶어 둔다 — 다른 개정의 본문이 섞이지 않았음을 확인할 수 있게(특허 도 10 입력 1010)
       source: {
@@ -1478,7 +1490,7 @@ export class AmendmentsService {
       generationMethod: 'rule',
       variant: RULESET_VERSION,
       generationMeta: generationMeta as unknown as Prisma.InputJsonValue,
-      confidence: r.confidence.level,
+      confidence: confidence.level,
       reviewFlags: [...flags],
       asOfDate,
       plannedEffectiveDate: variables.planned,

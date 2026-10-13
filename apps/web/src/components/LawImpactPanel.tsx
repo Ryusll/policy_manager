@@ -5,16 +5,18 @@ import { amendmentsApi } from '../api/amendments';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { formatArticleAnchor } from '../lib/articleAnchor';
 import { toast } from '../stores/toastStore';
+import { useI18n } from '../i18n/useI18n';
 import AmendmentCandidatePreview from './AmendmentCandidatePreview';
 import EffectiveNotesLine from './EffectiveNotesLine';
 
 /**
  * 법령 변경 하나가 우리 회사의 어느 조문에 걸리는지 (T-105).
  *
- * 확정된 연결만 영향으로 보이고, 자동 추천 연결은 "확인이 필요한 연결 N건"으로만 알린다.
+ * 확정된 연결만 영향으로 보이고, 자동 추천 연결은 "추천 연결이 걸린 조문 N곳"으로만 알린다(T-148).
  * 각 조문에는 **제1 조문**(기준일에 시행 중인 본문)을 함께 보여 준다 — 개정 초안(T-106)의 출발점이다.
  */
 export default function LawImpactPanel({ eventId }: { eventId: string }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ['law-changes', 'impact', eventId],
@@ -100,8 +102,9 @@ export default function LawImpactPanel({ eventId }: { eventId: string }) {
 
       {data.suggestedCount > 0 && (
         <p className="rounded border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-amber-800">
-          확인이 필요한 추천 연결이 <b>{data.suggestedCount}건</b> 있습니다. 추천 연결은 확정해야 영향
-          분석에 들어갑니다 — 왼쪽에서 이 법령조항을 눌러 확정하거나 반려하세요.
+          {t('lawImpact.suggestedLead')}
+          <b>{t('lawImpact.suggestedCount', { count: data.suggestedCount })}</b>
+          {t('lawImpact.suggestedTail')}
         </p>
       )}
 
@@ -133,6 +136,7 @@ export default function LawImpactPanel({ eventId }: { eventId: string }) {
 }
 
 function ImpactRow({ item }: { item: ImpactedArticle }) {
+  const { t } = useI18n();
   const anchor = formatArticleAnchor(item.article);
   return (
     <li className="px-2.5 py-2 space-y-1">
@@ -144,6 +148,14 @@ function ImpactRow({ item }: { item: ImpactedArticle }) {
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
           {RELATION_TYPE_LABEL[item.relationType]}
         </span>
+        {item.viaParent && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800"
+            title={t('lawImpact.viaParentTitle')}
+          >
+            {t('lawImpact.viaParentBadge', { label: item.linkLabel })}
+          </span>
+        )}
         {item.evidenceText && <span className="text-[11px] text-gray-500">— {item.evidenceText}</span>}
       </div>
       {item.baseVersion ? (

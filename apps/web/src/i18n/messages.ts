@@ -407,6 +407,13 @@ export const messages: Record<Locale, Msg> = {
     'tour.finish': '시작하기',
     'tour.skip': '건너뛰기',
     'tour.progress': '{cur} / {total}',
+    // 상위 조항에 건 연결로 찾은 영향 (T-148)
+    'lawImpact.viaParentBadge': '{label} 연결로 찾음',
+    'lawImpact.viaParentTitle': '바뀐 조항이 아니라 그 위 조항에 건 연결로 찾았습니다. 바뀐 항·호가 이 조문에 해당하는지 확인하세요.',
+    'lawImpact.suggestedLead': '확인이 필요한 추천 연결이 걸린 조문이 ',
+    'lawImpact.suggestedCount': '{count}곳',
+    'lawImpact.suggestedTail':
+      ' 있습니다(이 조항이나 그 위 조·항에 걸린 것). 추천 연결은 확정해야 영향 분석에 들어갑니다 — 왼쪽에서 그 법령조항을 눌러 확정하거나 반려하세요.',
     // 조별 시행일 표기 (T-144, PAT-06)
     'effectiveNotes.badge': '별도 시행일 표기',
     'effectiveNotes.badgeTitle': '이 조에 별도 시행일 표기가 있습니다({dates}) — 펼쳐서 확인하세요',
@@ -824,6 +831,13 @@ export const messages: Record<Locale, Msg> = {
     'tour.finish': 'Get started',
     'tour.skip': 'Skip',
     'tour.progress': '{cur} / {total}',
+    'lawImpact.viaParentBadge': 'Found via {label}',
+    'lawImpact.viaParentTitle':
+      'Found through a link on a parent provision, not the changed one. Check whether the changed paragraph or item applies to this article.',
+    'lawImpact.suggestedLead': 'Suggested links that need review are attached to ',
+    'lawImpact.suggestedCount': '{count} article(s)',
+    'lawImpact.suggestedTail':
+      ' (on this provision or a parent article or paragraph). Suggested links count toward impact only after you confirm them — select that law provision on the left to confirm or reject them.',
     'effectiveNotes.badge': 'Separate effective date',
     'effectiveNotes.badgeTitle': 'This article has a separate effective-date note ({dates}) — expand to check',
     'effectiveNotes.headArticle': 'This article has a separate effective-date note',

@@ -5,7 +5,10 @@ import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-o
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { labelFromNodeKey } from '../laws/law-rows';
 import { presentEventEffective } from '../laws/law-effective-info';
+import { closestPerArticle } from '../laws/law-node-key';
 import { impactReferenceDate } from './law-impact';
+import { affectedEventsWhere, impactCounts, reachOf, reachOfEvents } from './law-link-reach';
+import { ourLinks } from '../law-links/our-links';
 import { CANDIDATE_SELECT, presentCandidate } from '../amendments/amendment-present';
 
 const EVENT_SELECT = {
@@ -71,11 +74,11 @@ export const UNRESOLVABLE_REMOVED =
  *
  * ⚠️ **테넌트 경계.** `LawChangeEvent`·`LawArticle` 은 모든 회사가 함께 쓰는 데이터라 tenantId 가
  * 없다. 영향(= 어느 회사의 어느 조문이 걸려 있나)은 `LawLink` 가 정하므로, **이 서비스의 모든
- * `lawLink` 조회는 `tenantId` 를 where 에 넣는다.** 빠뜨리면 다른 회사가 이 법에 어떻게 대응해
- * 뒀는지(회사 기밀)가 새어 나간다 — T-41 에서 찾은 사고와 같은 모양이다.
+ * `lawLink` 조회는 `ourLinks`(연결의 회사 + 조문의 실제 소속, T-148)로 건다.** 빠뜨리면 다른 회사가
+ * 이 법에 어떻게 대응해 뒀는지(회사 기밀)가 새어 나간다 — T-41 에서 찾은 사고와 같은 모양이다.
  *
  * **확정(`confirmed`)된 연결만 영향으로 본다.** 자동 추천(`suggested`)으로 초안을 만들면 틀린
- * 연결이 그럴듯한 개정안을 만든다 — 추천은 "확인이 필요한 연결 N건"으로만 알린다.
+ * 연결이 그럴듯한 개정안을 만든다 — 추천은 "확인이 필요한 추천 연결이 걸린 조문 N곳"으로만 알린다.
  */
 @Injectable()
 export class LawChangesService {
@@ -85,14 +88,8 @@ export class LawChangesService {
   async list(tenantId: string, query: { lawId?: string; affected?: boolean; limit?: number }) {
     const where: Prisma.LawChangeEventWhereInput = {};
     if (query.lawId) where.lawId = query.lawId;
-    if (query.affected) {
-      const linked = await this.prisma.lawLink.findMany({
-        where: { tenantId, confirmState: 'confirmed' },
-        select: { lawArticleId: true },
-        distinct: ['lawArticleId'],
-      });
-      where.lawArticleId = { in: linked.map((l) => l.lawArticleId) };
-    }
+    // 우리 확정 연결이 걸린 조항과 그 아래 조항의 변경 — 조 단위로 건 연결도 항 개정을 받는다(T-148)
+    if (query.affected) where.AND = [await affectedEventsWhere(this.prisma, tenantId)];
 
     const events = await this.prisma.lawChangeEvent.findMany({
       where,
@@ -101,28 +98,9 @@ export class LawChangesService {
       select: EVENT_SELECT,
     });
 
-    const lawArticleIds = [...new Set(events.map((e) => e.lawArticleId).filter((v): v is string => !!v))];
-    const counts = lawArticleIds.length
-      ? await this.prisma.lawLink.groupBy({
-          by: ['lawArticleId', 'confirmState'],
-          where: {
-            tenantId,
-            lawArticleId: { in: lawArticleIds },
-            confirmState: { in: ['confirmed', 'suggested'] },
-          },
-          _count: { _all: true },
-        })
-      : [];
-    const countOf = (lawArticleId: string | null, state: 'confirmed' | 'suggested') =>
-      counts.find((c) => c.lawArticleId === lawArticleId && c.confirmState === state)?._count._all ?? 0;
-
-    return events.map((e) => ({
-      ...presentEvent(e),
-      impact: {
-        confirmed: countOf(e.lawArticleId, 'confirmed'),
-        suggested: countOf(e.lawArticleId, 'suggested'),
-      },
-    }));
+    // 조문 수 — 바뀐 조항과 그 위 조항에 걸린 연결, 조문의 실제 소속까지 확인한 것만(T-148)
+    const countOf = await impactCounts(this.prisma, tenantId, await reachOfEvents(this.prisma, events));
+    return events.map((e) => ({ ...presentEvent(e), impact: countOf(e.id) }));
   }
 
   /**
@@ -151,9 +129,9 @@ export class LawChangesService {
     }
 
     const impacted = await this.impactedArticles(tenantId, event.lawArticleId, asOfDate);
-    const suggestedCount = await this.prisma.lawLink.count({
-      where: { tenantId, lawArticleId: event.lawArticleId, confirmState: 'suggested' },
-    });
+    // 추천 연결이 걸린 조문 — 바뀐 조항과 그 위 조항까지, 조문의 실제 소속도 확인(T-148)
+    const reach = new Map([[event.id, await reachOf(this.prisma, event.lawArticleId)]]);
+    const suggestedCount = (await impactCounts(this.prisma, tenantId, reach))(event.id).suggested;
 
     // 이 변경으로 만든 개정 후보(T-106)를 조문마다 붙인다 — 지금 기준 본문으로 만든 것이 있으면 그것,
     // 없으면 가장 최근 것(그 사이 기준 본문이 바뀌었다는 뜻이라 isCurrentBase 로 알린다)
@@ -203,18 +181,15 @@ export class LawChangesService {
    *   보인다 — 사라지면 "왜 영향 조문이 줄었나"를 설명할 수 없다. 개정 후보는 만들지 않는다
    */
   async impactedArticles(tenantId: string, lawArticleId: string, asOfDate: Date) {
-    const links = await this.prisma.lawLink.findMany({
-      where: {
-        tenantId,
-        lawArticleId,
-        confirmState: 'confirmed',
-        // 연결 자체의 tenantId 와 별개로 조문의 실제 소속도 본다 — 부모를 안 보고 자식만 확인한
-        // T-41 사고의 재발 방지
-        article: { chapter: { policy: { tenantId } } },
-      },
+    const found = await this.prisma.lawLink.findMany({
+      // 연결 자체의 tenantId 와 별개로 조문의 실제 소속도 본다(ourLinks) — 부모를 안 보고 자식만 확인한 T-41 사고의
+      // 재발 방지. 바뀐 조항과 그 위 조항(조·항)에 건 연결까지 — 조 단위로 건 연결도 항 개정을 받는다(T-148)
+      where: ourLinks(tenantId, { lawArticleId: { in: await reachOf(this.prisma, lawArticleId) }, confirmState: 'confirmed' }),
       orderBy: { createdAt: 'asc' },
       select: {
         id: true,
+        lawArticleId: true,
+        lawArticle: { select: { nodeKey: true, label: true } },
         relationType: true,
         scope: true,
         evidenceText: true,
@@ -241,6 +216,8 @@ export class LawChangesService {
       },
     });
 
+    // 같은 조문이 조·항에 둘 다 걸려 있으면 바뀐 조항에 가까운 연결 하나(T-148)
+    const links = closestPerArticle(found.map((l) => ({ ...l, articleId: l.article.id, nodeKey: l.lawArticle.nodeKey })));
     const missingBase = links.filter((l) => !l.article.versions.length).map((l) => l.article.id);
     const undated = missingBase.length
       ? new Set(
@@ -269,6 +246,10 @@ export class LawChangesService {
                 : 'not_in_force';
         return {
           linkId: link.id,
+          /** 연결이 걸린 법령조항 — 바뀐 조항이 아니라 그 위 조항(조·항)에 건 연결로 찾았으면 viaParent(T-148) */
+          linkLawArticleId: link.lawArticleId,
+          linkLabel: link.lawArticle.label,
+          viaParent: link.lawArticleId !== lawArticleId,
           relationType: link.relationType,
           scope: link.scope,
           evidenceText: link.evidenceText,

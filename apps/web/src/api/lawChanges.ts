@@ -45,6 +45,10 @@ export type LawChangeListItem = LawChangeEvent & {
 
 export type ImpactedArticle = {
   linkId: string;
+  /** 연결이 걸린 법령조항과 그 표기(예: 제60조). 바뀐 조항의 위 조항(조·항)에 건 연결로 찾았으면 viaParent(T-148) */
+  linkLawArticleId: string;
+  linkLabel: string;
+  viaParent: boolean;
   relationType: LawRelationType;
   scope: string | null;
   evidenceText: string | null;

@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { PrismaService } from '../common/prisma/prisma.service';
 import { CreateLawLinkDto, UpdateLawLinkDto } from './law-links.dto';
 import { citationNodeKey, extractLawCitations } from './law-citation';
+import { ourLinks } from './our-links';
 
 /**
  * 법령 관계 정보 (T-101).
@@ -9,7 +10,8 @@ import { citationNodeKey, extractLawCitations } from './law-citation';
  * ⚠️ **테넌트별 데이터다.** `LawArticle`은 테넌트 공용(ADR-0020)이라 tenantId 가 없으므로,
  * 법령조항 id 로 시작하는 조회(`byLawArticle`)는 **이 서비스에서** 경계를 걸어야 한다 —
  * `LawArticle` 조회는 어디에도 tenantId 조건이 없다는 걸 잊기 쉽다. 모든 메서드가
- * `LawLink` 쪽 `where`에 tenantId 를 반드시 넣는다.
+ * `LawLink` 쪽 `where`에 tenantId 를 반드시 넣는다. 조문을 먼저 확인하지 않고 연결을 찾는 조회
+ * (법령조항별 목록·수정·삭제)는 연결이 가리키는 조문의 실제 소속까지 본다 — `ourLinks`(T-148).
  *
  * `Article` 도 자체 tenantId 가 없다(chapter→policy 로 도달). 새 연결을 만들 때는
  * `comments.service.ts` 와 같은 패턴으로 소유를 확인한다: 존재 여부와 테넌트 소속을
@@ -61,7 +63,7 @@ export class LawLinksService {
   async byLawArticle(tenantId: string, lawArticleId: string) {
     await this.requireLawArticle(lawArticleId);
     return this.prisma.lawLink.findMany({
-      where: { tenantId, lawArticleId },
+      where: ourLinks(tenantId, { lawArticleId }),
       include: {
         article: { select: { id: true, title: true, number: true, clauseNumber: true, itemNumber: true } },
       },
@@ -106,7 +108,7 @@ export class LawLinksService {
   }
 
   async update(tenantId: string, id: string, userId: string, dto: UpdateLawLinkDto) {
-    const existing = await this.prisma.lawLink.findFirst({ where: { id, tenantId } });
+    const existing = await this.prisma.lawLink.findFirst({ where: ourLinks(tenantId, { id }) });
     if (!existing) throw new NotFoundException('연결을 찾을 수 없습니다.');
 
     const becomingConfirmed = dto.confirmState === 'confirmed' && existing.confirmState !== 'confirmed';
@@ -124,7 +126,7 @@ export class LawLinksService {
   }
 
   async remove(tenantId: string, id: string) {
-    const existing = await this.prisma.lawLink.findFirst({ where: { id, tenantId }, select: { id: true } });
+    const existing = await this.prisma.lawLink.findFirst({ where: ourLinks(tenantId, { id }), select: { id: true } });
     if (!existing) throw new NotFoundException('연결을 찾을 수 없습니다.');
     await this.prisma.lawLink.delete({ where: { id } });
     return { ok: true };

@@ -80,6 +80,8 @@ export type ReviewFlag =
   | 'variable_conflict'
   /** 변수 값을 정하지 못해 넣지 않은 자리가 있다 — 값 없음·기간 겹침·기간 미확정·문구 불일치(T-109 ②) */
   | 'variable_unresolved'
+  /** 바뀐 조항이 아니라 그 위 조항(조·항)에 건 연결로 찾았다 — 신뢰도 '보통'까지(T-148, amendment-reach.ts) */
+  | 'parent_link'
   /** 근거가 연결되지 않은 변경이 있다 (도 10 단계 1050) */
   | 'unexplained_change';
 
