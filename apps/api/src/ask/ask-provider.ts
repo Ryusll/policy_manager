@@ -198,7 +198,8 @@ export class AnthropicAskProvider implements AskProvider {
         this.log.warn(`AI 호출 실패 (${e.status}): ${e.message}`);
         throw new BadGatewayException('AI 답변을 받지 못했습니다. 잠시 후 다시 물어 주세요.');
       }
-      this.log.warn(`AI 호출 실패: ${(e as Error)?.message}`);
+      // SDK 밖 오류(응답 본문 JSON 파싱 등)의 메시지에는 입력 일부가 담길 수 있다 — 이름만 남긴다(T-146)
+      this.log.warn(`AI 호출 실패: ${e instanceof Anthropic.AnthropicError ? e.message : (e as Error)?.name}`);
       throw new BadGatewayException('AI 답변을 받지 못했습니다. 잠시 후 다시 물어 주세요.');
     }
 
@@ -222,7 +223,8 @@ export class AnthropicAskProvider implements AskProvider {
     try {
       return { raw: JSON.parse(text), usage };
     } catch {
-      this.log.warn(`AI 응답을 JSON 으로 읽지 못함 (앞부분: ${text.slice(0, 80)})`);
+      // 응답 내용은 남기지 않는다 — 컨테이너 로그는 질문 기록의 90일 파기 밖에 있다(T-146)
+      this.log.warn(`AI 응답을 JSON 으로 읽지 못함 (${text.length}자)`);
       throw new AskBadResponseError('AI 답을 읽지 못했습니다. 잠시 후 다시 물어 주세요.', usage);
     }
   }

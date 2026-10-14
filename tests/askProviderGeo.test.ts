@@ -17,7 +17,7 @@ vi.mock('@anthropic-ai/sdk', async (importOriginal) => {
 });
 
 import { APIConnectionError, APIError } from '@anthropic-ai/sdk';
-import { AnthropicAskProvider } from '../apps/api/src/ask/ask-provider';
+import { AnthropicAskProvider, AskBadResponseError } from '../apps/api/src/ask/ask-provider';
 
 const reply = (text: string) => ({
   model: 'claude-opus-5-5',
@@ -40,6 +40,21 @@ describe('Anthropic 호출 — 고르기·답하기 모두 처리 지역 미국 
     create.mockResolvedValueOnce(reply('{"answerable":false,"blocks":[],"citations":[]}'));
     await new AnthropicAskProvider('test-key').answer({ context: '<규정></규정>', question: '목적은?' });
     expect(create.mock.calls[0][0].inference_geo).toBe('us');
+  });
+
+  it('JSON 으로 읽지 못한 응답은 내용 없이 길이만 경고에 남긴다 — 컨테이너 로그는 질문 기록의 90일 파기 밖이다', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      create.mockResolvedValueOnce(reply('직원 병가 사유 메모 — JSON 아님'));
+      const sent = new AnthropicAskProvider('test-key').select({ toc: 'K1 | 인사규정 | 제1조(목적)', question: '목적은?' });
+      await expect(sent).rejects.toBeInstanceOf(AskBadResponseError);
+      const logged = warn.mock.calls.map(([m]) => String(m)).join('\n');
+      expect(logged).toContain('JSON 으로 읽지 못함');
+      expect(logged).not.toContain('병가 사유');
+      expect(logged).not.toContain('직원'); // 앞 몇 글자만 찍는 것도 안 된다
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('응답의 처리 지역이 us 가 아니거나 없으면 경고를 남긴다 — 운영 키 투입 뒤 확인하는 경고(런북 7-9)', async () => {
@@ -93,11 +108,20 @@ describe('Anthropic 호출 — 다시 보내기는 SDK 대신 직접, 다시 보
     }
   });
 
-  it('SDK 호출 안에서 난 SDK 밖 오류(응답 본문 읽기 실패 등)는 전처럼 AI 실패(502)로 바꾼다', async () => {
-    create.mockRejectedValueOnce(new SyntaxError('Unexpected end of JSON input'));
-    const sent = new AnthropicAskProvider('test-key').select({ toc: 'K1 | 인사규정 | 제1조(목적)', question: '목적은?' }, () => Promise.resolve());
-    await expect(sent).rejects.toBeInstanceOf(BadGatewayException);
-    expect(create).toHaveBeenCalledTimes(1);
+  it('SDK 호출 안에서 난 SDK 밖 오류(응답 본문 읽기 실패 등)는 전처럼 AI 실패(502)로 바꾸고, 메시지 대신 이름만 남긴다', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      // V8 의 JSON 파싱 오류 메시지에는 입력 일부가 담긴다
+      create.mockRejectedValueOnce(new SyntaxError('Unexpected token, "직원 병가 사유 메모" is not valid JSON'));
+      const sent = new AnthropicAskProvider('test-key').select({ toc: 'K1 | 인사규정 | 제1조(목적)', question: '목적은?' }, () => Promise.resolve());
+      await expect(sent).rejects.toBeInstanceOf(BadGatewayException);
+      expect(create).toHaveBeenCalledTimes(1);
+      const logged = warn.mock.calls.map(([m]) => String(m)).join('\n');
+      expect(logged).toContain('AI 호출 실패: SyntaxError');
+      expect(logged).not.toContain('병가');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('확인을 통과하면 다시 보낸다', async () => {
