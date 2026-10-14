@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessageCircleQuestion, Send, BookOpen, AlertTriangle, ExternalLink } from 'lucide-react';
-import { askApi, AskBlock, AskCitation, AskResult } from '../api/ask';
+import { askApi, AiQaNotice, AskBlock, AskCitation, AskResult } from '../api/ask';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
+import { AskConsentDialog, AskNoticeFooter, AskOffNotice } from '../components/AskNotice';
+import { useI18n } from '../i18n/useI18n';
 import { articleHash } from '../lib/articleAnchor';
 import { formatArticleJo, formatClauseHang, formatItemMok } from '../lib/legalArticleLabel';
 
@@ -160,7 +162,10 @@ export default function AskPage() {
   const isAdmin = user?.role === 'admin';
   const isPlatformAdmin = (user as { platformRole?: string } | null)?.platformRole === 'global_admin';
   const qc = useQueryClient();
+  const { t } = useI18n();
   const [question, setQuestion] = useState('');
+  // 켜기 전 외부 전송 고지 확인 창(T-146) — 연 순간의 고지를 고정해 그 판으로 보낸다(그사이 판이 바뀌면 서버가 거절)
+  const [consentNotice, setConsentNotice] = useState<AiQaNotice | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
 
   const { data: status, isLoading } = useQuery({ queryKey: ['ask-status'], queryFn: askApi.status });
@@ -174,16 +179,25 @@ export default function AskPage() {
         s ? { ...s, used: result.usage.used, userUsed: result.usage.userUsed } : s,
       );
     },
+    // 그사이 꺼졌거나 고지가 바뀌었으면(403) 상태를 다시 받아 폼 대신 안내를 보인다
+    onError: () => qc.invalidateQueries({ queryKey: ['ask-status'] }),
   });
 
+  // 켤 때는 확인 창에서 본 고지 판을 함께 보낸다 — 끄기는 확인 없이(T-146)
   const toggleMutation = useMutation({
-    mutationFn: (enabled: boolean) => askApi.setEnabled(enabled),
+    mutationFn: (v: { enabled: boolean; noticeVersion?: number }) => askApi.setEnabled(v.enabled, v.noticeVersion),
     onSuccess: (s) => {
+      setConsentNotice(null);
       qc.setQueryData(['ask-status'], s);
       qc.invalidateQueries({ queryKey: ['ask-status'] });
-      toast(s.enabled ? '규정 질문을 켰습니다.' : '규정 질문을 껐습니다.', 'success');
+      toast(s.enabled ? t('ask.toggle.doneOn') : t('ask.toggle.doneOff'), 'success');
     },
-    onError: (e) => toast(errorMessage(e), 'error'),
+    onError: (e) => {
+      // 고지가 그사이 바뀌었으면 창을 닫고(확인란도 풀린다) 새 고지를 받아 다시 열게 한다
+      setConsentNotice(null);
+      qc.invalidateQueries({ queryKey: ['ask-status'] });
+      toast(errorMessage(e), 'error');
+    },
   });
 
   const submit = (e?: React.FormEvent) => {
@@ -211,9 +225,20 @@ export default function AskPage() {
                   type="button"
                   className="btn-secondary text-xs px-2.5 py-1"
                   disabled={toggleMutation.isPending}
-                  onClick={() => toggleMutation.mutate(!status.enabled)}
+                  onClick={() => (status.enabled ? toggleMutation.mutate({ enabled: false }) : setConsentNotice(status.notice))}
                 >
-                  {status.enabled ? '회사 전체 끄기' : '회사 전체 켜기'}
+                  {status.enabled ? t('ask.toggle.off') : status.needsConsent ? t('ask.toggle.reconsent') : t('ask.toggle.on')}
+                </button>
+              )}
+              {/* 바뀐 고지에 동의하지 않을 수도 있다 — 다시 확인을 기다리는 회사도 끈다 */}
+              {isAdmin && status.needsConsent && (
+                <button
+                  type="button"
+                  className="btn-secondary text-xs px-2.5 py-1"
+                  disabled={toggleMutation.isPending}
+                  onClick={() => toggleMutation.mutate({ enabled: false })}
+                >
+                  {t('ask.toggle.offStale')}
                 </button>
               )}
             </div>
@@ -243,11 +268,16 @@ export default function AskPage() {
         </div>
       )}
 
-      {status?.configured && !status.enabled && (
-        <div className="card p-4 border-amber-200 bg-amber-50 text-sm text-amber-900">
-          회사 관리자가 규정 질문을 꺼 두었습니다.
-          {isAdmin && ' 위의 "회사 전체 켜기"로 다시 켤 수 있습니다.'}
-        </div>
+      {status?.configured && !status.enabled && <AskOffNotice needsConsent={status.needsConsent} isAdmin={isAdmin} />}
+
+      {consentNotice && (
+        <AskConsentDialog
+          key={consentNotice.version}
+          notice={consentNotice}
+          pending={toggleMutation.isPending}
+          onConfirm={() => toggleMutation.mutate({ enabled: true, noticeVersion: consentNotice.version })}
+          onCancel={() => setConsentNotice(null)}
+        />
       )}
 
       {canAsk && (
@@ -284,9 +314,7 @@ export default function AskPage() {
               <Send size={14} /> {askMutation.isPending ? '찾는 중…' : '묻기'}
             </button>
           </div>
-          <p className="text-[11px] text-gray-500">
-            답을 쓰기 위해 질문과 관련 조문이 외부 AI(Anthropic)로 전송됩니다.
-          </p>
+          {status && <AskNoticeFooter notice={status.notice} />}
         </form>
       )}
 

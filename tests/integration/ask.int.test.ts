@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { api, createTenant, createPolicyWithArticle, login, waitForApi } from './helpers';
+import { api, createTenant, createPolicyWithArticle, enableAsk, login, waitForApi } from './helpers';
 
 /**
  * T-130 규정 근거 AI 질의응답.
@@ -10,6 +10,8 @@ import { api, createTenant, createPolicyWithArticle, login, waitForApi } from '.
  *
  * 지키는 것: 근거는 **지금 시행 중인 본문**뿐(초안·미래 시행·폐지 조문은 후보조차 아니다), 준 적 없는
  * 근거는 버리고 근거가 없으면 답하지 않는다, 회사 관리자가 끌 수 있다, 회사 사이는 섞이지 않는다.
+ * 회사마다 꺼진 채 시작하므로(T-146) 질문하는 회사는 먼저 고지를 확인하고 켠다(`enableAsk`) — 기본 꺼짐과
+ * 동의 기록은 `ask-consent.int.test.ts` 가 본다.
  */
 describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
   let t: Awaited<ReturnType<typeof createTenant>>;
@@ -30,6 +32,7 @@ describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
     const st = await api('/ask/status', { token: t.token });
     mock = st.body.provider === 'mock';
     if (!mock) return;
+    await enableAsk(t.token);
 
     // 제1조(목적) + 제2조(경조금) ① + 제5조(폐지할 조) → 2024-01-01 시행
     const set = await createPolicyWithArticle(t.token, `ASK-${Date.now().toString(36)}`, '복리후생규정');
@@ -59,12 +62,23 @@ describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
   it('상태: 서버 설정·회사 켜짐·이번 달 사용량을 알려 준다(키는 내보내지 않는다)', async () => {
     const { status, body } = await api('/ask/status', { token: t.token });
     expect(status).toBe(200);
-    expect(Object.keys(body).sort()).toEqual(['configured', 'enabled', 'limit', 'provider', 'used', 'userLimit', 'userUsed']);
+    expect(Object.keys(body).sort()).toEqual([
+      'configured',
+      'consent',
+      'enabled',
+      'limit',
+      'needsConsent',
+      'notice',
+      'provider',
+      'used',
+      'userLimit',
+      'userUsed',
+    ]);
     if (!mock) {
       expect((await ask('경조금은 얼마인가요')).status).toBe(503);
       return;
     }
-    expect(body).toMatchObject({ configured: true, provider: 'mock', enabled: true, used: 0 });
+    expect(body).toMatchObject({ configured: true, provider: 'mock', enabled: true, needsConsent: false, used: 0 });
   });
 
   it('시행 중 조문을 근거로 답하고, 준 적 없는 근거는 버린다', async (ctx) => {
@@ -150,19 +164,24 @@ describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
     expect(denied.status).toBe(403);
     expect(denied.body.code).toBe('AI_QA_DISABLED');
 
-    // 외부 AI 로 조문을 보낼지 말지를 바꾼 것이라 감사 기록을 남긴다
+    // 외부 AI 로 조문을 보낼지 말지를 바꾼 것이라 감사 기록을 남긴다 — 처음 켠 것(beforeAll)과 끈 것
     const logs = await api('/audit-logs?action=ai_qa.settings_change', { token: t.token });
-    expect(logs.body.total).toBe(1);
+    expect(logs.body.total).toBe(2);
     const detail = (await api(`/audit-logs/${logs.body.rows[0].id}`, { token: t.token })).body;
     expect(detail.details).toEqual({ enabled: false });
 
-    await api('/ask/settings', { method: 'PATCH', token: t.token, json: { enabled: true } });
+    // 다시 켤 때도 고지를 확인해야 한다(T-146)
+    const blind = await api('/ask/settings', { method: 'PATCH', token: t.token, json: { enabled: true } });
+    expect(blind.status).toBe(400);
+    expect(blind.body.code).toBe('AI_QA_NOTICE_REQUIRED');
+    await enableAsk(t.token);
     expect((await ask('경조금 결혼')).status).toBe(200);
   });
 
   it('다른 회사의 규정은 근거가 되지 않는다', async (ctx) => {
     if (!mock) ctx.skip();
     const other = await createTenant('ask-other');
+    await enableAsk(other.token);
     const { body } = await ask('경조금 결혼', other.token);
     expect(body).toMatchObject({ answerable: false, reason: 'no_regulations' });
     expect(JSON.stringify(body)).not.toContain('50만원');
@@ -173,6 +192,7 @@ describe('규정 질문(AI) — 근거는 시행 중 본문뿐', () => {
   /** 한도 시험용 회사 — 시행 중인 조문 하나와 직원 몇 명 */
   const limitTenant = async (tag: string, extraUsers: number) => {
     const other = await createTenant(tag);
+    await enableAsk(other.token);
     const set = await createPolicyWithArticle(other.token, `ASKL-${Date.now().toString(36)}`, '한도시험규정');
     await api(`/policies/${set.policy.id}/publish-drafts`, {
       method: 'POST',

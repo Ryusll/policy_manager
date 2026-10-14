@@ -8,6 +8,9 @@ import { formatJo } from '../common/article-label';
  * → ③ 준 번호 밖의 근거는 버리고, 남는 근거가 없으면 답을 내보내지 않는다.
  */
 
+/** 본문을 읽을 조 수 상한(AI 가 고른 것 + 낱말이 든 것) — 외부 전송 고지에도 실린다(바꾸면 고지 판을 올린다, T-146) */
+export const ASK_MAX_GROUPS = 12;
+
 /** 시행 중인 조문 한 행(조 머리·항·호). 본문은 지금 시행 중인 버전의 것 */
 export interface AskRow {
   articleId: string;

@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BadGatewayException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ASK_MAX_RETRIES, withRetry } from './ask-retry';
 
 /**
  * T-130 질의응답의 AI 호출 — 실제(Anthropic Claude)와 모의(통합 테스트용) 두 가지.
@@ -15,12 +16,15 @@ export interface AiUsage {
   cacheReadTokens: number;
 }
 
+/**
+ * `beforeRetry` — 실패한 호출을 다시 보내기 직전마다 부른다(던지면 다시 보내지 않는다). 회사 상태 확인이 들어온다(T-146)
+ */
 export interface AskProvider {
   readonly name: 'anthropic' | 'mock';
   /** 목차에서 본문을 읽어야 할 조의 키를 고른다(관련도 순) */
-  select(input: { toc: string; question: string }): Promise<{ keys: string[]; usage: AiUsage }>;
+  select(input: { toc: string; question: string }, beforeRetry?: () => Promise<void>): Promise<{ keys: string[]; usage: AiUsage }>;
   /** 참조 번호가 붙은 본문만 근거로 답한다. 반환 JSON 은 `checkAnswer` 가 거른다 */
-  answer(input: { context: string; question: string }): Promise<{ raw: unknown; usage: AiUsage }>;
+  answer(input: { context: string; question: string }, beforeRetry?: () => Promise<void>): Promise<{ raw: unknown; usage: AiUsage }>;
 }
 
 /** AI 가 정책상 답을 거절했다 — 사용자에게는 "답할 수 없는 질문"으로 보인다. 거절도 비용이 들어 사용량을 함께 넘긴다 */
@@ -86,6 +90,33 @@ const ANSWER_SCHEMA = {
   additionalProperties: false,
 };
 
+/** 처리 지역 — 미국으로 고정한다(T-146, ADR-0025). 기본값 global 은 미국·유럽·아시아·호주 여러 나라에서 처리돼
+ *  처리방침에 적는 "이전 국가"와 맞지 않는다. 단가는 1.1배 */
+export const ASK_INFERENCE_GEO = 'us';
+
+export interface AskCallParams {
+  max_tokens: number;
+  effort: 'low' | 'medium';
+  system: Anthropic.Beta.BetaTextBlockParam[];
+  user: string;
+  schema: Record<string, unknown>;
+}
+
+/** 고르기·답하기 두 호출이 함께 쓰는 요청 본문 */
+export function askRequest(model: string, p: AskCallParams): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming {
+  return {
+    model,
+    max_tokens: p.max_tokens,
+    // 안전 검사가 거절하면 서버가 거절 사유에 맞는 다른 모델로 다시 돌린다
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    inference_geo: ASK_INFERENCE_GEO,
+    system: p.system,
+    messages: [{ role: 'user', content: p.user }],
+    output_config: { effort: p.effort, format: { type: 'json_schema', schema: p.schema } },
+  };
+}
+
 export class AnthropicAskProvider implements AskProvider {
   readonly name = 'anthropic' as const;
   private readonly log = new Logger('AskAnthropic');
@@ -94,57 +125,68 @@ export class AnthropicAskProvider implements AskProvider {
   private readonly model = process.env.AI_QA_MODEL?.trim() || 'claude-opus-5-5';
 
   constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 2 });
+    // 다시 보내기는 SDK 에 맡기지 않는다 — 다시 보낼 때마다 회사 상태를 확인해야 한다(ask-retry.ts, T-146)
+    this.client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 0 });
   }
 
-  async select(input: { toc: string; question: string }) {
-    const res = await this.call({
-      max_tokens: 4000,
-      effort: 'low',
-      // 목차는 회사마다 같고 자주 바뀌지 않는다 — 지시문과 함께 캐시 앞부분에 둔다(질문은 뒤에)
-      system: [
-        { type: 'text', text: SELECT_SYSTEM },
-        { type: 'text', text: `<목차>\n${input.toc}\n</목차>`, cache_control: { type: 'ephemeral' } },
-      ],
-      user: `질문: ${input.question}`,
-      schema: SELECT_SCHEMA,
-    });
+  async select(input: { toc: string; question: string }, beforeRetry?: () => Promise<void>) {
+    const res = await this.call(
+      {
+        max_tokens: 4000,
+        effort: 'low',
+        // 목차는 회사마다 같고 자주 바뀌지 않는다 — 지시문과 함께 캐시 앞부분에 둔다(질문은 뒤에)
+        system: [
+          { type: 'text', text: SELECT_SYSTEM },
+          { type: 'text', text: `<목차>\n${input.toc}\n</목차>`, cache_control: { type: 'ephemeral' } },
+        ],
+        user: `질문: ${input.question}`,
+        schema: SELECT_SCHEMA,
+      },
+      beforeRetry,
+    );
     const keys = Array.isArray((res.raw as { keys?: unknown })?.keys)
       ? ((res.raw as { keys: unknown[] }).keys.filter((k) => typeof k === 'string') as string[])
       : [];
     return { keys, usage: res.usage };
   }
 
-  async answer(input: { context: string; question: string }) {
-    return this.call({
-      max_tokens: 12000,
-      effort: 'medium',
-      system: [{ type: 'text', text: ANSWER_SYSTEM }],
-      user: `${input.context}\n\n질문: ${input.question}`,
-      schema: ANSWER_SCHEMA,
-    });
+  async answer(input: { context: string; question: string }, beforeRetry?: () => Promise<void>) {
+    return this.call(
+      {
+        max_tokens: 12000,
+        effort: 'medium',
+        system: [{ type: 'text', text: ANSWER_SYSTEM }],
+        user: `${input.context}\n\n질문: ${input.question}`,
+        schema: ANSWER_SCHEMA,
+      },
+      beforeRetry,
+    );
   }
 
-  private async call(p: {
-    max_tokens: number;
-    effort: 'low' | 'medium';
-    system: Anthropic.Beta.BetaTextBlockParam[];
-    user: string;
-    schema: Record<string, unknown>;
-  }): Promise<{ raw: unknown; usage: AiUsage }> {
+  private async call(p: AskCallParams, beforeRetry?: () => Promise<void>): Promise<{ raw: unknown; usage: AiUsage }> {
     let res: Anthropic.Beta.BetaMessage;
+    // 다시 보내기 전 확인이 던진 오류(꺼짐·고지 바뀜 403, 확인하다 난 DB 오류)는 AI 실패로 바꾸지 않고 그대로 올린다
+    let blocked: unknown;
+    const check = beforeRetry
+      ? async () => {
+          try {
+            await beforeRetry();
+          } catch (b) {
+            blocked = b;
+            throw b;
+          }
+        }
+      : undefined;
     try {
-      res = await this.client.beta.messages.create({
-        model: this.model,
-        max_tokens: p.max_tokens,
-        // 안전 검사가 거절하면 서버가 거절 사유에 맞는 다른 모델로 다시 돌린다
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
-        system: p.system,
-        messages: [{ role: 'user', content: p.user }],
-        output_config: { effort: p.effort, format: { type: 'json_schema', schema: p.schema } },
+      res = await withRetry(() => this.client.beta.messages.create(askRequest(this.model, p)), {
+        beforeRetry: check,
+        onRetry: (e, n) => this.log.warn(`AI 호출 실패 — ${n}/${ASK_MAX_RETRIES}번째로 다시 보내기 전: ${(e as Error)?.message}`),
       });
     } catch (e) {
+      if (e !== undefined && e === blocked) {
+        this.log.warn(`다시 보내기 전 확인에서 막혀 보내지 않음: ${(e as Error)?.message}`);
+        throw e;
+      }
       if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
         this.log.error(`AI 인증 실패: ${e.message}`);
         throw new ServiceUnavailableException('AI 연결 설정(키)이 올바르지 않습니다. 관리자에게 알려 주세요.');
@@ -166,6 +208,11 @@ export class AnthropicAskProvider implements AskProvider {
       outputTokens: res.usage.output_tokens ?? 0,
       cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
     };
+    // 처리방침·고지에 "미국"으로 적었다 — 다른 지역이라고 오거나 지역이 오지 않으면 남긴다(질문 내용은 남기지 않는다).
+    // 운영 키를 넣은 뒤 이 경고가 없는지 본다(런북 7-9)
+    if (res.usage.inference_geo !== ASK_INFERENCE_GEO) {
+      this.log.warn(`AI 처리 지역이 ${ASK_INFERENCE_GEO} 가 아님: ${res.usage.inference_geo ?? '응답에 없음'} (모델 ${res.model})`);
+    }
     if (res.stop_reason === 'refusal') throw new AskRefusedError(res.stop_details?.category ?? 'refusal', usage);
     if (res.stop_reason === 'max_tokens') {
       this.log.warn(`AI 답이 길이 제한에서 끊김 (${usage.outputTokens} tokens)`);
@@ -188,12 +235,14 @@ export class AnthropicAskProvider implements AskProvider {
  *   번호만 근거로 대고(걸러지는지 시험), "[모름]"이 있으면 답할 수 없다고 한다. 근거 거르기를 시험하려고
  *   늘 준 적 없는 번호(R999)를 하나 섞는다.
  * - 실패 시험: "[실패]"면 호출 실패(502), "[거절]"이면 고르기 단계에서 AI 가 거절한 것으로 한다 — 둘 다 월 한도에 세야 한다.
+ * - "[느림]"이면 고르기가 1.5초 걸린다 — 그 사이에 끈 회사는 조문 본문을 보내지 않는지 본다(T-146).
  */
 export class MockAskProvider implements AskProvider {
   readonly name = 'mock' as const;
   private readonly usage: AiUsage = { model: 'mock', inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
 
-  select(input: { toc: string; question: string }) {
+  async select(input: { toc: string; question: string }) {
+    if (input.question.includes('[느림]')) await new Promise((r) => setTimeout(r, 1500));
     if (input.question.includes('[실패]')) return Promise.reject(new BadGatewayException('모의 AI 호출 실패'));
     if (input.question.includes('[거절]')) return Promise.reject(new AskRefusedError('mock', { ...this.usage, inputTokens: 10 }));
     const words = input.question.split(/\s+/).filter((w) => w.length >= 2);

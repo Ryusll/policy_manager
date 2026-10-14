@@ -23,3 +23,4 @@
 | 2026-09-07 | **백업 설정 6종 추가** — `BACKUP_S3_ENDPOINT`·`BACKUP_S3_BUCKET`·`BACKUP_S3_ACCESS_KEY`·`BACKUP_S3_SECRET_KEY`(필수), `BACKUP_S3_PREFIX`·`BACKUP_KEEP_DAYS`(선택). 규정 본문(DB)과 첨부파일이 둘 다 서버 안에만 있어 서버가 사라지면 같이 사라지던 문제. `scripts/backup-offsite.sh` 가 쓴다 | - |
 | 2026-10-09 | **규정 질문(AI, T-130) 4종 추가** — `ANTHROPIC_API_KEY`(비우면 이 기능만 "설정 안 됨"), `AI_QA_MODEL`(기본 `claude-opus-5-5`), `AI_QA_MONTHLY_LIMIT`(회사별 월 한도, 기본 300 — 빈 값은 기본값으로 읽는다), `AI_QA_PROVIDER`(`mock` 이면 모의 AI, 통합 테스트용). docker-compose 도 넘긴다 | - |
 | 2026-10-10 | **`AI_QA_USER_MONTHLY_LIMIT` 추가**(T-130 후속, 직원 한 명의 월 질문 한도, 기본 60) — 한 사람이 회사 한도를 다 쓰지 못하게. 회사 한도는 이제 AI 를 부르기 전에 센다(실패·거절도 셈) | - |
+| 2026-10-14 | **`ANTHROPIC_API_KEY` 설명 보강**(T-146, D-09 재결정) — 처리 지역을 미국으로 고정하고, 규정 질문은 회사마다 꺼진 채 시작해 관리자가 외부 전송 고지를 확인해야 켜진다. 운영 키를 넣기 전에 질문 기록 파기 cron 을 먼저 건다(런북 7-9). 질문·답 기록 보관 기간(90일)은 고지에 실리므로 **환경변수로 두지 않고** 코드 상수로 둔다(`ask-retention.ts` — 바꾸면 고지 판을 올린다). 새 변수는 없다 | 개발 |

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class AskDto {
@@ -15,4 +15,13 @@ export class AskSettingsDto {
   @ApiProperty({ description: '회사의 규정 질문(AI) 사용 여부. 끄면 질문할 수 없다' })
   @IsBoolean()
   enabled: boolean;
+
+  @ApiProperty({
+    required: false,
+    description: '켤 때 필수 — 관리자가 화면에서 확인한 외부 전송 고지 판(`GET /ask/status` 의 notice.version). 지금 판과 다르면 400 (T-146)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  noticeVersion?: number;
 }

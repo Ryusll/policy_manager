@@ -36,7 +36,10 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | plan | enum PlanTier | starter/pro/enterprise, 기본 starter |
 | planExpiresAt | datetime? | |
 | billingStatus | enum BillingStatus | active/trial/past_due/canceled |
-| aiQaEnabled | bool, 기본 true | 규정 질문(AI) 사용 여부(T-130). 회사 관리자가 끈다 — 질문할 때 관련 조문이 외부 AI 로 간다 |
+| aiQaEnabled | bool, **기본 false**(T-146 — 마이그레이션 `20261014090000_ai_qa_consent` 가 기존 회사도 껐다) | 규정 질문(AI) 사용 여부(T-130). 질문할 때 관련 조문이 외부 AI(미국)로 간다 — 회사 관리자가 외부 전송 고지를 확인해야 켜진다. 실제 켜짐은 아래 판까지 맞을 때만 |
+| aiQaNoticeVersion | int? | 관리자가 마지막으로 확인한 고지 판(T-146). 지금 판(`AI_QA_NOTICE_VERSION`)과 다르면 다시 확인할 때까지 꺼진 것으로 본다 |
+| aiQaConsentedAt | timestamp? | 마지막으로 확인하고 켠 시각(T-146) |
+| aiQaConsentedBy | text? | 확인한 관리자의 user id(T-146). FK 는 두지 않는다 — 증빙은 감사 로그(`ai_qa.settings_change`, 이름·이메일 스냅샷)가 맡는다 |
 | createdAt/updatedAt | datetime | |
 
 ### User (`users`)
@@ -172,6 +175,7 @@ tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json). �
 userId FK(cascade), tokenHash(지금 유효한 갱신 토큰의 sha256 — 원문은 저장하지 않는다, 갱신마다 바뀜), remember(자동 로그인), expiresAt(갱신마다 다시 늘어남 — 30일/12시간), lastUsedAt, userAgent(≤300), revokedAt(로그아웃·비밀번호 변경), createdAt. `@@index([userId])`. 끝난 세션은 그 사람이 다시 로그인할 때 지운다
 
 ### AiQaLog (`ai_qa_logs`) — T-130 규정 질문 기록
+**보관 90일**(코드 상수 `AI_QA_LOG_RETENTION_DAYS` — 관리자가 동의한 고지에 실리므로 환경변수로 두지 않는다, T-146): 지난 행은 서버 cron 이 부르는 `ask-purge.cli` 가 모든 회사에서 지운다(질문 원문에 직원 개인정보가 섞일 수 있다). 90일보다 앞선 비용 이력도 함께 사라진다.
 tenantId FK(cascade), userId FK?(SetNull), question(text), answerable(근거가 남아 답을 내보냈는가), answer(json? — 화면에 낸 답 블록, 답하지 않았으면 null), citedArticleIds(text[] — 근거로 보여 준 조문 행), contextRowCount(AI 에 본문을 준 행 수), aiCalled(한도에 세는가 — AI 를 부르기 전에 true 로 만들고, AI 를 부르지 않고 끝난 질문만 false 로 돌려준다), model?, inputTokens·outputTokens·cacheReadTokens(사용량·비용 집계), failure?(끝까지 가지 못한 사유 — AI 호출 실패·거절·끊긴 응답, 그래도 셈). 인덱스: `[tenantId, createdAt]`, `[tenantId, userId, createdAt]`(직원별 월 한도). 마이그레이션 `20261009230000_ai_qa`, `20261010040000_ai_qa_failure`.
 
 ### PolicyImportLog (`policy_import_logs`)

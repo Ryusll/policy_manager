@@ -1,11 +1,13 @@
 import { HttpException, HttpStatus, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { AuditService } from '../audit/audit.service';
 import { todayDateOnly } from '../common/date-only';
 import { currentVersionsSql } from '../common/as-of';
 import { AnthropicAskProvider, AskProvider, AskRefusedError, AiUsage, MockAskProvider } from './ask-provider';
+import { AI_QA_CONSENT_SELECT, aiQaNotice, aiQaState, assertAskAllowed, guardProvider } from './ask-notice';
+import { AskConsentService } from './ask-consent.service';
 import {
+  ASK_MAX_GROUPS,
   AnswerBlock,
   AskRow,
   JoGroup,
@@ -21,8 +23,6 @@ import {
 /** 목차·본문 길이 상한(글자). 목차는 캐시되므로 넉넉히, 본문은 고른 조만이라 작게 */
 const TOC_MAX_CHARS = 120_000;
 const CONTEXT_MAX_CHARS = 60_000;
-/** 본문을 읽을 조 수 상한(AI 가 고른 것 + 낱말이 든 것) */
-const MAX_GROUPS = 12;
 const DEFAULT_MONTHLY_LIMIT = 300;
 /** 직원 한 명의 월 질문 한도 — 한 사람이 회사 한도를 다 쓰지 못하게 */
 const DEFAULT_USER_MONTHLY_LIMIT = 60;
@@ -94,7 +94,7 @@ export class AskService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly audit: AuditService,
+    private readonly consent: AskConsentService,
   ) {
     const key = process.env.ANTHROPIC_API_KEY?.trim();
     this.provider =
@@ -113,14 +113,24 @@ export class AskService {
     return { used, userUsed };
   }
 
+  /**
+   * `enabled` 는 실제 켜짐(동의한 판이 지금 판일 때만 true). 켜 두었지만 고지 판이 바뀌었으면 `needsConsent` —
+   * 관리자가 다시 확인하기 전까지 꺼진 것과 같다(T-146). `notice` 는 화면이 그대로 그리는 외부 전송 고지다.
+   */
   async status(tenantId: string, userId: string | null = null) {
-    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { aiQaEnabled: true } });
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: AI_QA_CONSENT_SELECT });
     if (!tenant) throw new NotFoundException('Tenant not found');
     const { used, userUsed } = await this.usedThisMonth(this.prisma, tenantId, userId);
+    const state = aiQaState(tenant);
     return {
       configured: this.provider !== null,
       provider: this.provider?.name ?? null,
-      enabled: tenant.aiQaEnabled,
+      enabled: state === 'on',
+      needsConsent: state === 'stale',
+      notice: aiQaNotice(),
+      consent: tenant.aiQaNoticeVersion
+        ? { noticeVersion: tenant.aiQaNoticeVersion, consentedAt: tenant.aiQaConsentedAt }
+        : null,
       used,
       limit: this.monthlyLimit,
       userUsed,
@@ -128,20 +138,9 @@ export class AskService {
     };
   }
 
-  async setEnabled(tenantId: string, userId: string, enabled: boolean) {
-    const before = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { aiQaEnabled: true } });
-    if (!before) throw new NotFoundException('Tenant not found');
-    await this.prisma.tenant.update({ where: { id: tenantId }, data: { aiQaEnabled: enabled } });
-    if (before.aiQaEnabled !== enabled) {
-      await this.audit.log({
-        tenantId,
-        userId,
-        action: 'ai_qa.settings_change',
-        entityType: 'Tenant',
-        entityId: tenantId,
-        details: { enabled },
-      });
-    }
+  /** 켜기·끄기와 동의 기록은 `AskConsentService`(T-146) — 바뀐 상태를 돌려준다 */
+  async setEnabled(tenantId: string, userId: string, enabled: boolean, noticeVersion?: number) {
+    await this.consent.setEnabled(tenantId, userId, enabled, noticeVersion);
     return this.status(tenantId, userId);
   }
 
@@ -226,12 +225,16 @@ export class AskService {
    *
    * 예전에는 끝까지 간 질문만 기록해, AI 호출이 실패했거나(502) 고르기 단계에서 거절됐거나 답이 길이 제한에서
    * 끊긴 질문은 한도에 세지 않았다(비용은 나간다). 또 확인과 기록 사이가 떨어져 있어 동시에 들어온 질문이
-   * 함께 한도를 넘을 수 있었다. 이제 회사 단위 잠금 아래에서 세고 "예약" 행을 먼저 남긴다 — AI 를 부르지
-   * 않고 끝난 질문(시행 중인 규정이 없을 때)만 나중에 돌려준다.
+   * 함께 한도를 넘을 수 있었다. 이제 회사 단위 잠금 아래에서 세고 "예약" 행을 먼저 남긴다 — AI 를 부르기
+   * 전에 끝난 질문(시행 중인 규정이 없을 때, 그사이 관리자가 껐을 때 등)만 나중에 돌려준다.
    */
   private async reserve(tenantId: string, userId: string | null, question: string) {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai_qa:${tenantId}`}))`;
+      // 켜짐은 한도와 같은 트랜잭션에서 본다 — 꺼진 회사는 기록 행도 남기지 않는다
+      const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: AI_QA_CONSENT_SELECT });
+      if (!tenant) throw new NotFoundException('Tenant not found');
+      assertAskAllowed(aiQaState(tenant));
       const { used, userUsed } = await this.usedThisMonth(tx, tenantId, userId);
       if (used >= this.monthlyLimit) {
         throw new HttpException(
@@ -298,16 +301,12 @@ export class AskService {
     if (!provider) {
       throw new ServiceUnavailableException('규정 질문은 아직 준비 중입니다. 쓰려면 아스트룸에 문의하세요.');
     }
-    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { aiQaEnabled: true } });
-    if (!tenant) throw new NotFoundException('Tenant not found');
-    if (!tenant.aiQaEnabled) {
-      throw new HttpException(
-        { statusCode: 403, code: 'AI_QA_DISABLED', message: '회사 관리자가 규정 질문(AI)을 꺼 두었습니다.' },
-        HttpStatus.FORBIDDEN,
-      );
-    }
-
     const slot = await this.reserve(tenantId, userId, question);
+    // 예약 뒤에도 외부로 보내기 직전마다 회사 상태를 다시 본다 — 그사이 관리자가 끄면 보내지 않는다(T-146)
+    const guard = guardProvider(provider, async () => {
+      const latest = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: AI_QA_CONSENT_SELECT });
+      return latest ? aiQaState(latest) : 'off';
+    });
     const usages: AiUsage[] = [];
     const usage = (aiCalled: boolean) => ({
       used: slot.used - (aiCalled ? 0 : 1),
@@ -316,7 +315,7 @@ export class AskService {
       userLimit: this.userMonthlyLimit,
     });
     try {
-      return await this.answerQuestion(provider, tenantId, slot.id, question, usages, usage);
+      return await this.answerQuestion(guard.provider, tenantId, slot.id, question, usages, usage);
     } catch (e) {
       const extra = usageOf(e);
       if (extra) usages.push(extra);
@@ -324,8 +323,10 @@ export class AskService {
         await this.finish(slot.id, { aiCalled: true, usages, failure: `refused:${e.message}` });
         return { answerable: false, reason: 'refused', blocks: [], citations: [], consulted: [], usage: usage(true) };
       }
-      // 실패해도 AI 를 불렀을 수 있다 — 예약을 그대로 두어 한도에 센다
-      await this.finish(slot.id, { aiCalled: true, usages, failure: String((e as Error)?.message ?? e).slice(0, 500) });
+      // AI 를 부르기 시작했으면 실패해도 비용이 났을 수 있다 — 예약을 그대로 두어 한도에 센다.
+      // 부르기 전에 끝났으면(그사이 관리자가 껐을 때 등) 한도에서 돌려준다
+      const failure = String((e as Error)?.message ?? e).slice(0, 500);
+      await this.finish(slot.id, { aiCalled: guard.called(), usages, failure });
       throw e;
     }
   }
@@ -358,7 +359,7 @@ export class AskService {
     const chosen: string[] = [];
     for (const k of [...selectedKeys.slice(0, 10), ...keywordKeys]) {
       if (!chosen.includes(k)) chosen.push(k);
-      if (chosen.length >= MAX_GROUPS) break;
+      if (chosen.length >= ASK_MAX_GROUPS) break;
     }
     if (!chosen.length) {
       await this.finish(logId, { aiCalled: true, usages });

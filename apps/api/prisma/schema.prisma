@@ -68,8 +68,15 @@ model Tenant {
   plan          PlanTier      @default(starter)
   planExpiresAt DateTime?     @map("plan_expires_at")
   billingStatus BillingStatus @default(active) @map("billing_status")
-  /// T-130 규정 근거 AI 질의응답 — 회사 관리자가 끌 수 있다(질문할 때 관련 조문이 외부 AI 로 간다)
-  aiQaEnabled   Boolean       @default(true) @map("ai_qa_enabled")
+  /// T-130 규정 근거 AI 질의응답 — 질문할 때 관련 조문이 외부 AI(미국)로 간다. **기본 꺼짐**: 회사 관리자가
+  /// 외부 전송 고지를 확인해야 켜진다(T-146, D-09 재결정 2026-10-14). 실제 켜짐은 `ask-notice.ts` 의 `aiQaState`
+  aiQaEnabled   Boolean       @default(false) @map("ai_qa_enabled")
+  /// 관리자가 마지막으로 확인한 고지 판 — 지금 판(`AI_QA_NOTICE_VERSION`)과 다르면 다시 확인할 때까지 꺼진 것으로 본다
+  aiQaNoticeVersion Int?      @map("ai_qa_notice_version")
+  aiQaConsentedAt   DateTime? @map("ai_qa_consented_at")
+  /// 확인한 관리자의 user id. FK 는 두지 않는다 — Tenant↔User 두 번째 관계는 기존 관계 이름까지 바꿔야 하고,
+  /// 증빙은 감사 로그(`ai_qa.settings_change` — user FK·이름·이메일 스냅샷)가 맡는다
+  aiQaConsentedBy   String?   @map("ai_qa_consented_by")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 

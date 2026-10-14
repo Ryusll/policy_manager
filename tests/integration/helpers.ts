@@ -119,6 +119,21 @@ export async function createTenant(tag: string) {
 }
 
 /**
+ * 회사의 규정 질문(AI)을 켠다 — 회사마다 꺼진 채 시작하고, 관리자가 외부 전송 고지를 확인해야 켜진다(T-146).
+ * 화면처럼 상태에서 받은 고지 판을 그대로 보낸다. 관리자 토큰을 넘긴다.
+ */
+export async function enableAsk(adminToken: string) {
+  const st = await api('/ask/status', { token: adminToken });
+  const res = await api('/ask/settings', {
+    method: 'PATCH',
+    token: adminToken,
+    json: { enabled: true, noticeVersion: st.body.notice?.version },
+  });
+  if (res.status >= 300) throw new Error(`규정 질문 켜기 실패 (${res.status}): ${JSON.stringify(res.body)}`);
+  return res;
+}
+
+/**
  * 로그인. 관리자가 정해 준 비밀번호로 **처음** 들어온 계정(`mustChangePassword`)이면 비밀번호를
  * 바꾸기 전까지 거의 모든 API 가 403 이다(T-122). 테스트의 초대 계정은 "이미 첫 로그인을 마친
  * 직원"으로 다룬다 — 다른 값으로 바꿨다가 원래 비밀번호로 되돌린 뒤 다시 로그인해 돌려준다.

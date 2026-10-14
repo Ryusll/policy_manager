@@ -124,6 +124,9 @@ jobs:
           POSTGRES_DB=policy_manager
           MINIO_ACCESS_KEY=ciminioaccess
           MINIO_SECRET_KEY=ci-minio-secret-key
+          AI_QA_PROVIDER=mock
+          AI_QA_MONTHLY_LIMIT=15
+          AI_QA_USER_MONTHLY_LIMIT=12
           ENV
           docker compose up -d --build postgres redis minio api
 

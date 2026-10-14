@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
-import { api, createTenant, createPolicyWithArticle, login, waitForApi } from './helpers';
+import { api, createTenant, createPolicyWithArticle, enableAsk, login, waitForApi } from './helpers';
 
 /**
  * T-127 "현재"는 오늘 시점의 시행본이다.
@@ -199,6 +199,7 @@ describe('T-127 현재 = 오늘 시점의 시행본', () => {
     it('근거는 지금 시행 중인 본문 — 시행일 전인 개정 문구는 근거가 되지 않는다', async (ctx) => {
       const st = await api('/ask/status', { token: t.token });
       if (st.body.provider !== 'mock') ctx.skip();
+      await enableAsk(t.token); // 회사마다 꺼진 채 시작한다(T-146)
       const { body } = await api('/ask', { method: 'POST', token: t.token, json: { question: '수당 알파' } });
       const text = JSON.stringify(body);
       expect(text).not.toContain('베타 수당은 20만원');
