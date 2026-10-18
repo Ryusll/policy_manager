@@ -7,7 +7,7 @@ import {
   withoutEffectiveNotes,
 } from '../apps/api/src/common/effective-notes';
 import { toIsoDate } from '../apps/api/src/lawgokr/lawgokr.mapper';
-import { lawDetailCacheKey } from '../apps/api/src/lawgokr/lawgokr.service';
+import { lawDetailCacheKey } from '../apps/api/src/lawgokr/lawgokr-cache-keys';
 
 /**
  * 조별 시행일 표기의 범위 판정 (T-144, PAT-06 — 완료 전 검토에서 나온 오탐·누락).
@@ -162,6 +162,6 @@ describe('사내 규정 트리에는 표기를 싣지 않는다 (T-144)', () => 
 
 describe('매핑 캐시 키 (T-144)', () => {
   it('읽기 규칙의 판이 키에 들어간다 — 판을 올리면 옛 규칙으로 매핑한 캐시를 읽지 않는다(검토 지적 N1)', () => {
-    expect(lawDetailCacheKey('280405')).toBe(`lawgokr:law:v2:n${EFFECTIVE_NOTES_VERSION}:280405`);
+    expect(lawDetailCacheKey('280405')).toBe(`lawgokr:law:v3:n${EFFECTIVE_NOTES_VERSION}:280405`); // v3 — 법령ID 없는 본문을 캐시하지 않게 된 판(T-151)
   });
 });

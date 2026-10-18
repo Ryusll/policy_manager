@@ -10,6 +10,9 @@ import { PlanTier, Prisma } from '@prisma/client';
  * 규정 시행일을 채우는 한꺼번에 시행·시행일 보정)도 규정부터 잡는다. 판단에 쓰는 값은 잠근 뒤 다시 읽는다 — 잠그기 전에 읽은 값으로
  * 쓰면 그 사이 커밋된 쓰기를 덮는다.
  *
+ * **법령 쪽은 따로 줄 선다(T-151).** 법령 등록(법령ID 열쇠 → 법령 행)·판 반영·표기 채우기는 법령 행만 잡고 규정 쪽 행은 잡지 않아,
+ * 위 순서와 엮이지 않는다.
+ *
  * **세기는 FOR NO KEY UPDATE.** 쓰는 쪽끼리는 FOR UPDATE 와 똑같이 줄 서지만, 그 행을 가리키는 FK insert(의견·즐겨찾기·
  * 개정 후보·검토 항목 — FK 검사는 FOR KEY SHARE)는 막지 않는다. 키를 바꾸는 쓰기는 없다. 지우기만 `FOR UPDATE` 를 미리 id 순으로
  * 잡는다(`lockArticlesForDelete`) — 지우기는 어차피 그 잠금을 잡는데, 스캔 순서로 잡으면 여러 조문을 id 순으로 가리키는 insert 와
@@ -27,12 +30,13 @@ type Tx = Prisma.TransactionClient;
 
 /** 기본 제한(5초) 트랜잭션 — 나머지 일을 할 시간을 남긴다 */
 export const LOCK_WAIT_MS = 3_000;
-/** 긴 트랜잭션(재파싱 묶음·한꺼번에 시행·시행일 보정·조 재정렬·규정 삭제 — 60초) */
+/** 긴 트랜잭션(재파싱 묶음·한꺼번에 시행·시행일 보정·조 재정렬·규정 삭제·법령 등록 — 60초) */
 export const LONG_LOCK_WAIT_MS = 30_000;
 
 export const LOCK_BUSY_MESSAGE = '다른 작업이 같은 규정을 고치는 중입니다 — 잠시 뒤 다시 시도하세요.';
 export const VARIABLE_BUSY_MESSAGE = '다른 작업이 이 변수를 쓰는 중입니다 — 잠시 뒤 다시 시도하세요.';
 export const TENANT_BUSY_MESSAGE = '다른 사람이 규정을 등록하는 중입니다 — 잠시 뒤 다시 시도하세요.';
+export const LAW_BUSY_MESSAGE = '다른 작업이 이 법령을 저장하는 중입니다 — 잠시 뒤 다시 시도하세요.';
 
 /**
  * 잠금을 정해진 시간 안에 못 잡았다 — 409(잠시 뒤 다시). 어느 잠금을 얼마나 기다렸는지 들고 있어 전역 필터가 경고로 남긴다
@@ -187,4 +191,38 @@ export async function shareParseSessionRow(tx: Tx, sessionId: string, waitMs = L
 /** 변수 행 — 값 고치기끼리, 그리고 승인 때 값 재확인(FOR SHARE)과 줄 선다. 연결 insert(FK)는 막지 않는다 */
 export async function lockVariableRow(tx: Tx, variableId: string, waitMs = LOCK_WAIT_MS) {
   await acquire(tx, 'variable', waitMs, () => tx.$queryRaw`SELECT id FROM variables WHERE id = ${variableId} FOR NO KEY UPDATE`, VARIABLE_BUSY_MESSAGE);
+}
+
+/**
+ * 법령 등록(T-151) — 같은 판(MST)이나 같은 법령ID 의 법령 행을 잡는다. 판 반영(법령 행의 MST 를 바꾸는 UPDATE — 키 쓰기라 더 센
+ * 잠금)과 줄 서서, 동기화가 판을 옮기는 사이에 등록이 같은 법령의 둘째 행을 만들거나 옮겨 간 행을 옛 판으로 고치지 않게 한다.
+ * 아직 행이 없는 법령의 첫 등록끼리는 잡을 행이 없다 — 판이 다르면 (법령원, MST) 유일에도 걸리지 않으니 법령ID 열쇠로 줄 세운다.
+ * 행이 여럿이면 같은 법령의 옛 중복이다 — 부르는 쪽(등록)이 어느 행인지 짐작하지 않고 거절한다. 큰 법령의 판 반영은 수십 초 걸릴 수 있어 오래 기다린다
+ */
+export async function lockLawRowsForRegister(tx: Tx, sourceId: string, mst: string, lawId: string | null, waitMs = LONG_LOCK_WAIT_MS) {
+  const started = Date.now();
+  const rows = await acquire(
+    tx,
+    'law',
+    waitMs,
+    async () => {
+      if (lawId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`law-register:${sourceId}:${lawId}`}))`;
+        // 두 문장이 기다림 한도 하나를 나눠 쓴다 — 문장마다 따로 세면 두 배까지 기다려 트랜잭션 제한(60초)에 걸린다(409 가 아니라 500)
+        const left = waitMs - (Date.now() - started);
+        if (left <= 0) throw new LockBusyException('law', waitMs, LAW_BUSY_MESSAGE);
+        const ms = `${left}ms`;
+        await tx.$executeRaw`SELECT set_config('lock_timeout', ${ms}, true), set_config('statement_timeout', ${ms}, true)`;
+      }
+      const locked = await tx.$queryRaw<{ id: string; external_id: string; effective_notes_version: number | null }[]>`
+        SELECT id, external_id, effective_notes_version FROM laws
+        WHERE source_id = ${sourceId} AND (external_id = ${mst} OR (${lawId}::text IS NOT NULL AND external_law_id = ${lawId}::text))
+        FOR NO KEY UPDATE`;
+      // 잠근 뒤의 암묵적 기다림(행 쓰기·FK 확인)은 다른 도우미처럼 한도 전체로 — 줄인 값이 남으면 몇 ms 만에 뜻하지 않은 409 가 난다
+      if (lawId) await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${waitMs}ms`}, true)`;
+      return locked;
+    },
+    LAW_BUSY_MESSAGE,
+  );
+  return rows;
 }

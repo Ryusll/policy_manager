@@ -45,7 +45,8 @@ export const lawsApi = {
   list: (): Promise<Law[]> => client.get('/laws').then((r) => r.data),
   get: (id: string): Promise<Law> => client.get(`/laws/${id}`).then((r) => r.data),
   articles: (id: string): Promise<LawArticle[]> => client.get(`/laws/${id}/articles`).then((r) => r.data),
-  register: (mst: string, sourceCode?: string): Promise<Law> =>
+  /** alreadyTracked — 같은 법령을 이미 다른 판으로 추적 중이라 새로 만들지 않고 그 법령을 돌려줬다(T-151) */
+  register: (mst: string, sourceCode?: string): Promise<Law & { alreadyTracked?: boolean }> =>
     client.post('/laws', { mst, ...(sourceCode ? { sourceCode } : {}) }).then((r) => r.data),
   remove: (id: string): Promise<{ ok: true }> => client.delete(`/laws/${id}`).then((r) => r.data),
 };
@@ -60,6 +61,20 @@ export type LawSyncResult = {
   events?: number;
   error?: string;
   note?: string;
+  /** 이번에 반영한 판들(공포 순, T-151) — 두 확인 사이에 판이 여럿 공포되면 하나씩 차례로 반영한다 */
+  versions?: LawSyncedVersion[];
+  /** 반영하지 못하고 남은 판 수 — 다음 동기화가 잇는다 */
+  remaining?: number;
+};
+
+export type LawSyncedVersion = {
+  mst: string;
+  /** '제21533호(2026-04-07 공포)' */
+  label: string;
+  promulgationDate: string | null;
+  revisionType: string | null;
+  stageEffectiveDates: string[];
+  events: number;
 };
 
 export type LawSyncRun = {

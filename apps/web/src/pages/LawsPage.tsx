@@ -14,6 +14,7 @@ import { lawGoKrApi } from '../api/lawgokr';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import LawChangeList from '../components/LawChangeList';
+import { useI18n } from '../i18n/useI18n';
 
 export default function LawsPage() {
   const { user } = useAuthStore();
@@ -147,6 +148,7 @@ export default function LawsPage() {
 
 function RegisterLawModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
+  const { t } = useI18n();
   const [input, setInput] = useState('');
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -165,7 +167,11 @@ function RegisterLawModal({ onClose }: { onClose: () => void }) {
       qc.invalidateQueries({ queryKey: ['laws', 'list'] });
       setError('');
       onClose();
-      toast(`"${law.lawName}" ${law.articleCount}개 조문을 등록했습니다.`, 'success');
+      toast(
+        // T-151: 이 법령을 이미 다른 판으로 추적 중이면 새로 만들지 않고 그 법령을 돌려준다
+        law.alreadyTracked ? t('laws.alreadyTracked', { name: law.lawName }) : `"${law.lawName}" ${law.articleCount}개 조문을 등록했습니다.`,
+        'success',
+      );
     },
     onError: (err: any) => {
       setError(err?.response?.data?.message?.toString() || '법령을 등록하지 못했습니다.');

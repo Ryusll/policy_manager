@@ -1,16 +1,15 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { LawEventChannel } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
-import type { LawDetailMeta } from '../lawgokr/lawgokr.types';
-import type { RegulationArticleNode } from '../regulation-parse/regulation-tree.builder';
-import { buildLawArticleRows } from './law-rows';
-import { lawAggregateVersionKey } from './law-version-key';
-import { detectLawArticleChanges, type ExistingLawArticleSnapshot } from './law-change-detect';
-import { eventEffectiveInfo } from './law-effective-info';
-import { EFFECTIVE_NOTES_VERSION, readEffectiveNotes } from '../common/effective-notes';
+import { lawBibliography, prepareVersion, saveArticles, toDate } from './law-articles-save';
+import { versionOrderKey } from './law-version-plan';
 import { TX_OPTIONS } from './law-tx';
+import { lockLawRowsForRegister } from '../common/row-locks';
+
+/** 같은 법령의 옛 중복 행이 있으면 등록하지 않는다(고객 화면에 보이는 문구) */
+const DUPLICATE_LAW_ROWS = '같은 법령이 여러 행으로 등록돼 있어(옛 중복) 정리될 때까지 등록할 수 없습니다 — 아스트룸에 문의하세요.';
 
 /** 법제처 DRF. 지금은 유일한 법령원이다 */
 const DEFAULT_SOURCE = {
@@ -18,23 +17,6 @@ const DEFAULT_SOURCE = {
   name: '국가법령정보센터 DRF',
   baseUrl: 'https://www.law.go.kr/DRF',
 };
-
-/** `YYYY-MM-DD` → Date(UTC 자정). 날짜 컬럼이라 시간대에 끌려가면 안 된다 */
-function toDate(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!m) return null;
-  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-}
-
-type LawArticleRows = ReturnType<typeof buildLawArticleRows>['rows'];
-
-interface PreparedVersion {
-  rows: LawArticleRows;
-  skipped: number;
-  versionKey: string;
-  lawEffectiveDate: Date | null;
-}
 
 @Injectable()
 export class LawsService {
@@ -80,216 +62,98 @@ export class LawsService {
    * 만든 연결이 전부 끊긴다. `nodeKey` 로 upsert 해 같은 자리는 id 를 유지한다.
    *
    * @param receivedVia 변경 이벤트의 수신경로. HTTP 로 오는 등록은 `manual`.
-   *   주기 동기화(T-104)는 이 메서드가 아니라 `applyNewVersion()` 을 쓴다 — 새 MST 로
-   *   이 메서드를 부르면 별도의 법령 행이 생긴다(그쪽 주석 참고).
+   *   주기 동기화는 이 메서드가 아니라 판을 차례로 반영한다(law-version-sync, T-151) — 새 MST 로 이 메서드를 불러도
+   *   같은 법령ID 의 행이 있으면 그 행을 돌려줄 뿐 판을 옮기지 않는다(아래).
+   *
+   * 등록한 판을 **기준판**으로 판 기록(law_versions)에 남긴다(T-151) — 동기화는 이 판 다음부터 걷는다.
+   * 같은 판을 다시 등록해서 생긴 이벤트는 판이 바뀐 것이 아니라 판 칸을 비운다.
+   *
+   * **같은 법령ID 를 이미 다른 판으로 추적 중이면 새 행을 만들지 않고 그 행을 돌려준다**(`alreadyTracked`, T-151 검토).
+   * 동기화가 법령 행을 시행 예정 판으로 옮겨 두면, 다른 회사가 현행 판(검색 결과)을 등록할 때 MST 로만 찾던 예전 방식은 같은
+   * 법령의 둘째 행을 만들었고, 그 행의 동기화는 첫째 행이 가진 판에서 영영 막혔다. 행을 먼저 잠그고(`lockLawRowsForRegister`)
+   * 정하므로 같은 법령 행을 잡는 판 반영(applyLawVersion)·표기 채우기와도 차례로 서고, 아직 행이 없는 법령의 첫 등록끼리도
+   * 법령ID 로 줄 선다. 응답에 법령ID 가 없으면 같은 판 다시 등록만 받고 새 행은 만들지 않는다(502). 찾은 행이 둘 이상이면 같은 법령의
+   * 옛 중복이라 어느 행인지 짐작하지 않고 409(정리는 T-154).
    */
   async register(mst: string, sourceCode?: string, receivedVia: LawEventChannel = 'manual') {
     const source = await this.ensureSource(sourceCode);
     const { meta, tree } = await this.lawGoKr.getLaw(mst);
-    const version = this.prepareVersion(mst, meta, tree);
-    const fields = this.lawFields(meta, version);
+    const version = prepareVersion(mst, meta, tree);
+    const fields = { ...lawBibliography(meta, version), lastCheckedAt: new Date(), lastCheckError: null };
 
-    return this.prisma.$transaction(async (tx) => {
-      const where = { sourceId_externalId: { sourceId: source.id, externalId: mst } };
-      const prior = await tx.law.findUnique({ where, select: { effectiveNotesVersion: true } });
-      const law = await tx.law.upsert({
-        where,
-        update: fields,
-        create: { sourceId: source.id, externalId: mst, ...fields },
-      });
-      await this.saveArticles(tx, law.id, meta, version, receivedVia, prior?.effectiveNotesVersion ?? null);
-      return { ...law, articleCount: version.rows.length, skipped: version.skipped };
-    }, TX_OPTIONS);
-  }
-
-  /**
-   * 추적 중인 법령을 **새 판(MST)** 으로 갈아끼운다 — T-104 주기 동기화가 부른다.
-   *
-   * `register(새MST)` 를 부르면 안 된다. 등록은 `(법령원, MST)` 로 행을 찾으므로 새 MST 는
-   * **별도의 법령 행**을 만들고, 회사들이 옛 행의 조항에 걸어 둔 `LawLink` 는 옛 판에 남아
-   * 개정이 영향 분석(T-105)에 닿지 않는다. 같은 `Law` 행의 MST 만 바꾸고 조항은 nodeKey 로
-   * 갱신해야 연결이 이어지고, 달라진 조항이 `LawChangeEvent` 로 남는다.
-   *
-   * @returns 만들어진 변경 이벤트 수
-   */
-  async applyNewVersion(lawId: string, mst: string, receivedVia: LawEventChannel = 'poll') {
-    const { meta, tree } = await this.lawGoKr.getLaw(mst);
-    const version = this.prepareVersion(mst, meta, tree);
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const prior = await tx.law.findUnique({ where: { id: lawId }, select: { effectiveNotesVersion: true } });
-        const law = await tx.law.update({
-          where: { id: lawId },
-          data: { externalId: mst, ...this.lawFields(meta, version) },
-        });
-        const events = await this.saveArticles(tx, law.id, meta, version, receivedVia, prior?.effectiveNotesVersion ?? null);
-        return { law, events };
-      }, TX_OPTIONS);
+      return await this.registerTx(source.id, mst, meta, version, fields, receivedVia);
     } catch (e) {
+      // 잠근 뒤에 같은 판의 행이 생기는 일은 드물다(첫 등록끼리는 법령ID 열쇠로 줄 선다) — 그래도 (법령원, MST) 유일에 걸리면 500 이 아니라 409
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new ConflictException(
-          `이 법령의 새 판(MST ${mst})이 이미 별도 법령으로 등록돼 있습니다. 중복 등록을 정리한 뒤 다시 확인하세요.`,
-        );
+        throw new ConflictException('같은 법령이 방금 다른 경로로 등록됐습니다. 목록을 다시 보세요.');
       }
       throw e;
     }
   }
 
-  private prepareVersion(
+  private registerTx(
+    sourceId: string,
     mst: string,
-    meta: LawDetailMeta,
-    tree: { roots: RegulationArticleNode[] },
-  ): PreparedVersion {
-    const { rows, skipped } = buildLawArticleRows(tree.roots);
-    if (!rows.length) {
-      throw new BadRequestException(
-        `법제처 응답에 조문이 없어 등록할 수 없습니다 (MST=${mst}). 별표·서식만 있는 문서일 수 있습니다.`,
-      );
-    }
-    if (skipped) {
-      this.log.warn(`MST=${mst}: 조 번호를 읽을 수 없는 ${skipped}건을 건너뛰었습니다.`);
-    }
-    return {
-      rows,
-      skipped,
-      versionKey: lawAggregateVersionKey(rows.map((r) => r.versionKey)),
-      lawEffectiveDate: toDate(meta.effectiveDate),
-    };
-  }
-
-  /** 법령 행의 서지 값. 등록·동기화가 같은 함수를 써야 두 경로가 갈라지지 않는다 */
-  private lawFields(meta: LawDetailMeta, version: PreparedVersion) {
-    return {
-      // 응답에 법령ID 가 빠지는 일이 있어도 저장된 값을 null 로 덮지 않는다 — 동기화의 열쇠다
-      externalLawId: meta.lawId ?? undefined,
-      lawName: meta.title,
-      lawNo: meta.promulgationNo,
-      lawType: meta.lawType,
-      ministry: meta.ministry,
-      promulgatedDate: toDate(meta.promulgationDate),
-      effectiveDate: version.lawEffectiveDate,
-      versionKey: version.versionKey,
-      // T-144: 조항의 시행일 표기를 이 판의 읽기 규칙으로 썼다 — 동기화가 같은 규칙이면 다시 읽지 않는다
-      effectiveNotesVersion: EFFECTIVE_NOTES_VERSION,
-      lastCheckedAt: new Date(),
-      lastCheckError: null,
-      sourceUrl: meta.sourceUrl,
-    };
-  }
-
-  /**
-   * 조항을 nodeKey 기준으로 갱신하고, 달라진 조항을 `LawChangeEvent` 로 남긴다(T-103).
-   * @param beforeRules 저장 전 법령 행의 표기 읽기 판(T-144) — 이벤트의 앞뒤 표기를 같은 규칙으로 읽었는지 가린다
-   * @returns 만들어진 변경 이벤트 수
-   */
-  private async saveArticles(
-    tx: Prisma.TransactionClient,
-    lawId: string,
-    meta: LawDetailMeta,
-    version: PreparedVersion,
+    meta: Awaited<ReturnType<LawGoKrService['getLaw']>>['meta'],
+    version: ReturnType<typeof prepareVersion>,
+    fields: ReturnType<typeof lawBibliography> & { lastCheckedAt: Date; lastCheckError: null },
     receivedVia: LawEventChannel,
-    beforeRules: number | null,
-  ): Promise<number> {
-    const { rows, lawEffectiveDate } = version;
-
-    // T-103: 변경 감지의 "이전" 스냅샷 — 아래 upsert 루프가 값을 갈아끼우기 전에 찍는다.
-    // 이미 사라진 조항(T-124)은 빼야 동기화마다 "삭제됨" 이벤트가 되풀이되지 않는다
-    const existingBefore = await tx.lawArticle.findMany({
-      where: { lawId, deletedAt: null },
-      select: { id: true, nodeKey: true, content: true, versionKey: true, effectiveNotes: true },
-    });
-    // T-144: 이벤트에 남길 "그때의" 조별 시행일 표기 — null = 그때는 수집하지 않았다
-    const notesBefore = new Map(existingBefore.map((a) => [a.nodeKey, readEffectiveNotes(a.effectiveNotes)]));
-    const existingArticles: ExistingLawArticleSnapshot[] = existingBefore.map((a) => ({
-      lawArticleId: a.id,
-      nodeKey: a.nodeKey,
-      content: a.content,
-      versionKey: a.versionKey,
-    }));
-
-    const articleIdByNodeKey = new Map<string, string>();
-    for (const row of rows) {
-      const saved = await tx.lawArticle.upsert({
-        where: { lawId_nodeKey: { lawId, nodeKey: row.nodeKey } },
-        update: {
-          articleNo: row.articleNo,
-          clauseNo: row.clauseNo,
-          itemNo: row.itemNo,
-          label: row.label,
-          title: row.title,
-          content: row.content,
-          versionKey: row.versionKey,
-          // 계획용 날짜는 판 시행일 그대로다. 법제처의 구조화된 조문시행일자는 늘 판 시행일과 같고(T-144 조사), 조마다 다른 날은
-          // 글자 표기뿐이라 날짜와 범위를 `effectiveNotes` 에 따로 남긴다 — 범위를 잘못 읽어 기준일을 옮기지 않으려는 것이다
-          effectiveDate: lawEffectiveDate,
-          effectiveNotes: row.effectiveNotes as unknown as Prisma.InputJsonValue,
-          sortOrder: row.sortOrder,
-          // 사라졌던 조항이 다시 나타나면 되살린다(같은 행이라 걸어 둔 연결이 그대로 이어진다)
-          deletedAt: null,
-        },
+  ) {
+    const source = { id: sourceId };
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await lockLawRowsForRegister(tx, source.id, mst, meta.lawId);
+      if (rows.length > 1) {
+        // MST·법령ID 로 찾은 행이 둘 이상 = 같은 법령의 옛 중복. 어느 행이 판을 따라가는지 짐작하지 않는다 — 뒤처진 행은 앞선 행의 판에
+        // 걸려 멈춰 있기 쉽고, 거기 건 새 연결은 개정을 받지 못한다(T-151 검토 6~9차). 정리(T-154) 전까지 등록하지 않는다
+        this.log.warn(`MST ${mst}·법령ID ${meta.lawId} 로 찾은 법령 행이 ${rows.length}개입니다(MST ${rows.map((r) => r.external_id).join(', ')}) — 옛 중복, 런북 7-5·T-154 로 정리`);
+        throw new ConflictException(DUPLICATE_LAW_ROWS);
+      }
+      const [found] = rows;
+      const same = found?.external_id === mst ? found : undefined;
+      if (found && !same) {
+        // 이미 다른 판으로 추적 중 — 그 행을 그대로 돌려준다(동기화가 판을 따라간다). 본문·조항은 건드리지 않는다
+        const law = await tx.law.findUniqueOrThrow({ where: { id: found.id } });
+        const articleCount = await tx.lawArticle.count({ where: { lawId: law.id, deletedAt: null } });
+        return { ...law, articleCount, skipped: 0, alreadyTracked: true };
+      }
+      if (!same && !meta.lawId) {
+        // 법령ID 가 없으면 같은 법령을 다른 판으로 이미 추적 중인지 알 수 없다 — 새로 만들면 같은 법령의 둘째 행이 될 수 있고, 그 행은
+        // 동기화가 판 목록을 찾지 못해 영영 멈춘다(T-151 검토). 같은 판 다시 등록(그 행 고치기)만 받는다
+        throw new BadGatewayException(
+          '법제처 응답에 법령ID가 없어 새로 등록하지 않았습니다 — 같은 법령을 이미 추적 중인지 확인할 수 없습니다. 잠시 뒤 다시 시도하고, 계속되면 아스트룸에 문의하세요.',
+        );
+      }
+      const law = same
+        ? await tx.law.update({ where: { id: same.id }, data: fields })
+        : await tx.law.create({ data: { sourceId: source.id, externalId: mst, ...fields } });
+      await tx.lawVersion.upsert({
+        where: { lawId_mst: { lawId: law.id, mst } },
+        update: {},
         create: {
-          lawId,
-          nodeKey: row.nodeKey,
-          articleNo: row.articleNo,
-          clauseNo: row.clauseNo,
-          itemNo: row.itemNo,
-          label: row.label,
-          title: row.title,
-          content: row.content,
-          versionKey: row.versionKey,
-          effectiveDate: lawEffectiveDate,
-          effectiveNotes: row.effectiveNotes as unknown as Prisma.InputJsonValue,
-          sortOrder: row.sortOrder,
+          lawId: law.id,
+          mst,
+          kind: 'baseline',
+          orderKey: versionOrderKey({ mst, promulgationDate: meta.promulgationDate, promulgationNo: meta.promulgationNo }),
+          lawType: meta.lawType,
+          promulgatedDate: toDate(meta.promulgationDate),
+          promulgationNo: meta.promulgationNo,
+          revisionType: meta.revisionType,
+          effectiveDate: version.lawEffectiveDate,
+          versionKey: version.versionKey,
+          receivedVia,
         },
       });
-      articleIdByNodeKey.set(row.nodeKey, saved.id);
-    }
-
-    // T-103: 이전 스냅샷과 이번 응답을 견줘 실제로 달라진 조항만 이벤트로 남긴다
-    // (최초 등록은 비교 대상이 없어 빈 결과 — detectLawArticleChanges 주석 참고).
-    // deleteMany(아래) 보다 반드시 먼저다 — 삭제될 조문의 lawArticleId 가 아직 살아
-    // 있어야 이벤트에 담을 수 있다(그 뒤 deleteMany 가 SetNull 로 FK 만 끊는다).
-    const changes = detectLawArticleChanges(existingArticles, rows, articleIdByNodeKey);
-    if (changes.length) {
-      const rowByNodeKey = new Map(rows.map((r) => [r.nodeKey, r]));
-      await tx.lawChangeEvent.createMany({
-        data: changes.map((change) => {
-          // T-144: 그때의 시행일 표기 스냅샷 — 본문이 바뀐 이벤트에만 붙는다(표기만 바뀐 판은 이벤트를 만들지 않는다)
-          const info = eventEffectiveInfo({
-            nodeKey: change.nodeKey,
-            mst: meta.mst,
-            before: change.type === 'created' ? null : (notesBefore.get(change.nodeKey) ?? null),
-            after: change.type === 'deleted' ? null : (rowByNodeKey.get(change.nodeKey)?.effectiveNotes ?? null),
-            beforeRules,
-          });
-          return {
-            lawId,
-            lawArticleId: change.lawArticleId,
-            nodeKey: change.nodeKey,
-            changeType: change.type,
-            beforeContent: change.type === 'created' ? null : change.before.content,
-            afterContent: change.type === 'deleted' ? null : change.after.content,
-            beforeVersionKey: change.type === 'created' ? null : change.before.versionKey,
-            afterVersionKey: change.type === 'deleted' ? null : change.after.versionKey,
-            promulgatedDate: toDate(meta.promulgationDate),
-            lawEffectiveDate,
-            effectiveInfo: info ? (info as unknown as Prisma.InputJsonValue) : undefined,
-            receivedVia,
-          };
-        }),
+      await saveArticles(tx, {
+        lawId: law.id,
+        meta,
+        version,
+        receivedVia,
+        beforeRules: same?.effective_notes_version ?? null,
+        lawVersionId: null,
       });
-    }
-
-    // 새 응답에 없는 nodeKey — 조문이 실제로 삭제된 개정(전부개정 같은 구조 변경).
-    // **지우지 않고 "삭제됨"으로 표시한다(T-124).** 지우면 회사들이 걸어 둔 LawLink 가 cascade 로
-    // 함께 지워져, 위에서 만든 "삭제됨" 이벤트의 영향(T-105)·개정 후보(T-106)에서 그 조항에 걸려 있던
-    // 사내 조문을 찾을 수 없었다. 표시만 하면 이벤트의 lawArticleId 와 연결이 그대로 이어진다.
-    await tx.lawArticle.updateMany({
-      where: { lawId, deletedAt: null, nodeKey: { notIn: rows.map((r) => r.nodeKey) } },
-      data: { deletedAt: new Date() },
-    });
-
-    return changes.length;
+      return { ...law, articleCount: version.rows.length, skipped: version.skipped, alreadyTracked: false };
+    }, TX_OPTIONS);
   }
 
   /** 등록된 법령 목록 */

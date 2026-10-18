@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { testLawSource } from './lawgokr-seed';
 
 /**
  * T-101 법령 관계 정보 — 통합.
@@ -83,73 +84,79 @@ describe('T-101 법령 관계 정보', () => {
       });
       const mst = found.body?.items?.[0]?.mst;
       expect(mst).toBeTruthy();
-      const law = await api('/laws', { method: 'POST', token: a.token, json: { mst } });
-      expect(law.status).toBe(200);
-      const articles = await api(`/laws/${law.body.id}/articles`, { token: a.token });
-      const lawArticleId = articles.body[0].id;
+      // 시험용 법령원에 — 기본 법령원이면 개발 DB 의 근로기준법 행을 돌려받아 아래에서 지울 수 있다(T-151)
+      const src = testLawSource();
+      try {
+        const law = await api('/laws', { method: 'POST', token: a.token, json: { mst, sourceCode: src.code } });
+        expect(law.status).toBe(200);
+        const articles = await api(`/laws/${law.body.id}/articles`, { token: a.token });
+        const lawArticleId = articles.body[0].id;
 
-      const { article: articleA } = await createPolicyWithArticle(a.token, `llc-${Date.now()}`);
+        const { article: articleA } = await createPolicyWithArticle(a.token, `llc-${Date.now()}`);
 
-      // 생성 — 수동 생성은 바로 confirmed 로 저장된다
-      const created = await api('/law-links', {
-        method: 'POST',
-        token: a.token,
-        json: { lawArticleId, articleId: articleA.id, relationType: 'citation', evidenceText: '테스트 근거' },
-      });
-      expect(created.status).toBe(201);
-      expect(created.body.confirmState).toBe('confirmed');
-      expect(created.body.confirmedBy).toBe(a.user.id);
+        // 생성 — 수동 생성은 바로 confirmed 로 저장된다
+        const created = await api('/law-links', {
+          method: 'POST',
+          token: a.token,
+          json: { lawArticleId, articleId: articleA.id, relationType: 'citation', evidenceText: '테스트 근거' },
+        });
+        expect(created.status).toBe(201);
+        expect(created.body.confirmState).toBe('confirmed');
+        expect(created.body.confirmedBy).toBe(a.user.id);
 
-      // 같은 조합을 또 만들면 409
-      const dup = await api('/law-links', {
-        method: 'POST',
-        token: a.token,
-        json: { lawArticleId, articleId: articleA.id, relationType: 'citation' },
-      });
-      expect(dup.status).toBe(409);
+        // 같은 조합을 또 만들면 409
+        const dup = await api('/law-links', {
+          method: 'POST',
+          token: a.token,
+          json: { lawArticleId, articleId: articleA.id, relationType: 'citation' },
+        });
+        expect(dup.status).toBe(409);
 
-      // articleId 로 조회 — 만든 테넌트에서는 보인다
-      const byArticle = await api(`/law-links?articleId=${articleA.id}`, { token: a.token });
-      expect(byArticle.body).toHaveLength(1);
-      expect(byArticle.body[0].id).toBe(created.body.id);
+        // articleId 로 조회 — 만든 테넌트에서는 보인다
+        const byArticle = await api(`/law-links?articleId=${articleA.id}`, { token: a.token });
+        expect(byArticle.body).toHaveLength(1);
+        expect(byArticle.body[0].id).toBe(created.body.id);
 
-      // ★★★ 핵심 — lawArticleId 로 조회할 때 다른 테넌트에는 보이면 안 된다
-      const byLawArticleFromB = await api(`/law-links?lawArticleId=${lawArticleId}`, { token: b.token });
-      expect(byLawArticleFromB.status).toBe(200);
-      expect(byLawArticleFromB.body).toEqual([]);
+        // ★★★ 핵심 — lawArticleId 로 조회할 때 다른 테넌트에는 보이면 안 된다
+        const byLawArticleFromB = await api(`/law-links?lawArticleId=${lawArticleId}`, { token: b.token });
+        expect(byLawArticleFromB.status).toBe(200);
+        expect(byLawArticleFromB.body).toEqual([]);
 
-      // 만든 테넌트에서는 당연히 보인다
-      const byLawArticleFromA = await api(`/law-links?lawArticleId=${lawArticleId}`, { token: a.token });
-      expect(byLawArticleFromA.body.map((x: any) => x.id)).toContain(created.body.id);
+        // 만든 테넌트에서는 당연히 보인다
+        const byLawArticleFromA = await api(`/law-links?lawArticleId=${lawArticleId}`, { token: a.token });
+        expect(byLawArticleFromA.body.map((x: any) => x.id)).toContain(created.body.id);
 
-      // 다른 테넌트는 수정·삭제도 못 한다 (404 — 있다는 사실조차 알려주지 않는다)
-      const updateFromB = await api(`/law-links/${created.body.id}`, {
-        method: 'PATCH',
-        token: b.token,
-        json: { confirmState: 'rejected' },
-      });
-      expect(updateFromB.status).toBe(404);
-      const removeFromB = await api(`/law-links/${created.body.id}`, { method: 'DELETE', token: b.token });
-      expect(removeFromB.status).toBe(404);
+        // 다른 테넌트는 수정·삭제도 못 한다 (404 — 있다는 사실조차 알려주지 않는다)
+        const updateFromB = await api(`/law-links/${created.body.id}`, {
+          method: 'PATCH',
+          token: b.token,
+          json: { confirmState: 'rejected' },
+        });
+        expect(updateFromB.status).toBe(404);
+        const removeFromB = await api(`/law-links/${created.body.id}`, { method: 'DELETE', token: b.token });
+        expect(removeFromB.status).toBe(404);
 
-      // 법령을 지우려 하면 연결이 남아 있어 거부된다
-      const removeLawBlocked = await api(`/laws/${law.body.id}`, { method: 'DELETE', token: a.token });
-      expect(removeLawBlocked.status).toBe(409);
+        // 법령을 지우려 하면 연결이 남아 있어 거부된다
+        const removeLawBlocked = await api(`/laws/${law.body.id}`, { method: 'DELETE', token: a.token });
+        expect(removeLawBlocked.status).toBe(409);
 
-      // 반려 — 사유는 없지만 confirmState 만 바뀐다
-      const rejected = await api(`/law-links/${created.body.id}`, {
-        method: 'PATCH',
-        token: a.token,
-        json: { confirmState: 'rejected' },
-      });
-      expect(rejected.status).toBe(200);
-      expect(rejected.body.confirmState).toBe('rejected');
+        // 반려 — 사유는 없지만 confirmState 만 바뀐다
+        const rejected = await api(`/law-links/${created.body.id}`, {
+          method: 'PATCH',
+          token: a.token,
+          json: { confirmState: 'rejected' },
+        });
+        expect(rejected.status).toBe(200);
+        expect(rejected.body.confirmState).toBe('rejected');
 
-      // 삭제 후 법령 삭제가 풀린다
-      const removed = await api(`/law-links/${created.body.id}`, { method: 'DELETE', token: a.token });
-      expect(removed.status).toBe(200);
-      const removeLawOk = await api(`/laws/${law.body.id}`, { method: 'DELETE', token: a.token });
-      expect(removeLawOk.status).toBe(200);
+        // 삭제 후 법령 삭제가 풀린다
+        const removed = await api(`/law-links/${created.body.id}`, { method: 'DELETE', token: a.token });
+        expect(removed.status).toBe(200);
+        const removeLawOk = await api(`/laws/${law.body.id}`, { method: 'DELETE', token: a.token });
+        expect(removeLawOk.status).toBe(200);
+      } finally {
+        src.drop();
+      }
     }, 120_000);
 
     it('본문 인용 패턴으로 suggested 연결을 자동 생성한다', async ({ skip }) => {
@@ -159,47 +166,53 @@ describe('T-101 법령 관계 정보', () => {
         token: a.token,
       });
       const mst = found.body?.items?.[0]?.mst;
-      const law = await api('/laws', { method: 'POST', token: a.token, json: { mst } });
-      const articles = await api(`/laws/${law.body.id}/articles`, { token: a.token });
-      const target = articles.body.find((x: any) => x.clauseNo === null && x.itemNo === null);
-      expect(target).toBeTruthy();
+      // 시험용 법령원에 — 기본 법령원이면 개발 DB 의 근로기준법 행을 돌려받거나, 지우는 시험 없이 실제 법령 행을 남긴다(T-151)
+      const src = testLawSource();
+      let created: { id: string; lawArticleId: string }[] = [];
+      try {
+        const law = await api('/laws', { method: 'POST', token: a.token, json: { mst, sourceCode: src.code } });
+        const articles = await api(`/laws/${law.body.id}/articles`, { token: a.token });
+        const target = articles.body.find((x: any) => x.clauseNo === null && x.itemNo === null);
+        expect(target).toBeTruthy();
 
-      const { policy, chapter } = await createPolicyWithArticle(a.token, `lld-${Date.now()}`);
-      const article = await api(`/policies/${policy.id}/chapters/${chapter.id}/articles`, {
-        method: 'POST',
-        token: a.token,
-        json: {
-          number: 2,
-          title: '인용 테스트',
-          content: `이 회사는 「${law.body.lawName}」 ${target.label}를 준용한다.`,
-        },
-      });
-      expect(article.status).toBe(201);
+        const { policy, chapter } = await createPolicyWithArticle(a.token, `lld-${Date.now()}`);
+        const article = await api(`/policies/${policy.id}/chapters/${chapter.id}/articles`, {
+          method: 'POST',
+          token: a.token,
+          json: {
+            number: 2,
+            title: '인용 테스트',
+            content: `이 회사는 「${law.body.lawName}」 ${target.label}를 준용한다.`,
+          },
+        });
+        expect(article.status).toBe(201);
 
-      const suggested = await api('/law-links/suggest', {
-        method: 'POST',
-        token: a.token,
-        json: { articleId: article.body.id },
-      });
-      expect(suggested.status).toBe(201);
-      expect(suggested.body.scanned).toBeGreaterThan(0);
-      expect(suggested.body.created.length).toBeGreaterThan(0);
-      const link = suggested.body.created[0];
-      expect(link.lawArticleId).toBe(target.id);
-      expect(link.confirmState).toBe('suggested');
-      expect(link.confirmedBy).toBeNull();
+        const suggested = await api('/law-links/suggest', {
+          method: 'POST',
+          token: a.token,
+          json: { articleId: article.body.id },
+        });
+        expect(suggested.status).toBe(201);
+        expect(suggested.body.scanned).toBeGreaterThan(0);
+        created = suggested.body.created;
+        // 같은 이름의 법령이 개발 DB 에 따로 있으면 그쪽 조항에도 추천이 생긴다 — 이 시험의 법령 쪽을 고른다
+        const link = suggested.body.created.find((l: any) => l.lawArticleId === target.id);
+        expect(link, JSON.stringify(suggested.body.created)).toBeTruthy();
+        expect(link.confirmState).toBe('suggested');
+        expect(link.confirmedBy).toBeNull();
 
-      // 같은 조문을 다시 스캔해도 이미 있는 연결을 또 만들지 않는다
-      const again = await api('/law-links/suggest', {
-        method: 'POST',
-        token: a.token,
-        json: { articleId: article.body.id },
-      });
-      expect(again.body.created).toHaveLength(0);
-
-      // 정리 — `Law`는 테넌트 공용이라 이 링크를 남겨 두면, 같은 법을 등록한
-      // 다른 테스트(T-100)의 "법령 삭제" 검증을 이 테스트가 막게 된다
-      await api(`/law-links/${link.id}`, { method: 'DELETE', token: a.token });
+        // 같은 조문을 다시 스캔해도 이미 있는 연결을 또 만들지 않는다
+        const again = await api('/law-links/suggest', {
+          method: 'POST',
+          token: a.token,
+          json: { articleId: article.body.id },
+        });
+        expect(again.body.created).toHaveLength(0);
+      } finally {
+        // 이 시험이 만든 추천 연결을 모두 지운다(같은 이름의 다른 법령 행에 생긴 것까지) — 시험용 법령원의 법령은 drop 이 지운다
+        for (const l of created) await api(`/law-links/${l.id}`, { method: 'DELETE', token: a.token });
+        src.drop();
+      }
     }, 120_000);
   });
 });

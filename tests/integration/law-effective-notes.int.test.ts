@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import { api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { FakeLaw, requireRedis, testLawSource, type FakeVersion } from './lawgokr-seed';
 
 /**
  * 조마다 다른 시행일 표기 (T-144, PAT-06 — 특허 도 7 S760 "조항별 시행일 구분 저장").
@@ -151,28 +152,17 @@ describe('T-144 조별 시행일 표기', () => {
 });
 
 /**
- * 실제 DB·법제처로 저장·맞추기를 한 번 지난다(인증값이 있을 때만 — T-104 시험과 같은 방식). 위 시험은 행을 SQL 로 심어
- * 저장 경로(saveArticles·collectEffectiveNotes)를 지나지 않는다. 여기서 막고 싶은 사고:
- * - T-144 이전에 등록한 법령(표기 null·읽기 판 null)이 주기 동기화로 채워지지 않는다 / 채우면서 이벤트를 만든다
- * - 읽기 판이 같은데 매 주기 다시 읽는다 / 판이 다르면(규칙 변경) 다시 읽지 않는다
+ * 실제 DB·법제처로 등록·가져오기를 한 번 지난다(인증값이 있을 때만 — T-104 시험과 같은 방식). 위 시험은 행을 SQL 로 심어
+ * 저장 경로(saveArticles)를 지나지 않는다. 동기화의 표기 채우기는 아래 가짜 법제처 블록이 본다(T-151 뒤로 실데이터 동기화는
+ * 시행 예정 판을 따라가 "같은 판" 경로를 지나지 않는다).
  */
 describe('T-144 조별 시행일 표기 — 실제 법제처로 저장·동기화 (인증값이 있을 때만)', () => {
   let platform: Awaited<ReturnType<typeof createTenant>>;
   let ready = false;
   let lawId = '';
-  let createdByTest = false;
+  let src: ReturnType<typeof testLawSource> | null = null;
   const count = (where: string) => Number(sql(`SELECT count(*) FROM law_articles WHERE law_id='${lawId}' AND ${where};`));
-  const events = () => Number(sql(`SELECT count(*) FROM law_change_events WHERE law_id='${lawId}';`));
   const version = () => sql(`SELECT coalesce(effective_notes_version::text, 'null') FROM laws WHERE id='${lawId}';`);
-
-  /** 이 법령만 맨 앞에 세워 limit 1 로 돌린다 */
-  const runOne = async () => {
-    sql(`UPDATE laws SET last_checked_at = NULL WHERE id='${lawId}';`);
-    const res = await api('/platform-admin/law-sync/run', { method: 'POST', token: platform.token, json: { limit: 1 } });
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.results[0].lawId).toBe(lawId);
-    return res.body.results[0];
-  };
 
   beforeAll(async () => {
     await waitForApi();
@@ -183,18 +173,15 @@ describe('T-144 조별 시행일 표기 — 실제 법제처로 저장·동기�
     if (!ready) return;
     const found = await api('/lawgokr/search?q=%EA%B7%BC%EB%A1%9C%EA%B8%B0%EC%A4%80%EB%B2%95&display=1', { token: platform.token });
     const mst = found.body.items[0].mst;
-    const before = await api('/laws', { token: platform.token });
-    createdByTest = !before.body.some((l: any) => l.externalId === mst);
-    const reg = await api('/laws', { method: 'POST', token: platform.token, json: { mst } });
+    // 시험용 법령원에 — 기본 법령원이면 개발 DB 의 근로기준법 행을 돌려받는다(T-151: 같은 법령ID 면 이미 추적 중인 행)
+    src = testLawSource();
+    const reg = await api('/laws', { method: 'POST', token: platform.token, json: { mst, sourceCode: src.code } });
     expect(reg.status, JSON.stringify(reg.body)).toBe(200);
     lawId = reg.body.id;
   }, 120_000);
 
-  afterAll(async () => {
-    if (!lawId) return;
-    if (createdByTest) await api(`/laws/${lawId}`, { method: 'DELETE', token: platform.token });
-    // 원래 있던 법령이면 이 시험이 바꿔 둔 표기가 남지 않게 읽기 판을 비운다 — 다음 동기화가 다시 읽는다(이벤트 없음)
-    else sql(`UPDATE laws SET effective_notes_version = NULL WHERE id='${lawId}';`);
+  afterAll(() => {
+    src?.drop();
   });
 
   it('등록하면 모든 조항이 "읽음"(null 없음)이고 법령에 지금 읽기 판이 남는다', ({ skip }) => {
@@ -204,8 +191,78 @@ describe('T-144 조별 시행일 표기 — 실제 법제처로 저장·동기�
     expect(version()).toBe('1');
   });
 
-  it('T-144 이전 등록(표기·판 null)은 주기 동기화가 이벤트 없이 채우고, 판이 같으면 다시 읽지 않으며, 판이 다르면 다시 읽는다', async ({ skip }) => {
+  it('법제처 가져오기(사내 규정 세션)의 트리에는 표기를 싣지 않는다 — 트리 고치기로 넣어도 떼어 낸다', async ({ skip }) => {
     if (!ready) return skip();
+    // 표기가 있는 법령(소득세법 — 조의 일부가 늦게 시행되는 조가 있다). 법령 트리(매퍼 결과)에는 실린다
+    const found = await api(`/lawgokr/search?q=${encodeURIComponent('소득세법')}&display=5`, { token: platform.token });
+    const mst = found.body.items.find((i: any) => i.title === '소득세법')?.mst;
+    const lawTree = await api(`/lawgokr/laws/${mst}`, { token: platform.token });
+    expect(lawTree.status, JSON.stringify(lawTree.body).slice(0, 200)).toBe(200);
+    // 법제처 데이터가 바뀌어 표기가 없어지면 이 확인은 의미가 없다 — 그때는 건너뛴다
+    if (!JSON.stringify(lawTree.body).includes('effectiveNotes')) return skip();
+
+    const session = await api('/regulation-parse/from-lawgokr', { method: 'POST', token: platform.token, json: { mst } });
+    expect(session.status, JSON.stringify(session.body).slice(0, 200)).toBe(201);
+    expect(JSON.stringify(session.body.parseTree)).not.toContain('effectiveNotes');
+
+    const roots = session.body.parseTree.roots;
+    // 소득세법 트리 전체는 트리 고치기의 본문 한도(100kb)를 넘는다 — 떼어 내는지만 보므로 맨 앞 노드와 그 첫 자식만으로 고친다.
+    // 두 깊이 모두에 넣는다(장·조 어느 깊이든 떼어야 한다)
+    const [first] = roots;
+    const child = first.children?.[0];
+    const injected = [{ ...first, effectiveNotes: [NOTE], children: child ? [{ ...child, children: undefined, effectiveNotes: [NOTE] }] : undefined }];
+    const patched = await api(`/regulation-parse/${session.body.id}/tree`, { method: 'PATCH', token: platform.token, json: { roots: injected } });
+    expect(patched.status, JSON.stringify(patched.body).slice(0, 200)).toBe(200);
+    expect(JSON.stringify(patched.body.parseTree)).not.toContain('effectiveNotes');
+  }, 120_000);
+});
+
+/**
+ * 주기 동기화가 표기를 채운다 — 가짜 법제처(캐시 심기)로 돈다(T-151). 실제 법제처로는 저장 판 뒤에 시행 예정 판이 있으면
+ * 동기화가 그 판을 반영해 버려 "같은 판" 경로(표기 채우기)를 지나지 않는다 — 판 목록을 저장 판 하나로 정해 둔다.
+ */
+describe('T-144 조별 시행일 표기 — 동기화가 채우기 (가짜 법제처)', () => {
+  let pf: Awaited<ReturnType<typeof createTenant>>;
+  let lawId = '';
+  const law = new FakeLaw('표기채우기시험법');
+  const A: FakeVersion = {
+    mst: law.mst(1),
+    promulgated: '20260110',
+    promulgationNo: '121',
+    effective: '20260201',
+    articles: [
+      { no: '1', title: '목적', body: '목적 본문' },
+      { no: '2', title: '휴가', body: '휴가 본문 [시행일: 2027.1.1] 제2조제1항 중 "15일"의 개정부분' },
+    ],
+  };
+  const count = (where: string) => Number(sql(`SELECT count(*) FROM law_articles WHERE law_id='${lawId}' AND ${where};`));
+  const events = () => Number(sql(`SELECT count(*) FROM law_change_events WHERE law_id='${lawId}';`));
+  const version = () => sql(`SELECT coalesce(effective_notes_version::text, 'null') FROM laws WHERE id='${lawId}';`);
+  const runOne = async () => {
+    const res = await api('/platform-admin/law-sync/run', { method: 'POST', token: pf.token, json: { lawId } });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.results[0].lawId).toBe(lawId);
+    return res.body.results[0];
+  };
+
+  beforeAll(async () => {
+    await waitForApi();
+    pf = await createTenant('effnotes-seed');
+    sql(`UPDATE users SET platform_role='global_admin' WHERE id='${pf.user.id}';`);
+    requireRedis();
+    law.seedAll([A]);
+    const reg = await api('/laws', { method: 'POST', token: pf.token, json: { mst: A.mst } });
+    expect(reg.status, JSON.stringify(reg.body)).toBe(200);
+    lawId = reg.body.id;
+  }, 90_000);
+
+  afterAll(() => {
+    if (lawId) sql(`DELETE FROM laws WHERE id='${lawId}';`);
+    law.cleanup();
+  });
+
+  it('T-144 이전 등록(표기·판 null)은 주기 동기화가 이벤트 없이 채우고, 판이 같으면 다시 읽지 않으며, 판이 다르면 다시 읽는다', async () => {
+    expect(count(`jsonb_array_length(effective_notes) > 0`)).toBe(1); // 등록이 표기를 읽었다(제2조)
     const total = count('true');
     const eventsBefore = events();
     sql(`UPDATE law_articles SET effective_notes = NULL WHERE law_id='${lawId}'; UPDATE laws SET effective_notes_version = NULL WHERE id='${lawId}';`);
@@ -232,28 +289,4 @@ describe('T-144 조별 시행일 표기 — 실제 법제처로 저장·동기�
     expect(events()).toBe(eventsBefore);
   }, 180_000);
 
-  it('법제처 가져오기(사내 규정 세션)의 트리에는 표기를 싣지 않는다 — 트리 고치기로 넣어도 떼어 낸다', async ({ skip }) => {
-    if (!ready) return skip();
-    // 표기가 있는 법령(소득세법 — 조의 일부가 늦게 시행되는 조가 있다). 법령 트리(매퍼 결과)에는 실린다
-    const found = await api(`/lawgokr/search?q=${encodeURIComponent('소득세법')}&display=5`, { token: platform.token });
-    const mst = found.body.items.find((i: any) => i.title === '소득세법')?.mst;
-    const lawTree = await api(`/lawgokr/laws/${mst}`, { token: platform.token });
-    expect(lawTree.status, JSON.stringify(lawTree.body).slice(0, 200)).toBe(200);
-    // 법제처 데이터가 바뀌어 표기가 없어지면 이 확인은 의미가 없다 — 그때는 건너뛴다
-    if (!JSON.stringify(lawTree.body).includes('effectiveNotes')) return skip();
-
-    const session = await api('/regulation-parse/from-lawgokr', { method: 'POST', token: platform.token, json: { mst } });
-    expect(session.status, JSON.stringify(session.body).slice(0, 200)).toBe(201);
-    expect(JSON.stringify(session.body.parseTree)).not.toContain('effectiveNotes');
-
-    const roots = session.body.parseTree.roots;
-    // 소득세법 트리 전체는 트리 고치기의 본문 한도(100kb)를 넘는다 — 떼어 내는지만 보므로 맨 앞 노드와 그 첫 자식만으로 고친다.
-    // 두 깊이 모두에 넣는다(장·조 어느 깊이든 떼어야 한다)
-    const [first] = roots;
-    const child = first.children?.[0];
-    const injected = [{ ...first, effectiveNotes: [NOTE], children: child ? [{ ...child, children: undefined, effectiveNotes: [NOTE] }] : undefined }];
-    const patched = await api(`/regulation-parse/${session.body.id}/tree`, { method: 'PATCH', token: platform.token, json: { roots: injected } });
-    expect(patched.status, JSON.stringify(patched.body).slice(0, 200)).toBe(200);
-    expect(JSON.stringify(patched.body.parseTree)).not.toContain('effectiveNotes');
-  }, 120_000);
 });

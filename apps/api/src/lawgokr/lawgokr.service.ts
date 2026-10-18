@@ -16,13 +16,7 @@ import {
   OneOrMany,
 } from './lawgokr.types';
 import { RegulationArticleNode } from '../regulation-parse/regulation-tree.builder';
-import { EFFECTIVE_NOTES_VERSION } from '../common/effective-notes';
-
-/**
- * 법령 본문 매핑 결과의 캐시 키. v2 — 트리 노드에 조별 시행일 표기가 붙었다(T-144). 표기 읽기 규칙의 판(`n1`)도 넣는다 —
- * 규칙을 고쳐 판을 올리면 옛 규칙으로 매핑한 캐시(최대 하루)를 읽어 새 판 번호로 찍는 일이 없게
- */
-export const lawDetailCacheKey = (mst: string) => `lawgokr:law:v2:n${EFFECTIVE_NOTES_VERSION}:${mst}`;
+import { VERSION_LIST_PAGE_SIZE, lawDetailCacheKey, lawSearchCacheKey, lawVersionListCacheKey } from './lawgokr-cache-keys';
 
 /**
  * T-53. 법제처 국가법령정보 공동활용 OPEN API 프록시.
@@ -138,7 +132,7 @@ export class LawGoKrService {
     const sort = options.sort || 'lasc';
     const scope = options.searchScope === 2 ? 2 : 1;
 
-    const cacheKey = `lawgokr:search:${scope}:${sort}:${display}:${page}:${query}`;
+    const cacheKey = lawSearchCacheKey({ scope, sort, display, page, query });
     const cached = await this.cache.get<LawSearchResult>(cacheKey);
     if (cached) return cached;
 
@@ -166,22 +160,37 @@ export class LawGoKrService {
   }
 
   /**
-   * 법령ID 로 지금 판의 법령명을 받는다 (T-104 — 제명이 바뀐 법령을 다시 찾을 때만 쓴다).
+   * 판 목록 한 쪽(T-151, PAT-07) — 시행일법령 목록(`target=eflaw`)을 **법령ID(`LID`)로** 공포일 내림차순 100건씩.
    *
-   * 법령ID 조회는 현행 본문 전체를 돌려주지만 **응답에 MST 가 없어** 본문 저장 키로 쓸 수 없다.
-   * 이름만 얻어 검색으로 MST 를 다시 찾는다. 캐시하지 않는다 — 드물게 불리고, 낡은 값이면
-   * 바뀐 이름을 놓친다.
+   * 현행 목록(`target=law`)은 **현행만** 준다(2026-10-14 실호출). 이 목록은 연혁·현행·시행예정을 모두 주고, 같은 판(MST)이
+   * 단계 시행일마다 따로 나온다. 검색어 없이 `LID` 로 부르면 그 법령의 판만 온다(근로기준법 001872 → 54건) — 법령명으로
+   * 찾을 때처럼 시행령이 섞이거나, 제명이 바뀐 판을 놓치는 일이 없다. 부르는 쪽도 법령ID 로 한 번 더 거른다.
    */
-  async getCurrentTitleById(lawId: string): Promise<string | null> {
-    const key = lawId.trim();
-    if (!/^\d+$/.test(key)) return null;
-    const raw = await this.call<LawGoKrLawServiceResponse & { Law?: unknown }>('lawService.do', {
-      target: 'law',
-      ID: key,
+  async searchVersions(lawId: string, page = 1): Promise<LawSearchResult> {
+    const id = lawId.trim();
+    if (!/^\d+$/.test(id)) throw new NotFoundException('법령ID는 숫자여야 합니다.');
+    const p = Math.max(1, Math.trunc(page));
+    const cacheKey = lawVersionListCacheKey(id, p);
+    const cached = await this.cache.get<LawSearchResult>(cacheKey);
+    if (cached) return cached;
+
+    const raw = await this.call<LawGoKrSearchResponse>('lawSearch.do', {
+      target: 'eflaw',
+      LID: id,
+      page: p,
+      display: VERSION_LIST_PAGE_SIZE,
+      sort: 'ddes',
     });
-    if (typeof (raw as any).Law === 'string') return null;
-    const title = raw.법령?.기본정보?.법령명_한글;
-    return typeof title === 'string' && title.trim() ? title.trim() : null;
+    const box = raw.LawSearch;
+    const result: LawSearchResult = {
+      total: Number(box?.totalCnt ?? 0) || 0,
+      page: p,
+      display: VERSION_LIST_PAGE_SIZE,
+      // MST 가 빈 행도 버리지 않는다 — 판 목록(groupVersions)이 저장 판 뒤의 행이면 멈춘다(조용히 버리면 사이 판이 빠진다)
+      items: LawGoKrService.toArray<LawGoKrSearchItem>(box?.law).map(mapSearchItem),
+    };
+    await this.cache.set(cacheKey, result, this.searchTtl);
+    return result;
   }
 
   /**
@@ -218,7 +227,10 @@ export class LawGoKrService {
     if (!mapped.tree.roots.length) {
       this.log.warn(`법제처 응답에 조문이 없습니다 (MST=${key}).`);
     }
-    await this.cache.set(cacheKey, mapped, this.detailTtl);
+    // 법령ID 가 빠진 응답은 캐시하지 않는다 — 등록이 그 응답으로는 새로 만들지 않는데(502), 캐시에 남으면 다시 시도해도 하루 동안
+    // 같은 응답을 받는다(T-151 검토)
+    if (mapped.meta.lawId) await this.cache.set(cacheKey, mapped, this.detailTtl);
+    else this.log.warn(`법제처 응답에 법령ID 가 없습니다 (MST=${key}) — 캐시하지 않습니다.`);
     return mapped;
   }
 }

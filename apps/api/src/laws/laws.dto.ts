@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Matches, Max, Min } from 'class-validator';
 
 export class RegisterLawDto {
   @ApiProperty({ description: '법제처 MST(법령일련번호). /lawgokr/search 결과의 mst', example: '267900' })
@@ -20,6 +20,11 @@ export class RunLawSyncDto {
   @Min(1)
   @Max(100)
   limit?: number;
+
+  @ApiPropertyOptional({ description: '이 법령만 확인한다(점검·시험) — 주면 limit 은 쓰지 않는다(T-151)' })
+  @IsOptional()
+  @IsUUID()
+  lawId?: string;
 }
 
 export class LawSyncRunsQueryDto {

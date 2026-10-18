@@ -764,7 +764,7 @@ model LawSource {
 model Law {
   id              String    @id @default(uuid())
   sourceId        String    @map("source_id")
-  /// 법제처 MST(법령일련번호). 본문 조회 키다
+  /// 법제처 MST(법령일련번호). 본문 조회 키다. 동기화가 공포 순으로 마지막에 반영한 판이라(T-151) 아직 시행 전인 판일 수 있다
   externalId      String    @map("external_id")
   /// 법령ID — MST 와 다르다. 개정되면 MST 는 바뀌고 법령ID 는 유지된다
   externalLawId   String?   @map("external_law_id")
@@ -794,6 +794,8 @@ model Law {
   source       LawSource        @relation(fields: [sourceId], references: [id], onDelete: Restrict)
   articles     LawArticle[]
   changeEvents LawChangeEvent[]
+  /// 반영한 판 기록(T-151)
+  versions     LawVersion[]
 
   @@unique([sourceId, externalId])
   @@index([lastCheckedAt])
@@ -954,6 +956,10 @@ model LawChangeEvent {
   /// 수신경로 — T-104 가 poll 을 쓴다. 지금은 register() 호출부가 전부 manual
   receivedVia LawEventChannel @map("received_via")
   detectedAt  DateTime        @default(now()) @map("detected_at")
+  /// 이 변경을 만든 법령 판(T-151, PAT-07) — 판을 차례로 반영하며 생긴 이벤트만 채운다. 옛 이벤트와 같은 판을 다시
+  /// 등록해서 생긴 이벤트는 null(판이 바뀐 것이 아니다). 판 행이 법령·직전 판·이 판을 정하므로 (판, nodeKey) 유일이
+  /// 특허의 "법령·조항·변경 전후 버전 조합으로 같은 변경 판단"을 DB 에서 한다
+  lawVersionId String? @map("law_version_id")
 
   /// 개정 후보 자동 생성(T-106)을 마친 시각. null 이면 아직 — 동기화가 끝날 때마다 null 인 것을
   /// 다시 처리한다(중간에 끊기거나 한 회사가 실패해도 다음 실행에서 이어진다). 기능 도입 전에
@@ -963,10 +969,14 @@ model LawChangeEvent {
 
   law        Law         @relation(fields: [lawId], references: [id], onDelete: Cascade)
   lawArticle LawArticle? @relation(fields: [lawArticleId], references: [id], onDelete: SetNull)
+  /// NoAction — 법령을 지우면 판과 이벤트가 함께 cascade 로 지워지고(검사는 문장 끝), 판 행만 지우는 것은 막는다
+  lawVersion LawVersion? @relation(fields: [lawVersionId], references: [id], onDelete: NoAction)
   candidates AmendmentCandidate[]
   /// 이 변경으로 발행된 사내 조문 버전(T-108)
   versions   ArticleVersion[]
 
+  /// 한 판에서 같은 조항의 이벤트는 하나(T-151) — 같은 판을 두 번 반영하려 해도 이벤트가 겹쳐 남지 않는다
+  @@unique([lawVersionId, nodeKey])
   /// 조문 상세 이력, 영향 분석(T-105)의 "이 법령조항 최근 변경" 조회
   @@index([lawArticleId, detectedAt])
   /// 법령 단위 동기화 이력(T-104)
@@ -993,6 +1003,53 @@ enum LawEventChannel {
   manual
   /// 외부 통지 — 미사용, 확장 여지
   webhook
+}
+
+/// 법령 판 기록 (T-151, PAT-07 — 특허 도 7 S770). 동기화가 반영한 판(MST)마다 한 행 — 사내 조문의 ArticleVersion 과 짝이다.
+/// 두 확인 사이에 판이 여럿 공포되면 공포 순으로 한 판씩 반영하고, 그 판에서 생긴 변경 이벤트가 이 행을 가리킨다.
+/// 법령 행의 externalId 는 "공포 순으로 마지막에 반영한 판"(시행 예정일 수 있다)이고, 그 판의 행이 늘 있다.
+model LawVersion {
+  id    String @id @default(uuid())
+  lawId String @map("law_id")
+  /// 법령일련번호 — 판마다 새로 매겨지고 본문은 바뀌지 않는다
+  mst   String
+  /// 변경 전 판(특허의 "변경 전 버전"). 기준판이면 null
+  previousMst String? @map("previous_mst")
+  kind  LawVersionKind
+  /// 공포 순서 키(공포일·공포번호·MST) — law-version-plan.ts 한 곳에서만 계산한다. 마이그레이션이 옮겨 적은 기준판은 첫 동기화가 채운다
+  orderKey String? @map("order_key")
+  /// '법률' · '대통령령' 등 — 판 표기("법률 제21700호")에 쓴다
+  lawType String? @map("law_type")
+  promulgatedDate DateTime? @map("promulgated_date") @db.Date
+  promulgationNo  String?   @map("promulgation_no")
+  /// '일부개정' · '타법개정' · '폐지' 등(법제처 제개정구분명)
+  revisionType String? @map("revision_type")
+  /// 본문의 기본정보.시행일자 — 이 판 이벤트의 lawEffectiveDate 와 같은 값(계획용 날짜, T-144 규칙)
+  effectiveDate DateTime? @map("effective_date") @db.Date
+  /// 시행일법령 목록에 나온 이 판의 단계 시행일 전부(오름차순). 한 판이 여러 날에 나눠 시행되면 둘 이상이다
+  stageEffectiveDates DateTime[] @default([]) @map("stage_effective_dates") @db.Date
+  /// 본문 지문(lawAggregateVersionKey) — 앞 판과 같으면 본문이 바뀌지 않은 판(표기만 다른 판, T-145 의 출발점)
+  versionKey String? @map("version_key")
+  /// 동기화(poll)·등록(manual). 마이그레이션이 옮겨 적은 기준판은 null
+  receivedVia LawEventChannel? @map("received_via")
+  /// 이 판을 반영하며 만든 변경 이벤트 수
+  eventCount Int      @default(0) @map("event_count")
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  law          Law              @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  changeEvents LawChangeEvent[]
+
+  /// 한 법령에서 같은 판은 한 번만 반영한다
+  @@unique([lawId, mst])
+  @@index([lawId, orderKey])
+  @@map("law_versions")
+}
+
+enum LawVersionKind {
+  /// 등록 때나 기능 도입 때 기준으로 적어 둔 판 — 이벤트 없음
+  baseline
+  /// 직전 판과 견줘 반영한 판
+  change
 }
 
 /// 법령 주기 동기화 1회 실행 기록 (T-104).

@@ -20,9 +20,9 @@ export class LawSyncController {
 
   @Post('run')
   @HttpCode(200)
-  @ApiOperation({ summary: '법령 동기화 지금 실행 — 확인이 오래된 법령부터 limit 건' })
+  @ApiOperation({ summary: '법령 동기화 지금 실행 — 확인이 오래된 법령부터 limit 건(lawId 를 주면 그 법령만)' })
   run(@Request() req: any, @Body() dto: RunLawSyncDto) {
-    return this.sync.run({ trigger: 'manual', limit: dto.limit, triggeredBy: req.user.id });
+    return this.sync.run({ trigger: 'manual', limit: dto.limit, triggeredBy: req.user.id, lawIds: dto.lawId ? [dto.lawId] : undefined });
   }
 
   @Get('runs')

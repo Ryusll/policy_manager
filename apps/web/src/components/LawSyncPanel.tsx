@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { lawSyncApi, type LawSyncRun } from '../api/laws';
 import { toast } from '../stores/toastStore';
 import { apiErrorMessage } from '../lib/apiError';
+import LawSyncVersions from './LawSyncVersions';
 
 const STATUS: Record<LawSyncRun['status'], { label: string; className: string }> = {
   succeeded: { label: '성공', className: 'bg-green-50 text-green-800 border-green-200' },
@@ -106,10 +107,11 @@ export default function LawSyncPanel() {
                       >
                         <b>{r.lawName}</b> —{' '}
                         {r.outcome === 'failed'
-                          ? `확인 실패: ${r.error}`
+                          ? `확인 실패: ${r.error}${r.note ? ` — ${r.note}` : ''}`
                           : r.outcome === 'updated'
                             ? `새 판 반영 (MST ${r.fromMst} → ${r.toMst}), 변경 조항 ${r.events ?? 0}건`
                             : r.note}
+                        <LawSyncVersions result={r} />
                       </p>
                     ))}
                   </div>

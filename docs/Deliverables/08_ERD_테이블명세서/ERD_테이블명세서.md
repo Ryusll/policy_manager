@@ -328,7 +328,8 @@ deletedAt?(법령에서 사라진 시각 — T-124, 마이그레이션 `20261010
 #### LawChangeEvent (`law_change_events`) — 변경 이벤트, 테넌트 공용 ✅ 구현됨 (T-103)
 lawId FK(cascade), lawArticleId FK?(**SetNull**), nodeKey, changeType(enum LawChangeType: created/modified/deleted), beforeContent(text?), afterContent(text?), beforeVersionKey?, afterVersionKey?, promulgatedDate(공포일), lawEffectiveDate(법령 시행일), receivedVia(enum LawEventChannel: poll/manual/webhook — **수신경로**), detectedAt, **effectiveInfo?**(Json — 그때의 조별 시행일 표기 스냅샷 `{mst, inherited, before, after, rules, beforeRules}`, T-144. rules·beforeRules = 뒤·앞 표기를 읽은 규칙의 판(다르면 앞뒤를 견주지 않는다). before null = 그때 수집 안 함, after null = 사라진 조항. 본문이 바뀐 이벤트에만, 앞뒤 표기가 모두 없으면 null).
 amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. null 이면 동기화가 끝날 때 처리하고, 한 회사라도 실패하면 비워 둬 다음 실행에서 다시 처리한다. 기능 도입 전 이벤트는 마이그레이션이 감지 시각으로 채웠다).
-인덱스 `[lawArticleId, detectedAt]`, `[lawId, detectedAt]`, `[lawEffectiveDate]`, `[amendmentsProcessedAt]`.
+lawVersionId?(이 변경을 만든 법령 판 — T-151, `law_versions` FK **NO ACTION**. 판을 차례로 반영하며 생긴 이벤트만 채우고, 옛 이벤트·같은 판 재등록 이벤트는 null).
+인덱스 `[lawArticleId, detectedAt]`, `[lawId, detectedAt]`, `[lawEffectiveDate]`, `[amendmentsProcessedAt]`, **유일 `[lawVersionId, nodeKey]`**(한 판에서 같은 조항 이벤트는 하나 — 특허의 "변경 전후 버전 조합으로 같은 변경 판단").
 
 `POST /api/laws` 재등록이 만든다 — 조항별 `versionKey` 를 직전 값과 비교해 신설·변경·삭제만 남긴다(공백만 다르면 지문이 같아 제외).
 **최초 등록은 만들지 않는다** — 비교할 이전 상태가 없는데 그대로 돌리면 조문 수만큼 "신설"이 쌓인다.
@@ -338,6 +339,27 @@ amendmentsProcessedAt?(개정 후보 자동 생성을 마친 시각 — T-106. n
 - `changeType` 추가 — 신설·삭제를 before/after 가 null 인지로 매번 되짚지 않게.
 
 주기 동기화(T-104)도 같은 경로로 만든다(`receivedVia=poll`). 새 판은 **같은 `Law` 행의 MST 를 바꿔** 반영한다 — 새 MST 로 행을 새로 만들면 `LawLink` 가 옛 판에 남는다.
+
+#### LawVersion (`law_versions`) — 법령 판 기록, 테넌트 공용 ✅ 구현됨 (T-151, 마이그레이션 `20261014150000_law_versions`)
+동기화가 반영한 판(MST)마다 한 행 — 사내 조문의 ArticleVersion 과 짝이다. 두 확인 사이에 판이 여럿 공포되면 공포 순으로 한 판씩 반영하고(설계안 5.2-1), 그 판에서 생긴 변경 이벤트가 이 행을 가리킨다.
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| id | uuid PK | |
+| lawId | uuid FK → Law (cascade) | |
+| mst | string | 법령일련번호 |
+| previousMst | string? | 변경 전 판(특허의 "변경 전 버전"). 기준판이면 null |
+| kind | enum LawVersionKind | `baseline`(등록·도입 때 기준으로 적은 판, 이벤트 없음) / `change`(직전 판과 견줘 반영한 판) |
+| orderKey | string? | 공포 순서 키(공포일 YYYYMMDD + 공포번호 10자리 + MST 12자리) — `law-version-plan.ts` 한 곳에서만 계산. 마이그레이션이 옮겨 적은 기준판은 첫 동기화가 채운다 |
+| lawType · promulgatedDate · promulgationNo · revisionType | string? · date? · string? · string? | 법령구분·공포일·공포번호·제개정구분명 |
+| effectiveDate | date? | 본문 기본정보.시행일자 — 이 판 이벤트의 `lawEffectiveDate` 와 같은 값 |
+| stageEffectiveDates | date[] (기본 `{}`) | 시행일법령 목록에 나온 이 판의 단계 시행일 전부(오름차순) |
+| versionKey | string? | 본문 지문 — 앞 판과 같으면 본문이 바뀌지 않은 판(T-145 의 출발점) |
+| receivedVia | enum LawEventChannel? | poll(동기화)·manual(등록). 마이그레이션이 옮겨 적은 판은 null |
+| eventCount | int (기본 0) | 이 판을 반영하며 만든 변경 이벤트 수 |
+| recordedAt | datetime | |
+
+유일 `[lawId, mst]`(한 법령에서 같은 판은 한 번만), 인덱스 `[lawId, orderKey]`. 마이그레이션이 이미 등록된 법령마다 지금 판을 기준판 한 행으로 옮겨 적는다. 불변식: 법령 행의 `externalId`(이제 "공포 순으로 마지막에 반영한 판" — 시행 예정일 수 있다)에 해당하는 판 행이 늘 있다(등록이 만들고, 동기화가 없으면 기준판으로 만든다).
 
 #### LawSyncRun (`law_sync_runs`) — 법령 동기화 실행 기록, 테넌트 공용 ✅ 구현됨 (T-104)
 | 필드 | 타입 | 설명 |

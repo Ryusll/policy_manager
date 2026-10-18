@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { api, createTenant, waitForApi } from './helpers';
+import { testLawSource } from './lawgokr-seed';
 
 /**
  * T-100 법령 엔티티 — 통합.
@@ -65,41 +66,47 @@ describe('T-100 법령 엔티티', () => {
       const mst = found.body?.items?.[0]?.mst;
       expect(mst).toBeTruthy();
 
-      const first = await api('/laws', { method: 'POST', token: a.token, json: { mst } });
-      expect(first.status).toBe(200);
-      expect(first.body.articleCount).toBeGreaterThan(0);
-      expect(first.body.versionKey).toMatch(/^v\d+:[0-9a-f]{64}$/);
+      // 시험용 법령원에 — 기본 법령원이면 개발 DB 의 근로기준법 행을 돌려받아 아래에서 지울 수 있다(T-151)
+      const src = testLawSource();
+      try {
+        const first = await api('/laws', { method: 'POST', token: a.token, json: { mst, sourceCode: src.code } });
+        expect(first.status).toBe(200);
+        expect(first.body.articleCount).toBeGreaterThan(0);
+        expect(first.body.versionKey).toMatch(/^v\d+:[0-9a-f]{64}$/);
 
-      const articles = await api(`/laws/${first.body.id}/articles`, { token: a.token });
-      expect(articles.status).toBe(200);
-      expect(articles.body.length).toBe(first.body.articleCount);
-      // 법령 안에서 nodeKey 는 유일해야 한다 (제3조와 제3조의2 가 같은 칸에 들어가면 깨진다)
-      const keys = articles.body.map((x: any) => x.nodeKey);
-      expect(new Set(keys).size).toBe(keys.length);
+        const articles = await api(`/laws/${first.body.id}/articles`, { token: a.token });
+        expect(articles.status).toBe(200);
+        expect(articles.body.length).toBe(first.body.articleCount);
+        // 법령 안에서 nodeKey 는 유일해야 한다 (제3조와 제3조의2 가 같은 칸에 들어가면 깨진다)
+        const keys = articles.body.map((x: any) => x.nodeKey);
+        expect(new Set(keys).size).toBe(keys.length);
 
-      // ★ 테넌트 공용 — 다른 회사 계정으로도 같은 법령이 보여야 한다
-      const fromB = await api(`/laws/${first.body.id}/articles`, { token: b.token });
-      expect(fromB.status).toBe(200);
-      expect(fromB.body.length).toBe(articles.body.length);
+        // ★ 테넌트 공용 — 다른 회사 계정으로도 같은 법령이 보여야 한다
+        const fromB = await api(`/laws/${first.body.id}/articles`, { token: b.token });
+        expect(fromB.status).toBe(200);
+        expect(fromB.body.length).toBe(articles.body.length);
 
-      // 재등록: 행이 쌓이지 않고 갱신된다. 내용이 같으면 지문도 같다
-      const second = await api('/laws', { method: 'POST', token: a.token, json: { mst } });
-      expect(second.status).toBe(200);
-      expect(second.body.id).toBe(first.body.id);
-      expect(second.body.articleCount).toBe(first.body.articleCount);
-      expect(second.body.versionKey).toBe(first.body.versionKey);
+        // 재등록: 행이 쌓이지 않고 갱신된다. 내용이 같으면 지문도 같다
+        const second = await api('/laws', { method: 'POST', token: a.token, json: { mst, sourceCode: src.code } });
+        expect(second.status).toBe(200);
+        expect(second.body.id).toBe(first.body.id);
+        expect(second.body.articleCount).toBe(first.body.articleCount);
+        expect(second.body.versionKey).toBe(first.body.versionKey);
 
-      // ★ LawArticle.id 가 재등록 전후로 유지되어야 한다 — T-101 의 LawLink 가 이 id 를
-      // 참조하므로, 재등록마다 id 가 바뀌면 만들어 둔 연결이 전부 끊긴다.
-      const articlesAfter = await api(`/laws/${first.body.id}/articles`, { token: a.token });
-      const idsBefore = articles.body.map((x: any) => x.id).sort();
-      const idsAfter = articlesAfter.body.map((x: any) => x.id).sort();
-      expect(idsAfter).toEqual(idsBefore);
+        // ★ LawArticle.id 가 재등록 전후로 유지되어야 한다 — T-101 의 LawLink 가 이 id 를
+        // 참조하므로, 재등록마다 id 가 바뀌면 만들어 둔 연결이 전부 끊긴다.
+        const articlesAfter = await api(`/laws/${first.body.id}/articles`, { token: a.token });
+        const idsBefore = articles.body.map((x: any) => x.id).sort();
+        const idsAfter = articlesAfter.body.map((x: any) => x.id).sort();
+        expect(idsAfter).toEqual(idsBefore);
 
-      const removed = await api(`/laws/${first.body.id}`, { method: 'DELETE', token: a.token });
-      expect(removed.status).toBe(200);
-      const gone = await api(`/laws/${first.body.id}`, { token: a.token });
-      expect(gone.status).toBe(404);
+        const removed = await api(`/laws/${first.body.id}`, { method: 'DELETE', token: a.token });
+        expect(removed.status).toBe(200);
+        const gone = await api(`/laws/${first.body.id}`, { token: a.token });
+        expect(gone.status).toBe(404);
+      } finally {
+        src.drop();
+      }
     }, 120_000);
   });
 });

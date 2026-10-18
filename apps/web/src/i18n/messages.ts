@@ -414,6 +414,11 @@ export const messages: Record<Locale, Msg> = {
     'lawImpact.suggestedCount': '{count}곳',
     'lawImpact.suggestedTail':
       ' 있습니다(이 조항이나 그 위 조·항에 걸린 것). 추천 연결은 확정해야 영향 분석에 들어갑니다 — 왼쪽에서 그 법령조항을 눌러 확정하거나 반려하세요.',
+    // 법령 등록·동기화의 판 사슬 (T-151, PAT-07)
+    'laws.alreadyTracked': '"{name}"은(는) 이미 추적 중인 법령입니다 — 새 판은 동기화가 공포 순으로 따라갑니다.',
+    'lawSync.versionsApplied': '공포된 판 {count}개를 차례로 반영',
+    'lawSync.versionItem': '{label}{type} · 시행 {dates} · 변경 조항 {events}건',
+    'lawSync.remaining': '남은 판 {count}개 — 다음 동기화가 이어서 반영합니다',
     // 조별 시행일 표기 (T-144, PAT-06)
     'effectiveNotes.badge': '별도 시행일 표기',
     'effectiveNotes.badgeTitle': '이 조에 별도 시행일 표기가 있습니다({dates}) — 펼쳐서 확인하세요',
@@ -861,6 +866,10 @@ export const messages: Record<Locale, Msg> = {
     'lawImpact.suggestedCount': '{count} article(s)',
     'lawImpact.suggestedTail':
       ' (on this provision or a parent article or paragraph). Suggested links count toward impact only after you confirm them — select that law provision on the left to confirm or reject them.',
+    'laws.alreadyTracked': '"{name}" is already tracked — the sync follows new versions in promulgation order.',
+    'lawSync.versionsApplied': 'Applied {count} promulgated versions in order',
+    'lawSync.versionItem': '{label}{type} · effective {dates} · {events} changed provisions',
+    'lawSync.remaining': '{count} versions left — the next sync continues',
     'effectiveNotes.badge': 'Separate effective date',
     'effectiveNotes.badgeTitle': 'This article has a separate effective-date note ({dates}) — expand to check',
     'effectiveNotes.headArticle': 'This article has a separate effective-date note',

@@ -276,6 +276,13 @@
 `POST /api/laws` 본문: `{ "mst": "283457", "sourceCode": "law.go.kr" }` (`sourceCode` 생략 가능).
 응답에 `articleCount`·`skipped`(조 번호를 못 읽어 건너뛴 행 수)·`versionKey` 가 실린다.
 
+**같은 법령ID 를 이미 다른 판으로 추적 중이면 새 행을 만들지 않고 그 법령을 그대로 돌려준다**(T-151 — 응답 `alreadyTracked: true`,
+본문·조항·판 기록은 쓰지 않는다, 화면은 "이미 추적 중" 안내). 동기화가 법령을 시행 예정 판으로 옮긴 뒤 현행 판(검색 결과)을 등록하면
+같은 법령의 둘째 행이 생기던 것을 막는다. 동기화가 그 법령의 판을 반영하는 중이면 끝날 때까지 기다리고(30초를 넘기면 409 — 잠시 뒤
+다시), 같은 법령을 동시에 처음 등록하면 늦은 쪽이 기다렸다가 먼저 만든 행을 받는다. 법제처 응답에 법령ID 가 없으면 같은 판 다시 등록만
+받고 새로 등록하지 않는다(502 — 같은 법령을 이미 다른 판으로 추적 중인지 알 수 없다). MST·법령ID 로 찾은 행이 둘 이상이면(같은 법령의
+옛 중복) 어느 행인지 짐작하지 않고 409 — 정리(T-154) 전까지 그 법령은 등록하지 않는다.
+
 **같은 MST 를 다시 POST 하면 `nodeKey` 기준으로 갱신한다** (T-101 착수 시 정정 — 원래는
 통째로 갈아끼웠다). 내용이 그대로면 `versionKey` 도 그대로고, **`LawArticle.id` 도 유지된다**
 — `LawLink`(T-101)가 이 id 를 참조하므로, id 가 재등록마다 바뀌면 만들어 둔 연결이 전부
@@ -319,11 +326,11 @@
 ### law-sync (`/api/platform-admin/law-sync`) — 주기 동기화, `global_admin` 전용 ✅ 구현됨 (T-104)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | run | global_admin | **지금 실행.** 확인이 오래된 법령부터 `limit` 건(기본 20, 1~100). 법령마다 법령ID 로 지금 판의 MST 를 찾아, 저장된 MST 와 다르면 새 판을 받아 조항을 갱신하고 달라진 조항을 `LawChangeEvent`(`receivedVia=poll`)로 남긴다. 다른 실행이 진행 중이면 **409**(30분 넘게 끝나지 않은 실행은 "중단됨"으로 닫고 진행). 응답은 실행 기록 1건 + `amendments`(T-106 — 끝에 붙은 개정 후보 자동 생성 결과 `{ events, tenants, created, failed }`, 생성이 통째로 실패하면 `null`) 같은 판(MST)이어도 법령의 표기 읽기 판(`Law.effectiveNotesVersion`)이 지금 규칙과 다르면(T-144 이전 등록은 null) 그 판을 한 번 읽어 조별 시행일 표기를 맞춘다(T-144) — 달라진 조항만 고쳐 쓰고, 이벤트는 만들지 않으며 본문·시행일·연결은 건드리지 않는다. 실패해도 결과는 `unchanged` 이고 `note` 로 알린다(판이 그대로라 다음 주기에 다시 시도) |
-| GET | runs | global_admin | 실행 이력(최근 순, `limit` 기본 20). `status`: succeeded / partial / failed / running, 법령별 `results[]`(`outcome`: unchanged·updated·failed, `fromMst`·`toMst`·`events`·`error`) |
+| POST | run | global_admin | **지금 실행.** 확인이 오래된 법령부터 `limit` 건(기본 20, 1~100). 본문에 `lawId`(uuid)를 주면 그 법령만 돈다(T-151 — 점검·시험, 없는 법령이면 실행을 시작하지 않고 404). 법령마다 시행일법령 목록에서 저장 판 **뒤에 공포된 판 전부**를 공포 순으로 하나씩 반영해(T-151, PAT-07) 판마다 달라진 조항을 `LawChangeEvent`(`receivedVia=poll`, `lawVersionId`)로 남긴다 — 판 하나가 저장 단위 하나, 중간에 실패하면 앞 판까지 확정하고 멈춘다(법령당 한 번에 5판·실행 20분 상한, 남으면 다음 실행이 잇는다). 법령ID 없이 등록된 옛 법령은 짐작으로 채우지 않고 실패로 남긴다(런북 7-5 점검, T-154). 다른 실행이 진행 중이면 **409**(30분 넘게 끝나지 않은 실행은 "중단됨"으로 닫고 진행). 응답은 실행 기록 1건 + `amendments`(T-106 — 끝에 붙은 개정 후보 자동 생성 결과 `{ events, tenants, created, failed }`, 생성이 통째로 실패하면 `null`) 같은 판(MST)이어도 법령의 표기 읽기 판(`Law.effectiveNotesVersion`)이 지금 규칙과 다르면(T-144 이전 등록은 null) 그 판을 한 번 읽어 조별 시행일 표기를 맞춘다(T-144) — 달라진 조항만 고쳐 쓰고, 이벤트는 만들지 않으며 본문·시행일·연결은 건드리지 않는다. 실패해도 결과는 `unchanged` 이고 `note` 로 알린다(판이 그대로라 다음 주기에 다시 시도) |
+| GET | runs | global_admin | 실행 이력(최근 순, `limit` 기본 20). `status`: succeeded / partial / failed / running, 법령별 `results[]`(`outcome`: unchanged·updated·failed, `fromMst`·`toMst`·`events`·`error`·`note`, T-151 부터 `versions[]`(이번에 반영한 판 — `mst`·`label`('제21533호(2026-04-07 공포)')·`promulgationDate`·`revisionType`·`stageEffectiveDates`·`events`)·`remaining`(남은 판 수)). `changedCount` 는 판을 하나라도 반영한 법령 수(뒤 판에서 실패한 법령 포함) |
 
 > **동기화가 끝나면 개정 후보를 자동으로 만든다**(T-106). 아직 처리하지 않은 변경 이벤트(`amendmentsProcessedAt` 이 비어 있음)마다 확정 연결이 있는 회사별로 `POST /amendments/generate` 와 같은 생성을 하고, 새로 만든 후보가 있으면 그 회사의 관리자·편집자에게 알림(`kind=law_amendment`) 한 건. 한 회사가 실패해도 다른 회사는 진행하고, 실패가 있었던 이벤트는 표시를 남기지 않아 다음 실행에서 다시 처리한다(이미 만든 후보는 건너뛰므로 알림도 다시 가지 않는다). 수동 등록(`POST /laws`)으로 생긴 이벤트는 다음 동기화 때 처리된다.
-> **예약 실행은 이 API 가 아니다.** 서버 cron 이 `scripts/oracle/law-sync.sh`(→ 컨테이너 안 `node dist/laws/law-sync.cli.js [--limit N]`)를 부르고, 하나라도 실패하면 **종료 코드 1**. global_admin 토큰은 15분이면 만료돼 cron 이 쥘 수 없다. 경로가 `/admin` 이 아닌 것은 그쪽이 회사 관리자 전용이라서다.
+> **예약 실행은 이 API 가 아니다.** 서버 cron 이 `scripts/oracle/law-sync.sh`(→ 컨테이너 안 `node dist/laws/law-sync.cli.js [--limit N] [--law <id>] [--plan]`)를 부르고, 하나라도 실패하면 **종료 코드 1**. `--plan`(T-151)은 DB 에 쓰지 않고(법제처 응답 캐시만 쓴다) 법령마다 반영할 판(공포 순)만 찍는다. `--law` 에 없는 법령을 주면 종료 코드 1(API 는 404). global_admin 토큰은 15분이면 만료돼 cron 이 쥘 수 없다. 경로가 `/admin` 이 아닌 것은 그쪽이 회사 관리자 전용이라서다.
 > **실패를 "개정 없음"과 구별한다** — 법제처는 인증·IP 오류도 HTTP 200 으로 준다. 실패한 법령은 `Law.lastCheckError` 에 사유가 남고 다음 확인이 성공하면 지워진다.
 
 ### amendments (`/api/amendments`) — 개정 후보, ⚠️ **테넌트별** ✅ 생성·조회(T-106)·목록·손질·검토 요청(T-107)·승인·반려(T-108) 구현됨

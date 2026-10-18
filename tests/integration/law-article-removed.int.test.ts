@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
-import { randomUUID } from 'crypto';
 import { api, createTenant, createPolicyWithArticle, waitForApi } from './helpers';
+import { FakeLaw, requireRedis, type FakeVersion } from './lawgokr-seed';
 
 /**
  * T-124 법령에서 사라진 조항의 연결 보존.
@@ -10,8 +10,9 @@ import { api, createTenant, createPolicyWithArticle, waitForApi } from './helper
  * 걸어 둔 연결(LawLink)이 cascade 로 함께 지워져, 그 "삭제됨" 이벤트의 영향 분석(T-105)·개정 후보(T-106)에서
  * 그 조항에 걸려 있던 사내 조문을 찾을 수 없었다. 이제는 지우지 않고 "삭제됨"으로 표시한다.
  *
- * 실제 법제처 응답에는 없는 가짜 조항(제9999조)을 등록된 법령에 몰래 넣고 연결을 건 뒤, 동기화가 그 법령을
- * 다시 받게 만들어 "조항이 사라진 개정"을 재현한다. 법제처 호출이 필요해 인증값이 있을 때만 돈다(T-104 와 같다).
+ * 가짜 법제처(lawgokr-seed — 캐시에 응답을 심는다)로 "제9999조가 있는 판 → 그 조가 없는 다음 판"을 만들어 재현한다.
+ * 법제처 인증값 없이 돈다. (T-151 전에는 실제 법령에 가짜 조항을 몰래 넣고 저장 MST 를 '1' 로 돌려 새 판을 흉내 냈는데,
+ * 이제 동기화는 판 목록에서 저장 판의 자리를 찾아 그 뒤 판만 반영하므로 그 흉내가 통하지 않는다.)
  */
 function sql(query: string): string {
   return execSync(
@@ -20,21 +21,27 @@ function sql(query: string): string {
   ).trim();
 }
 
+const art = (no: string, title: string, body: string) => ({ no, title, body });
+
 describe('T-124 법령에서 사라진 조항 — 연결을 남긴다', () => {
   let platform: Awaited<ReturnType<typeof createTenant>>;
-  let lawGoKrReady = false;
   let lawId = '';
-  let createdByTest = false;
-  const ghostId = randomUUID();
+  let ghostId = '';
   let articleId = '';
   let otherArticleId = '';
   let linkId = '';
-  let countBefore = 0;
+  let countAfter = 0;
 
-  /** 저장된 MST 를 옛 번호로 돌려 "새 판이 났다"고 보게 하고, 이 법령만 맨 앞에 세워 limit 1 로 돌린다 */
-  const syncAsNewEdition = async () => {
-    sql(`UPDATE laws SET external_id='1', last_checked_at = NULL WHERE id='${lawId}';`);
-    const res = await api('/platform-admin/law-sync/run', { method: 'POST', token: platform.token, json: { limit: 1 } });
+  const law = new FakeLaw('조항삭제시험법');
+  const A: FakeVersion = { mst: law.mst(1), promulgated: '20260110', promulgationNo: '901', effective: '20260201', articles: [art('1', '목적', '목적 본문'), art('2', '정의', '정의 본문'), art('9999', '시험 조항', '시험용 조항이다.')] };
+  // 다음 판에서 제9999조가 사라진다
+  const B: FakeVersion = { mst: law.mst(2), promulgated: '20260310', promulgationNo: '902', effective: '20260401', articles: [art('1', '목적', '목적 본문'), art('2', '정의', '정의 본문')] };
+  // 그다음 판 — 제1조만 바뀐다. 이미 사라진 조항의 "삭제됨" 이벤트를 되풀이하면 안 된다
+  const C: FakeVersion = { mst: law.mst(3), promulgated: '20260510', promulgationNo: '903', effective: '20260601', articles: [art('1', '목적', '바뀐 목적 본문'), art('2', '정의', '정의 본문')] };
+
+  /** 이 법령만 돈다 */
+  const sync = async () => {
+    const res = await api('/platform-admin/law-sync/run', { method: 'POST', token: platform.token, json: { lawId } });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.results[0].lawId).toBe(lawId);
     return res.body;
@@ -44,24 +51,15 @@ describe('T-124 법령에서 사라진 조항 — 연결을 남긴다', () => {
     await waitForApi();
     platform = await createTenant('law-ghost');
     sql(`UPDATE users SET platform_role='global_admin' WHERE id='${platform.user.id}';`);
-    const status = await api('/lawgokr/status', { token: platform.token });
-    lawGoKrReady = status.status === 200 && status.body?.configured === true;
-    if (!lawGoKrReady) return;
+    requireRedis();
 
-    const found = await api('/lawgokr/search?q=%EA%B7%BC%EB%A1%9C%EA%B8%B0%EC%A4%80%EB%B2%95&display=1', {
-      token: platform.token,
-    });
-    const mst = found.body.items[0].mst;
-    const before = await api('/laws', { token: platform.token });
-    createdByTest = !before.body.some((l: any) => l.externalId === mst);
-    const reg = await api('/laws', { method: 'POST', token: platform.token, json: { mst } });
-    expect(reg.status).toBe(200);
+    // 지금 법제처에는 B 까지 있다 — 등록은 A(저장 판)로
+    law.seedAll([A, B]);
+    const reg = await api('/laws', { method: 'POST', token: platform.token, json: { mst: A.mst } });
+    expect(reg.status, JSON.stringify(reg.body)).toBe(200);
     lawId = reg.body.id;
-    countBefore = (await api(`/laws/${lawId}`, { token: platform.token })).body.articleCount;
-
-    // 법제처 응답에 없는 조항을 몰래 넣어 둔다 — 다음 동기화에서 "사라진 조항"이 된다
-    sql(`INSERT INTO law_articles (id, law_id, node_key, article_no, label, title, content, version_key, sort_order, created_at, updated_at)
-         VALUES ('${ghostId}', '${lawId}', '9999//', 9999, '제9999조', '시험 조항', '시험용으로 넣은 조항이다.', 'v1:t124', 999999, now(), now());`);
+    ghostId = sql(`SELECT id FROM law_articles WHERE law_id='${lawId}' AND node_key='9999//';`);
+    countAfter = (await api(`/laws/${lawId}`, { token: platform.token })).body.articleCount - 1;
 
     const set = await createPolicyWithArticle(platform.token, `LG-${Date.now().toString(36)}`);
     articleId = set.article.id;
@@ -80,18 +78,21 @@ describe('T-124 법령에서 사라진 조항 — 연결을 남긴다', () => {
     linkId = link.body.id;
   }, 180_000);
 
-  afterAll(async () => {
-    if (!lawId) return;
-    // 가짜 조항은 반드시 지운다 — 남으면 다른 동기화 테스트의 이벤트 수가 달라진다(연결은 cascade)
-    sql(`DELETE FROM law_articles WHERE id='${ghostId}';`);
-    if (createdByTest) await api(`/laws/${lawId}`, { method: 'DELETE', token: platform.token });
+  afterAll(() => {
+    if (lawId) {
+      sql(`
+        DELETE FROM amendment_candidates WHERE change_event_id IN (SELECT id FROM law_change_events WHERE law_id='${lawId}');
+        DELETE FROM law_links WHERE law_article_id IN (SELECT id FROM law_articles WHERE law_id='${lawId}');
+        DELETE FROM laws WHERE id='${lawId}';
+      `);
+    }
+    law.cleanup();
   });
 
-  it('사라진 조항은 지우지 않고 "삭제됨"으로 남고, 걸어 둔 연결과 이벤트의 조항이 이어진다', async ({ skip }) => {
-    if (!lawGoKrReady) return skip();
-    const run = await syncAsNewEdition();
+  it('사라진 조항은 지우지 않고 "삭제됨"으로 남고, 걸어 둔 연결과 이벤트의 조항이 이어진다', async () => {
+    const run = await sync();
     expect(run.status).toBe('succeeded');
-    expect(run.results[0]).toMatchObject({ outcome: 'updated', events: 1 });
+    expect(run.results[0]).toMatchObject({ outcome: 'updated', toMst: B.mst, events: 1 });
 
     expect(sql(`SELECT (deleted_at IS NOT NULL)::text FROM law_articles WHERE id='${ghostId}';`)).toBe('true');
     expect(sql(`SELECT change_type FROM law_change_events WHERE law_article_id='${ghostId}';`)).toBe('deleted');
@@ -102,8 +103,7 @@ describe('T-124 법령에서 사라진 조항 — 연결을 남긴다', () => {
     expect(kept.lawArticle.deletedAt).toBeTruthy();
   }, 120_000);
 
-  it('그 "삭제됨" 이벤트의 영향 분석이 연결된 사내 조문을 찾는다', async ({ skip }) => {
-    if (!lawGoKrReady) return skip();
+  it('그 "삭제됨" 이벤트의 영향 분석이 연결된 사내 조문을 찾는다', async () => {
     const eventId = sql(`SELECT id FROM law_change_events WHERE law_article_id='${ghostId}';`);
     const { status, body } = await api(`/law-changes/${eventId}/impact`, { token: platform.token });
     expect(status).toBe(200);
@@ -111,11 +111,10 @@ describe('T-124 법령에서 사라진 조항 — 연결을 남긴다', () => {
     expect(body.impacted.map((i: any) => i.article.id)).toContain(articleId);
   });
 
-  it('조항 목록·건수에서는 빠지고, 새로 연결할 수 없다', async ({ skip }) => {
-    if (!lawGoKrReady) return skip();
+  it('조항 목록·건수에서는 빠지고, 새로 연결할 수 없다', async () => {
     const list = await api(`/laws/${lawId}/articles`, { token: platform.token });
     expect(list.body.some((a: any) => a.id === ghostId)).toBe(false);
-    expect((await api(`/laws/${lawId}`, { token: platform.token })).body.articleCount).toBe(countBefore);
+    expect((await api(`/laws/${lawId}`, { token: platform.token })).body.articleCount).toBe(countAfter);
 
     const again = await api('/law-links', {
       method: 'POST',
@@ -125,10 +124,11 @@ describe('T-124 법령에서 사라진 조항 — 연결을 남긴다', () => {
     expect(again.status).toBe(409);
   });
 
-  it('다음 동기화에서 "삭제됨" 이벤트를 되풀이하지 않는다', async ({ skip }) => {
-    if (!lawGoKrReady) return skip();
-    const run = await syncAsNewEdition();
+  it('다음 판에서 "삭제됨" 이벤트를 되풀이하지 않는다', async () => {
+    law.seedAll([A, B, C]);
+    const run = await sync();
     expect(run.status).toBe('succeeded');
+    expect(run.results[0]).toMatchObject({ outcome: 'updated', toMst: C.mst, events: 1 }); // 제1조 하나뿐
     expect(sql(`SELECT count(*) FROM law_change_events WHERE law_article_id='${ghostId}';`)).toBe('1');
     expect(sql(`SELECT (deleted_at IS NOT NULL)::text FROM law_articles WHERE id='${ghostId}';`)).toBe('true');
   }, 120_000);

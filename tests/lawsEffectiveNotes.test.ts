@@ -4,6 +4,8 @@ import { collectEffectiveNotes } from '../apps/api/src/laws/law-effective-collec
 import { mapLawDetail } from '../apps/api/src/lawgokr/lawgokr.mapper';
 import { lawVersionKey } from '../apps/api/src/laws/law-version-key';
 import { EFFECTIVE_NOTES_VERSION } from '../apps/api/src/common/effective-notes';
+import { applyLawVersion } from '../apps/api/src/laws/law-version-apply';
+import { prepareVersion } from '../apps/api/src/laws/law-articles-save';
 
 /**
  * 법령 저장의 조별 시행일 표기 (T-144, PAT-06) — DB 없이 가짜 저장소로 `LawsService` 를 직접 돌린다.
@@ -21,7 +23,8 @@ const MARKER = '[본조신설 2019.12.31][시행일: 2027.1.1] 제5조제1항 �
 
 const detail = () =>
   ({
-    기본정보: { 시행일자: LAW_DATE, 법령명_한글: '시험법', 공포일자: '20251201' },
+    // 법령ID 가 있어야 새로 등록한다(없으면 같은 법령을 다른 판으로 추적 중인지 알 수 없어 거절 — T-151)
+    기본정보: { 시행일자: LAW_DATE, 법령명_한글: '시험법', 공포일자: '20251201', 법령ID: '990143' },
     조문: {
       조문단위: [
         {
@@ -47,9 +50,10 @@ function setup(existing: Existing[], opts: { claim?: number; priorRules?: number
     articleUpserts: [] as any[],
     events: [] as any[],
     updateManys: [] as any[],
-    lawUpserts: [] as any[],
+    lawWrites: [] as any[],
     lawClaims: [] as any[],
     articleReads: [] as any[],
+    versionWrites: [] as any[],
     getLaw: 0,
   };
   /** 가짜 저장소 — 부른 값을 기록하고 값을 돌려준다 */
@@ -60,14 +64,25 @@ function setup(existing: Existing[], opts: { claim?: number; priorRules?: number
     effectiveNotesVersion: opts.priorRules === undefined ? EFFECTIVE_NOTES_VERSION : opts.priorRules,
   };
   const tx = {
+    // 등록의 법령 행 잠금(T-151) — 기다림 설정 읽기, 그다음 잠금 SELECT. 있는 법령이면 같은 판의 행을 돌려준다
+    $queryRaw: (strings: TemplateStringsArray) =>
+      ok(
+        strings.join('?').includes('set_config')
+          ? [{ prev: '0' }]
+          : lawRow.exists
+            ? [{ id: 'law-1', external_id: '900143', effective_notes_version: lawRow.effectiveNotesVersion, created_at: new Date() }]
+            : [],
+      ),
+    $executeRaw: () => ok(0),
     law: {
-      upsert: (a: any) => {
-        calls.lawUpserts.push(a);
-        lawRow.effectiveNotesVersion = (lawRow.exists ? a.update : a.create).effectiveNotesVersion;
+      create: (a: any) => {
+        calls.lawWrites.push({ op: 'create', ...a });
+        lawRow.effectiveNotesVersion = a.data.effectiveNotesVersion;
         lawRow.exists = true;
-        return ok({ id: 'law-1', ...a.create });
+        return ok({ id: 'law-1', ...a.data });
       },
       update: (a: any) => {
+        calls.lawWrites.push({ op: 'update', ...a });
         if ('effectiveNotesVersion' in a.data) lawRow.effectiveNotesVersion = a.data.effectiveNotesVersion;
         return ok({ id: 'law-1', ...a.data });
       },
@@ -98,6 +113,12 @@ function setup(existing: Existing[], opts: { claim?: number; priorRules?: number
         return ok({ count: a.data.length });
       },
     },
+    // 판 기록(T-151) — 쓴 것만 기록한다
+    lawVersion: {
+      upsert: (a: any) => (calls.versionWrites.push({ op: 'upsert', ...a }), ok({ id: 'ver-base' })),
+      create: (a: any) => (calls.versionWrites.push({ op: 'create', ...a }), ok({ id: 'ver-1' })),
+      update: (a: any) => (calls.versionWrites.push({ op: 'update', ...a }), ok({ id: a.where.id })),
+    },
   };
   const prisma = {
     ...tx,
@@ -112,7 +133,7 @@ function setup(existing: Existing[], opts: { claim?: number; priorRules?: number
   };
   const collect = (effectiveNotesVersion: number | null) =>
     collectEffectiveNotes(prisma as any, lawGoKr, { id: 'law-1', externalId: '900143', effectiveNotesVersion });
-  return { service: new LawsService(prisma as any, lawGoKr as any), collect, calls };
+  return { service: new LawsService(prisma as any, lawGoKr as any), collect, calls, prisma };
 }
 
 /** 이번 응답과 같은 본문 지문 — "본문은 그대로"인 기존 조항을 만들 때 */
@@ -182,12 +203,15 @@ describe('LawsService — 조별 시행일 표기 저장 (T-144)', () => {
     }
   });
 
-  it('새 판 저장(applyNewVersion — 주기 동기화의 주 경로)도 저장 **전** 법령 행의 판을 이벤트에 남긴다 (T-144 검토 H1)', async () => {
+  it('판 반영(applyLawVersion — 주기 동기화의 주 경로, T-151)도 저장 **전** 법령 행의 판을 이벤트에 남긴다 (T-144 검토 H1)', async () => {
     for (const priorRules of [null, 0, EFFECTIVE_NOTES_VERSION]) {
-      const { service, calls } = setup([{ id: 'e5', nodeKey: '5//', content: '옛 본문', versionKey: 'v1:old', effectiveNotes: [OLD] }], { priorRules });
-      await service.applyNewVersion('law-1', '900143');
+      const { prisma, calls } = setup([{ id: 'e5', nodeKey: '5//', content: '옛 본문', versionKey: 'v1:old', effectiveNotes: [OLD] }], { priorRules });
+      const { meta, tree } = mapLawDetail(detail(), '900144');
+      const entry = { mst: '900144', lawId: '990143', title: '시험법', promulgationDate: '2025-12-01', promulgationNo: null, revisionType: '일부개정', stageEffectiveDates: ['2026-01-01'] };
+      await applyLawVersion(prisma as any, { lawId: 'law-1', prevMst: '900143', entry, meta, version: prepareVersion('900144', meta, tree), receivedVia: 'poll' });
       const ev = calls.events.find((e) => e.nodeKey === '5//');
       expect(ev.effectiveInfo, String(priorRules)).toMatchObject({ rules: EFFECTIVE_NOTES_VERSION, beforeRules: priorRules });
+      expect(ev.lawVersionId).toBe('ver-1'); // 이벤트가 판을 가리킨다
     }
   });
 
@@ -250,7 +274,24 @@ describe('collectEffectiveNotes — 이미 등록된 법령의 표기 맞추기 
   it('등록·새 판 저장은 법령 행에 지금 읽기 판을 남긴다 — 다음 동기화가 다시 읽지 않게', async () => {
     const { service, calls } = setup([]);
     await service.register('900143');
-    expect(calls.lawUpserts[0].create.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
-    expect(calls.lawUpserts[0].update.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
+    const created = calls.lawWrites.find((w) => w.op === 'create');
+    expect(created.data.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
+    // 등록은 확인 시각을 찍는다(판 반영은 찍지 않는다 — T-151)
+    expect(created.data.lastCheckedAt).toBeInstanceOf(Date);
+    // 같은 판을 다시 등록하면 그 행을 고친다 — 옛 읽기 판이었어도 지금 판으로
+    const again = setup([{ id: 'e5', nodeKey: '5//', content: 'x', versionKey: 'k', effectiveNotes: null }], { priorRules: null });
+    await again.service.register('900143');
+    expect(again.calls.lawWrites.map((w) => w.op)).toEqual(['update']);
+    expect(again.calls.lawWrites[0].data.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
+  });
+
+  it('등록은 그 판을 기준판으로 판 기록에 남기고, 등록에서 생긴 이벤트는 판을 가리키지 않는다 (T-151)', async () => {
+    const { service, calls } = setup([{ id: 'e5', nodeKey: '5//', content: '옛 본문', versionKey: 'v1:old', effectiveNotes: [OLD] }]);
+    await service.register('900143');
+    const base = calls.versionWrites.find((w) => w.op === 'upsert');
+    expect(base.where).toEqual({ lawId_mst: { lawId: 'law-1', mst: '900143' } });
+    expect(base.create).toMatchObject({ mst: '900143', kind: 'baseline', receivedVia: 'manual', promulgatedDate: new Date('2025-12-01T00:00:00.000Z') });
+    expect(base.update).toEqual({}); // 이미 있으면 그대로(같은 판 재등록)
+    expect(calls.events.find((e) => e.nodeKey === '5//').lawVersionId).toBeNull();
   });
 });
