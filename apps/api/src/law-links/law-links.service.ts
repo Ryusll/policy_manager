@@ -3,6 +3,9 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { CreateLawLinkDto, UpdateLawLinkDto } from './law-links.dto';
 import { citationNodeKey, extractLawCitations } from './law-citation';
 import { ourLinks } from './our-links';
+import { EVIDENCE_VERSION_SELECT, evidenceInContent, evidenceSource, evidenceSummary, withHeldVersions } from './evidence-version';
+import { asOfState, currentVersionIdsSql } from '../common/as-of';
+import { todayDateOnly } from '../common/date-only';
 
 /**
  * 법령 관계 정보 (T-101).
@@ -41,16 +44,57 @@ export class LawLinksService {
     return row;
   }
 
-  /** 이 사내 조문에 걸린 법령조항 목록 */
+  /**
+   * 조문마다 오늘 시행 중인 판 — 규칙은 시점 조회의 "현재"(common/as-of) 하나. 오늘 폐지 상태인 조문은 시행 중인 판이 없다(asOfState).
+   * 본문은 근거 문구가 담겼는지 재는 데만 쓰고 응답에 싣지 않는다(T-177)
+   */
+  private async currentVersionsOf(articleIds: string[]) {
+    if (!articleIds.length) return new Map<string, { id: string; versionNum: number; content: string }>();
+    const today = todayDateOnly();
+    const ids = await this.prisma.$queryRaw<{ id: string }[]>(currentVersionIdsSql(articleIds, today));
+    const rows = await this.prisma.articleVersion.findMany({
+      where: { id: { in: ids.map((r) => r.id) } },
+      select: { id: true, articleId: true, versionNum: true, content: true, repealedOn: true },
+    });
+    return new Map(
+      rows.filter((r) => asOfState(r, today) === 'in_force').map((r) => [r.articleId, { id: r.id, versionNum: r.versionNum, content: r.content }]),
+    );
+  }
+
+  /**
+   * 목록에 근거 문구의 원천 판과 조문의 지금 판을 싣는다(T-177). 원천은 요약만(같은 조문의 판일 때만, 시행일은 날짜만), 지금 판은 번호와
+   * "근거 문구가 그 본문에 있나"(hasEvidence)를 — 화면은 판 id 가 다르다고 알리지 않고 근거 문구가 지금 본문에 없을 때 알린다. 개정을
+   * 승인할 때마다 헛 알림이 뜨지 않고, 원천 초안이 고쳐져 문구가 빠진 채 시행돼도 잡힌다. 재는 것은 본문에서 찾은 근거(evidenceFromBody —
+   * 원천 판이 그 뒤 지워졌어도)뿐이다 — 처음부터 본문 밖 문구(메모 인용·직접 쓴 설명)는 늘 "없음"이라 알림이 헛돈다(null)
+   */
+  private async withEvidence<L extends { articleId: string; evidenceText: string | null; evidenceFromBody: boolean } & Parameters<typeof evidenceSummary>[0]>(
+    links: L[],
+  ) {
+    const current = await this.currentVersionsOf([...new Set(links.map((l) => l.articleId))]);
+    return links.map((l) => {
+      const now = current.get(l.articleId);
+      return {
+        ...l,
+        evidenceVersion: evidenceSummary(l),
+        articleCurrentVersion: now
+          ? { id: now.id, versionNum: now.versionNum, hasEvidence: l.evidenceFromBody ? evidenceInContent(now.content, l.evidenceText) : null }
+          : null,
+      };
+    });
+  }
+
+  /** 이 사내 조문에 걸린 법령조항 목록 — 근거 문구의 원천 판과 조문의 지금 판을 함께 싣는다(T-177) */
   async byArticle(tenantId: string, articleId: string) {
     await this.requireOwnedArticle(tenantId, articleId);
-    return this.prisma.lawLink.findMany({
+    const links = await this.prisma.lawLink.findMany({
       where: { tenantId, articleId },
       include: {
         lawArticle: { include: { law: { select: { id: true, lawName: true } } } },
+        evidenceVersion: EVIDENCE_VERSION_SELECT,
       },
       orderBy: { createdAt: 'desc' },
     });
+    return this.withEvidence(links);
   }
 
   /**
@@ -62,13 +106,15 @@ export class LawLinksService {
    */
   async byLawArticle(tenantId: string, lawArticleId: string) {
     await this.requireLawArticle(lawArticleId);
-    return this.prisma.lawLink.findMany({
+    const links = await this.prisma.lawLink.findMany({
       where: ourLinks(tenantId, { lawArticleId }),
       include: {
         article: { select: { id: true, title: true, number: true, clauseNumber: true, itemNumber: true } },
+        evidenceVersion: EVIDENCE_VERSION_SELECT,
       },
       orderBy: { createdAt: 'desc' },
     });
+    return this.withEvidence(links);
   }
 
   /** 수동 생성 — 사람이 직접 만든 연결이므로 바로 확정 상태로 저장한다 */
@@ -92,19 +138,23 @@ export class LawLinksService {
     });
     if (dup) throw new ConflictException('이미 연결된 조합입니다.');
 
-    return this.prisma.lawLink.create({
-      data: {
-        tenantId,
-        lawArticleId: dto.lawArticleId,
-        articleId: dto.articleId,
-        relationType: dto.relationType,
-        scope: dto.scope,
-        evidenceText: dto.evidenceText,
-        confirmState: 'confirmed',
-        confirmedBy: userId,
-        confirmedAt: new Date(),
-      },
-    });
+    // 근거 문구를 본문에 담은 판을 원천으로 남긴다(T-177) — 판 id 는 요청에서 받지 않고, 조문과 판들을 잡은 채 서버가 고른다
+    return withHeldVersions(this.prisma, dto.articleId, (tx, versions, today) =>
+      tx.lawLink.create({
+        data: {
+          tenantId,
+          lawArticleId: dto.lawArticleId,
+          articleId: dto.articleId,
+          relationType: dto.relationType,
+          scope: dto.scope,
+          evidenceText: dto.evidenceText,
+          ...evidenceSource(versions, dto.evidenceText, today),
+          confirmState: 'confirmed',
+          confirmedBy: userId,
+          confirmedAt: new Date(),
+        },
+      }),
+    );
   }
 
   async update(tenantId: string, id: string, userId: string, dto: UpdateLawLinkDto) {
@@ -112,17 +162,32 @@ export class LawLinksService {
     if (!existing) throw new NotFoundException('연결을 찾을 수 없습니다.');
 
     const becomingConfirmed = dto.confirmState === 'confirmed' && existing.confirmState !== 'confirmed';
-
-    return this.prisma.lawLink.update({
-      where: { id },
-      data: {
-        relationType: dto.relationType,
-        scope: dto.scope,
-        evidenceText: dto.evidenceText,
-        confirmState: dto.confirmState,
-        ...(becomingConfirmed ? { confirmedBy: userId, confirmedAt: new Date() } : {}),
-      },
+    const data = (source: { evidenceVersionId: string | null; evidenceFromBody: boolean } | null) => ({
+      relationType: dto.relationType,
+      scope: dto.scope,
+      evidenceText: dto.evidenceText,
+      ...(source ?? {}),
+      confirmState: dto.confirmState,
+      ...(becomingConfirmed ? { confirmedBy: userId, confirmedAt: new Date() } : {}),
     });
+    // 근거 문구를 보내지 않으면(확정·반려·관계 유형) 원천은 그대로 — 판을 잡지 않는다
+    if (dto.evidenceText === undefined) return this.prisma.lawLink.update({ where: { id }, data: data(null) });
+    // 보내면 원천도 함께 쓴다(T-177) — 바뀌었으면 잡은 판들로 다시 고르고, 같으면 읽어 둔 원천 그대로(그 판이 그 사이 지워졌으면 비운다).
+    // 다른 요청이 그 사이 근거 문구를 고쳐도 문구와 원천이 짝으로 남는다(마지막 요청이 둘 다 쓴다)
+    const evidenceText = dto.evidenceText;
+    return withHeldVersions(this.prisma, existing.articleId, (tx, versions, today) =>
+      tx.lawLink.update({
+        where: { id },
+        data: data(
+          evidenceText !== existing.evidenceText
+            ? evidenceSource(versions, evidenceText, today)
+            : {
+                evidenceVersionId: versions.some((v) => v.id === existing.evidenceVersionId) ? existing.evidenceVersionId : null,
+                evidenceFromBody: existing.evidenceFromBody,
+              },
+        ),
+      }),
+    );
   }
 
   async remove(tenantId: string, id: string) {
@@ -145,14 +210,8 @@ export class LawLinksService {
 
     const article = await this.prisma.article.findUnique({
       where: { id: articleId },
-      select: {
-        relatedLawNote: true,
-        versions: {
-          orderBy: { versionNum: 'desc' },
-          take: 1,
-          select: { content: true },
-        },
-      },
+      // 훑는 본문은 판 번호가 가장 큰 판(versions[0]) — 원천은 쓸 때 조문과 판들을 잡은 채 고른다(T-177)
+      select: { relatedLawNote: true, versions: { orderBy: { versionNum: 'desc' }, take: 1, select: { content: true } } },
     });
     if (!article) throw new NotFoundException('조문을 찾을 수 없습니다.');
 
@@ -166,7 +225,7 @@ export class LawLinksService {
     });
     const alreadyLinked = new Set(existingLinks.map((l) => l.lawArticleId));
 
-    const created: unknown[] = [];
+    const toCreate: { lawArticleId: string; evidenceText: string }[] = [];
     for (const citation of citations) {
       const nodeKey = citationNodeKey(citation);
       // 등록된 법 중 이름이 일치하는 것 — 여러 판이 있으면(개정 전후로 같은 이름이
@@ -182,22 +241,31 @@ export class LawLinksService {
         });
         // 법령에서 사라진 조항(T-124)은 추천하지 않는다
         if (!lawArticle || lawArticle.deletedAt || alreadyLinked.has(lawArticle.id)) continue;
-
-        const link = await this.prisma.lawLink.create({
-          data: {
-            tenantId,
-            lawArticleId: lawArticle.id,
-            articleId,
-            relationType: 'citation',
-            evidenceText: citation.matchedText,
-            confidence: 0.9,
-            confirmState: 'suggested',
-          },
-        });
         alreadyLinked.add(lawArticle.id);
-        created.push(link);
+        toCreate.push({ lawArticleId: lawArticle.id, evidenceText: citation.matchedText });
       }
     }
+    if (!toCreate.length) return { created: [], scanned: citations.length };
+    // 넣는 순서를 법령조항 id 순으로 — 같은 조문에 추천이 겹칠 때 인용 순서가 달라도 같은 순서로 유일 색인을 잡아 서로 기다리다 멈추지 않는다
+    toCreate.sort((a, b) => (a.lawArticleId < b.lawArticleId ? -1 : a.lawArticleId > b.lawArticleId ? 1 : 0));
+
+    // 한 트랜잭션에 한꺼번에(T-177) — 조문과 판들을 잡은 채 인용마다 같은 규칙으로 원천을 고른다(메모에서만 나온 인용은 본문에 없어 비고,
+    // 같은 인용을 담은 판이 여럿이면 시행 판 먼저). 중간에 막혀도 반쪽만 저장되지 않는다. 그 사이 같은 조합이 생겼으면 건너뛴다
+    const created = await withHeldVersions(this.prisma, articleId, (tx, versions, today) =>
+      tx.lawLink.createManyAndReturn({
+        data: toCreate.map((c) => ({
+          tenantId,
+          lawArticleId: c.lawArticleId,
+          articleId,
+          relationType: 'citation' as const,
+          evidenceText: c.evidenceText,
+          ...evidenceSource(versions, c.evidenceText, today),
+          confidence: 0.9,
+          confirmState: 'suggested' as const,
+        })),
+        skipDuplicates: true,
+      }),
+    );
 
     return { created, scanned: citations.length };
   }

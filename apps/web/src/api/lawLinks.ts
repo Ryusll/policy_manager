@@ -14,6 +14,15 @@ export const RELATION_TYPE_LABEL: Record<LawRelationType, string> = {
   reference: '참고',
 };
 
+/** 근거 문구의 출처 버전(T-177) — 연결할 때(근거 문구를 고칠 때) 근거 문구를 담고 있던 버전. 본문은 싣지 않는다 */
+export type EvidenceVersionSummary = {
+  id: string;
+  versionNum: number;
+  status: 'draft' | 'review' | 'published' | 'archived';
+  /** YYYY-MM-DD */
+  effectiveDate: string | null;
+};
+
 export type LawLink = {
   id: string;
   tenantId: string;
@@ -22,6 +31,17 @@ export type LawLink = {
   relationType: LawRelationType;
   scope: string | null;
   evidenceText: string | null;
+  /** 근거 문구를 본문에 담고 있던 버전(T-177) — 서버가 찾아 남긴다. 어느 버전 본문에도 없었으면 null */
+  evidenceVersionId: string | null;
+  /** 근거 문구를 본문에서 찾았는가(T-177) — 출처 버전이 그 뒤 지워져도 남는다. 본문 밖 문구(메모 인용·직접 쓴 설명)는 false */
+  evidenceFromBody: boolean;
+  /** 목록 조회에만 실린다 */
+  evidenceVersion?: EvidenceVersionSummary | null;
+  /**
+   * 조문의 오늘 시행 버전(오늘 폐지 상태면 null)과, 근거 문구가 그 본문에 있는가 — 없으면(false) 화면이 알린다(T-177). 본문에서 찾은
+   * 근거가 아니면(본문 밖·짧은 문구) null. 목록 조회에만 실린다
+   */
+  articleCurrentVersion?: { id: string; versionNum: number; hasEvidence: boolean | null } | null;
   confidence: number | null;
   confirmState: ConfirmState;
   confirmedBy: string | null;

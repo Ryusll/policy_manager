@@ -316,11 +316,13 @@ deletedAt?(법령에서 사라진 시각 — T-124, 마이그레이션 `20261010
 | relationType | enum LawRelationType | delegation(위임)/application(준용)/citation(인용)/obligation(의무)/reference(참고) |
 | scope | string? | 적용 범위 (예: "정규직에 한함") |
 | evidenceText | text? | 관계의 근거 문구 |
+| evidenceVersionId | uuid FK? → ArticleVersion (**SetNull**) | 근거 문구의 원천 판(T-177, 특허 도 3 S320) — **연결할 때(근거 문구를 고칠 때)** 근거 문구(공백 빼고 4자 이상, 코드 포인트로 셈)를 본문에 담고 있던 같은 조문의 판. 여러 판이 담으면 오늘 시행 판(오늘 폐지 상태면 없음), 없으면 판 번호가 가장 큰 판. 못 찾으면 null(본문 밖 문구). 서버가 만들기·근거 문구 고치기·자동 추천 때 정하고 요청으로 받지 않는다. 그 뒤 초안 본문이 고쳐져도 다시 고르지 않는다 — 지금 본문에 있는지는 조회 때 따로 잰다. 쓸 때 조문과 그 판들을 잡은 채(조문 → 판 → 연결 — 삭제와 같은 잠금 순서) 고르고, 판이 지워지면(재파싱 반려) 비운다. 이미 있던 연결은 마이그레이션 `20261018120000_law_link_evidence_version` 이 같은 규칙으로 채웠다 |
+| evidenceFromBody | boolean (기본 false) | 근거 문구를 조문 본문에서 찾았는가(T-177) — 원천 판을 찾으면 true 이고, 원천 판이 그 뒤 지워져도(SetNull) 남는다. 화면은 이것이 true 인 연결만 "근거 문구가 지금 본문에 없음"을 알린다 — 처음부터 본문 밖 문구(메모 인용·직접 쓴 설명)는 늘 "없음"이라 헛 알림이 된다. 마이그레이션이 채운 원천이 있으면 true |
 | confidence | float? | 신뢰도 0.0~1.0 (자동 추천일 때) |
 | confirmState | enum LawLinkState | suggested(자동 추천)/confirmed(사용자 확정)/rejected |
 | confirmedBy / confirmedAt | string? / datetime? | |
 
-`@@unique([tenantId, lawArticleId, articleId])`, 인덱스 `[tenantId, articleId]`(조문 상세에서 "걸린 법" 보기), `[lawArticleId, confirmState]`(영향 분석 진입 경로).
+`@@unique([tenantId, lawArticleId, articleId])`, 인덱스 `[tenantId, articleId]`(조문 상세에서 "걸린 법" 보기), `[lawArticleId, confirmState]`(영향 분석 진입 경로), `[evidenceVersionId]`(판을 지울 때 원천 비우기, T-177).
 
 **이 테이블이 청구항 3의 "관계 그래프"의 간선이다.** 법령조항 노드에서 출발해 여러 규정의 사내 조문 노드로 퍼진다.
 `Article.relatedLawNote`(자유 텍스트 메모)를 대체하는 것이 아니라 **기계가 따라갈 수 있는 형태를 새로 만드는 것**이다.
@@ -386,7 +388,7 @@ lawVersionId?(이 변경을 만든 법령 판 — T-151, `law_versions` FK **NO 
 | changeEventId | uuid FK → LawChangeEvent (**restrict**) | 개정의 원인. 지워지면 원천이 사라지므로 법령 추적 해제를 막는다 |
 | lawLinkId | uuid FK? → LawLink (SetNull) | 영향을 찾은 연결. 지워져도 후보는 남는다(근거는 rationale 스냅샷) |
 | candidateContent | text | **제2 조문** — 개정 후보 본문. 반영한 것이 없으면 제1 조문 그대로 |
-| rationale | json | 변경 근거 정보 — 법령 변경 부분·연결 스냅샷(유형·근거 문구·확정 상태)·경로·적용 규칙·반영하지 못한 변경·충돌·기준 발행본·**변수 근거** `variables[]`(T-109 ②, `rationale/2` — 연결·고른 값(id·문구)·유효기간·범위·기준/후보 위치·상태(넣음·그대로·보류·충돌)·까닭) |
+| rationale | json | 변경 근거 정보 — 법령 변경 부분·연결 스냅샷(유형·근거 문구·근거 문구의 원천 판 `evidenceVersion`{id·versionNum·status·effectiveDate(날짜)}과 근거 문구가 기준 본문에 있는가 `evidenceInBase`(T-177, 그 전 후보에는 없다)·확정 상태)·경로·적용 규칙·반영하지 못한 변경·충돌·기준 발행본·**변수 근거** `variables[]`(T-109 ②, `rationale/2` — 연결·고른 값(id·문구)·유효기간·범위·기준/후보 위치·상태(넣음·그대로·보류·충돌)·까닭) |
 | diff | json | 변경 전후 비교 정보 — 제1 조문 대 후보의 실제 차이(문자 구간, 구간별 근거 연결 — 법령 `rationaleRefs` 와 변수 `variableRefs` 를 따로(T-109 ②), 근거 없는 구간 수) |
 | generationMethod | enum AmendmentMethod | rule(규칙+템플릿) / llm(언어모델, T-112) |
 | variant | string | 같은 방식 안의 개정안 구분 — 규칙 기반은 규칙 세트 버전(`rule/1`, 변수 값 넣기를 더한 `rule/2` — T-109 ②) |

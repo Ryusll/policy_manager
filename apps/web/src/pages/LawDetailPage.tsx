@@ -14,6 +14,7 @@ import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { lawsApi, type LawArticle } from '../api/laws';
 import { lawLinksApi, RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { ConfirmBadge } from '../components/LawLinksPanel';
+import EvidenceSource from '../components/EvidenceSource';
 import LawChangeList from '../components/LawChangeList';
 import EffectiveNotesLine, { EffectiveNotesMark } from '../components/EffectiveNotesLine';
 import { lawArticleEffectiveNotes } from '../lib/effectiveNotes';
@@ -212,6 +213,7 @@ function SelectedArticlePanel({ article, canEdit }: { article: LawArticle; canEd
                   {link.evidenceText && (
                     <p className="text-[11px] text-gray-500 mt-0.5">{link.evidenceText}</p>
                   )}
+                  {link.evidenceText && <EvidenceSource source={link.evidenceVersion} target={link.articleCurrentVersion} />}
                 </div>
                 <button
                   type="button"

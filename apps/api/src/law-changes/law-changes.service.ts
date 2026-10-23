@@ -9,6 +9,7 @@ import { closestPerArticle } from '../laws/law-node-key';
 import { impactReferenceDate } from './law-impact';
 import { affectedEventsWhere, impactCounts, reachOf, reachOfEvents } from './law-link-reach';
 import { ourLinks } from '../law-links/our-links';
+import { EVIDENCE_VERSION_SELECT, evidenceSummary } from '../law-links/evidence-version';
 import { CANDIDATE_SELECT, presentCandidate } from '../amendments/amendment-present';
 
 const EVENT_SELECT = {
@@ -193,6 +194,9 @@ export class LawChangesService {
         relationType: true,
         scope: true,
         evidenceText: true,
+        // 근거 문구의 원천 판(T-177) — 개정 후보 근거(rationale.link)에 스냅샷으로 남는다. 본문은 읽지 않는다
+        evidenceVersion: EVIDENCE_VERSION_SELECT,
+        evidenceFromBody: true,
         confidence: true,
         confirmState: true,
         confirmedAt: true,
@@ -253,6 +257,8 @@ export class LawChangesService {
           relationType: link.relationType,
           scope: link.scope,
           evidenceText: link.evidenceText,
+          evidenceVersion: evidenceSummary(link),
+          evidenceFromBody: link.evidenceFromBody,
           linkConfidence: link.confidence,
           confirmState: link.confirmState,
           confirmedAt: link.confirmedAt,

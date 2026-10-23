@@ -3975,7 +3975,7 @@ export default function PolicyDetailPage() {
                           </div>
                         </div>
                       )}
-                      {selectedArticle && <LawLinksPanel articleId={selectedArticle.id} canEdit={canEdit} />}
+                      {selectedArticle && <LawLinksPanel articleId={selectedArticle.id} currentVersionId={currentVersionId} canEdit={canEdit} />}
                     </div>
                   </section>
                 )}
@@ -4364,7 +4364,7 @@ export default function PolicyDetailPage() {
                         </div>
                       </div>
                     )}
-                    {selectedArticle && <LawLinksPanel articleId={selectedArticle.id} canEdit={canEdit} />}
+                    {selectedArticle && <LawLinksPanel articleId={selectedArticle.id} currentVersionId={currentVersionId} canEdit={canEdit} />}
                   </div>
                 </div>
               )}

@@ -432,6 +432,8 @@ model ArticleVersion {
   changeEvent     LawChangeEvent?     @relation(fields: [changeEventId], references: [id], onDelete: SetNull)
   sourceCandidate AmendmentCandidate? @relation("AmendmentResult", fields: [sourceCandidateId], references: [id], onDelete: SetNull)
   reparseItem     ReparseReviewItem?  @relation("ReparseItemVersion", fields: [reparseItemId], references: [id], onDelete: SetNull)
+  /// 이 버전 본문을 근거 문구의 원천으로 삼은 법령 관계 정보(T-177)
+  evidenceLinks   LawLink[]
 
   /// 시점 조회: 조문별로 "기준일 이전 시행분 중 가장 최근" 버전을 찾는다
   @@unique([articleId, versionNum])
@@ -885,13 +887,23 @@ model LawLink {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  lawArticle LawArticle @relation(fields: [lawArticleId], references: [id], onDelete: Cascade)
-  article    Article    @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  /// 근거 문구의 원천 판(T-177, PAT-08 — 특허 도 3 S320). 근거 문구를 본문에 담은 판 — 오늘 시행 판 먼저, 없으면 판 번호가 가장 큰 판
+  /// (law-links/evidence-version.ts). 연결 대상은 그대로 조문(articleId)이라 개정으로 새 판이 생겨도 연결은 이어지고, 이 칸은 근거가
+  /// 어느 판의 문장이었는지를 남긴다. 본문 밖 문구(메모·사람이 쓴 설명)면 비고, 판이 지워지면(재파싱 묶음 반려) 비운다
+  evidenceVersionId String? @map("evidence_version_id")
+  /// 근거 문구를 조문 본문에서 찾았는가(T-177) — 원천 판이 그 뒤 지워져도(SET NULL) 남는다. 화면이 "근거 문구가 지금 본문에 없음"을
+  /// 알리는 것은 본문에서 찾은 근거뿐이다 — 처음부터 본문 밖 문구(메모 인용·직접 쓴 설명)에는 늘 뜨는 헛 알림이 된다
+  evidenceFromBody  Boolean @default(false) @map("evidence_from_body")
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lawArticle      LawArticle      @relation(fields: [lawArticleId], references: [id], onDelete: Cascade)
+  article         Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  evidenceVersion ArticleVersion? @relation(fields: [evidenceVersionId], references: [id], onDelete: SetNull)
 
   amendmentCandidates AmendmentCandidate[]
 
   @@unique([tenantId, lawArticleId, articleId])
+  @@index([evidenceVersionId])
   /// 조문 상세에서 "이 조문이 걸린 법" 보기
   @@index([tenantId, articleId])
   /// 영향 분석(T-105)의 진입 경로 — 법령조항 id 에서 출발해 확정된 링크만 훑는다

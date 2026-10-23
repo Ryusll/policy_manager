@@ -15,6 +15,7 @@ import { clsx } from 'clsx';
 import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { lawLinksApi, RELATION_TYPE_LABEL, type LawRelationType } from '../api/lawLinks';
 import { lawsApi } from '../api/laws';
+import EvidenceSource from './EvidenceSource';
 
 /** `LawDetailPage`(법령 상세, "영향받는 우리 조문")에서도 같은 배지를 쓴다 */
 export function ConfirmBadge({ state }: { state: 'suggested' | 'confirmed' | 'rejected' }) {
@@ -30,18 +31,28 @@ export function ConfirmBadge({ state }: { state: 'suggested' | 'confirmed' | 're
   );
 }
 
-export function LawLinksPanel({ articleId, canEdit }: { articleId: string; canEdit: boolean }) {
+export function LawLinksPanel({
+  articleId,
+  currentVersionId,
+  canEdit,
+}: {
+  articleId: string;
+  /** 조문의 오늘 시행 버전 — 버전을 처리해 바뀌면 목록을 다시 받는다(T-177 — "지금 버전"·근거 문구 알림이 그 버전 기준이다) */
+  currentVersionId: string | null;
+  canEdit: boolean;
+}) {
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError] = useState('');
 
+  const linksKey = ['law-links', 'by-article', articleId, currentVersionId];
   const linksQuery = useQuery({
-    queryKey: ['law-links', 'by-article', articleId],
+    queryKey: linksKey,
     queryFn: () => lawLinksApi.byArticle(articleId),
     enabled: canEdit,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['law-links', 'by-article', articleId] });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: linksKey });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, confirmState }: { id: string; confirmState: 'confirmed' | 'rejected' }) =>
@@ -133,6 +144,7 @@ export function LawLinksPanel({ articleId, canEdit }: { articleId: string; canEd
                     {link.evidenceText}
                   </p>
                 )}
+                {link.evidenceText && <EvidenceSource source={link.evidenceVersion} target={link.articleCurrentVersion} />}
               </div>
               <button
                 type="button"

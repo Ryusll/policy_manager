@@ -10,6 +10,7 @@ import { tenantsReached } from '../law-changes/law-link-reach';
 import { presentEventEffective } from '../laws/law-effective-info';
 import { VariablesService } from '../variables/variables.service';
 import { lockArticleRow } from '../common/row-locks';
+import { evidenceInContent } from '../law-links/evidence-version';
 import {
   compareVariableEffects,
   planVariables,
@@ -1429,6 +1430,10 @@ export class AmendmentsService {
         relationType: item.relationType,
         scope: item.scope,
         evidenceText: item.evidenceText,
+        // 근거 문구의 원천 판과, 근거 문구가 기준 본문에 있는가(T-177) — 만들 때의 값. 기준 본문은 발행본이라 바뀌지 않는다.
+        // 화면은 원천과 판이 다르다고 알리지 않고 근거 문구가 기준 본문에 없을 때 알린다. 재는 것은 본문에서 찾은 근거뿐(본문 밖 문구는 null)
+        evidenceVersion: item.evidenceVersion ?? null,
+        evidenceInBase: item.evidenceFromBody ? evidenceInContent(base.content, item.evidenceText) : null,
         confirmState: item.confirmState,
         confidence: item.linkConfidence,
         confirmedAt: item.confirmedAt,

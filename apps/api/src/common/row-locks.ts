@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { PlanTier, Prisma } from '@prisma/client';
+import { PlanTier, Prisma, type VersionStatus } from '@prisma/client';
 
 /**
  * 행 잠금 — 쓰기 경로들이 같은 순서·같은 세기로 줄 서게 한다(T-131). 이 파일 밖에서 `FOR UPDATE` 를 쓰지 않는다(시험이 본다).
@@ -12,6 +12,12 @@ import { PlanTier, Prisma } from '@prisma/client';
  *
  * **법령 쪽은 따로 줄 선다(T-151).** 법령 등록(법령ID 열쇠 → 법령 행)·판 반영·표기 채우기는 법령 행만 잡고 규정 쪽 행은 잡지 않아,
  * 위 순서와 엮이지 않는다.
+ *
+ * **법령 관계 근거 문구의 원천(T-177)은 조문 → 판(id 순) → 연결.** 조문·판을 FOR KEY SHARE 로 잡아(`holdArticleVersions`) 위 쓰기들의
+ * NO KEY UPDATE 와는 함께 잡히고, 조문·장·규정 삭제(조문 FOR UPDATE → 판 → 연결)·재파싱 반려(판을 지운 뒤 연결 원천 비우기)와만 줄
+ * 선다 — 순서가 같아 교착하지 않는다. 재파싱 반려가 한 조문에서 지우는 판은 그 묶음 초안 하나뿐이라 판끼리 순서가 엇갈릴 일도 없다 —
+ * 반영(reparse-bundle.service `apply`)이 조문마다 다음 판 번호를 한 번만 매기므로 같은 조문에 초안이 둘이면 (article_id, version_num)
+ * 유일 위반으로 반영 자체가 실패하고, 초안·검토 중 판이 남은 조문은 반영을 막는다.
  *
  * **세기는 FOR NO KEY UPDATE.** 쓰는 쪽끼리는 FOR UPDATE 와 똑같이 줄 서지만, 그 행을 가리키는 FK insert(의견·즐겨찾기·
  * 개정 후보·검토 항목 — FK 검사는 FOR KEY SHARE)는 막지 않는다. 키를 바꾸는 쓰기는 없다. 지우기만 `FOR UPDATE` 를 미리 id 순으로
@@ -114,6 +120,47 @@ export async function lockPolicyForDelete(tx: Tx, policyId: string, waitMs = LOC
 export async function lockArticleRow(tx: Tx, articleId: string, waitMs = LOCK_WAIT_MS) {
   const rows = await acquire(tx, 'article', waitMs, () => tx.$queryRaw<{ id: string }[]>`SELECT id FROM articles WHERE id = ${articleId} FOR NO KEY UPDATE`);
   if (!rows.length) throw new NotFoundException('Article not found');
+}
+
+/** 근거 문구의 원천을 고를 판(T-177) — 잡은 채 읽는다 */
+export interface HeldVersion {
+  id: string;
+  versionNum: number;
+  status: VersionStatus;
+  effectiveDate: Date | null;
+  repealedOn: Date | null;
+  content: string;
+}
+
+/**
+ * 법령 관계 근거 문구의 원천 판(T-177) — 연결을 쓰기 전에 조문 행과 그 판들을 연결의 FK 확인과 같은 세기(FOR KEY SHARE)로 잡고 판들을
+ * 돌려준다. 조문이 그 사이 지워졌으면 null. 순서는 조문 → 판(id 순) → (연결 쓰기)로, 조문·장·규정 삭제(조문 FOR UPDATE → 판 → 연결)와
+ * 재파싱 반려(판을 지운 뒤 연결)와 같다 — 판을 먼저 잡고 연결의 FK 확인에서 조문을 기다리면 조문 삭제와 교착한다. 잡은 판들로 원천을
+ * 고르므로 고른 판이 쓰기 전에 지워지지 않는다. 이 잠금 앞에는 다른 잠금을 잡지 않는다
+ */
+export async function holdArticleVersions(tx: Tx, articleId: string, waitMs = LOCK_WAIT_MS): Promise<HeldVersion[] | null> {
+  const started = Date.now();
+  return acquire(tx, 'article', waitMs, async () => {
+    const article = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM articles WHERE id = ${articleId} FOR KEY SHARE`;
+    if (!article.length) return null;
+    // 두 문장이 기다림 한도 하나를 나눠 쓴다 — 문장마다 따로 세면 잠그는 데만 두 배를 기다린다(lockLawRowsForRegister 와 같다).
+    // 한도를 조문 문장이 다 썼으면 조문 라벨, 판 문장이 넘기면 판 라벨 — 경고 로그에서 조문(삭제)에 막혔는지 판(재파싱 반려)에 막혔는지 가린다
+    const left = waitMs - (Date.now() - started);
+    if (left <= 0) throw new LockBusyException('article', waitMs);
+    await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${left}ms`}, true), set_config('statement_timeout', ${`${left}ms`}, true)`;
+    let versions: HeldVersion[];
+    try {
+      versions = await tx.$queryRaw<HeldVersion[]>`
+        SELECT id, version_num AS "versionNum", status, effective_date AS "effectiveDate", repealed_on AS "repealedOn", content
+        FROM article_versions WHERE article_id = ${articleId} ORDER BY id FOR KEY SHARE`;
+    } catch (e) {
+      if (isLockWaitAbort(e)) throw new LockBusyException('article-versions', waitMs);
+      throw e;
+    }
+    // 잠근 뒤의 암묵적 기다림(연결 쓰기의 행 잠금·FK 확인)은 다른 도우미처럼 한도 전체로
+    await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${waitMs}ms`}, true)`;
+    return versions;
+  });
 }
 
 /** 조문 여럿 — 늘 id 순으로. 기다리는 사이 하나라도 지워졌으면 409 */

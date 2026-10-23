@@ -1,5 +1,6 @@
 import client from './client';
 import type { EventEffectiveNotes } from '../lib/effectiveNotes';
+import type { EvidenceVersionSummary } from './lawLinks';
 
 /**
  * 개정 후보 (T-106). 법령 변경을 규칙으로 우리 조문에 옮긴 **초안**이다 —
@@ -93,6 +94,9 @@ export type AmendmentCandidate = {
       relationType: string;
       scope: string | null;
       evidenceText: string | null;
+      /** 근거 문구의 출처 버전과, 근거 문구가 기준 본문에 있는가(T-177) — 후보를 만들 때의 값. 그 전에 만든 후보에는 없다 */
+      evidenceVersion?: EvidenceVersionSummary | null;
+      evidenceInBase?: boolean | null;
       confirmState: string;
       confidence: number | null;
     };

@@ -18,6 +18,7 @@ import {
 } from '../api/amendments';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
+import EvidenceSource from '../components/EvidenceSource';
 import EffectiveNotesLine from '../components/EffectiveNotesLine';
 import { formatArticleAnchor } from '../lib/articleAnchor';
 import { serviceToday } from '../lib/serviceDate';
@@ -397,6 +398,9 @@ function LinkSnapshot({ data }: { data: AmendmentDetail }) {
         {link.scope && ` · 적용 범위 "${link.scope}"`}
       </p>
       {link.evidenceText && <p>근거 문구: "{link.evidenceText}"</p>}
+      {link.evidenceText && (
+        <EvidenceSource source={link.evidenceVersion} target={{ versionNum: data.baseVersion.versionNum, hasEvidence: link.evidenceInBase }} against="base" />
+      )}
       {path && <p className="text-gray-500">{path.filter((p) => p.type !== 'lawLink').map((p) => p.label).join(' → ')}</p>}
     </div>
   );
