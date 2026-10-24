@@ -18,6 +18,7 @@ import {
 } from '../api/amendments';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
+import { CorrectionHistoryLabel, CorrectionNotice, IssuedSourceLink, RejectionCorrectionPanel } from '../components/AmendmentCorrection';
 import EvidenceSource from '../components/EvidenceSource';
 import EffectiveNotesLine from '../components/EffectiveNotesLine';
 import { formatArticleAnchor } from '../lib/articleAnchor';
@@ -121,7 +122,9 @@ export default function AmendmentDetailPage() {
 
       <LawChangeCard data={data} />
       {data.reviewState === 'review' && user?.role === 'admin' && <DecisionPanel data={data} />}
-      {data.reviewState !== 'approved' && <Actions data={data} />}
+      {data.reviewState === 'rejected' && <RejectionCorrectionPanel data={data} canCorrect={user?.role === 'admin'} />}
+      {/* 발행본이 후보를 쥔 반려 후보는 손질로도 다시 열 수 없다(서버 409) — 까닭은 반려 정정 자리에(모든 역할) */}
+      {data.reviewState !== 'approved' && !(data.reviewState === 'rejected' && data.resultVersion) && <Actions data={data} />}
       {history && <HistoryCard history={history} />}
       {data.siblings.length > 0 && (
         <section className="card p-3 space-y-1.5">
@@ -210,7 +213,7 @@ function Alerts({ data }: { data: AmendmentDetail }) {
 
   return (
     <>
-      {data.decision?.state === 'approved' && data.resultVersion && (
+      {data.decision?.state === 'approved' && data.reviewState === 'approved' && data.resultVersion && (
         <div className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900" data-testid="amendment-approved">
           승인됨 — <b>v{data.resultVersion.versionNum}</b> · <ResultDates data={data} /> · 승인{' '}
           {data.decision.by?.name ?? '알 수 없음'}
@@ -228,6 +231,7 @@ function Alerts({ data }: { data: AmendmentDetail }) {
           <span className="block text-xs mt-0.5">고치면 작성 상태로 돌아가 다시 검토를 요청할 수 있습니다. 시행 본문은 그대로입니다.</span>
         </div>
       )}
+      <CorrectionNotice data={data} />
       {!data.isCurrentBase && data.reviewState !== 'approved' && (
         <div role="alert" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 space-y-1.5">
           <p>
@@ -569,6 +573,8 @@ function DecisionPanel({ data }: { data: AmendmentDetail }) {
             <Link to={`/policies/${data.policy.id}`} className="underline">
               규정 화면에서 시행일 보정하기
             </Link>
+          ) : block.reason === 'issued_source' ? (
+            <IssuedSourceLink data={data} />
           ) : block.reason !== 'later_version' && block.reason !== 'repealed' ? (
             <button type="button" className="btn-secondary text-xs" disabled={regenerate.isPending} onClick={() => regenerate.mutate()}>
               {regenerate.isPending ? '만드는 중…' : `${effectiveDate} 기준으로 다시 만들기`}
@@ -613,7 +619,11 @@ function Actions({ data }: { data: AmendmentDetail }) {
     qc.invalidateQueries({ queryKey: ['amendments'] });
   };
   const onLockError = (err: any, fallback: string) => {
-    if (err?.response?.status === 409) {
+    if (err?.response?.data?.reason === 'issued_source') {
+      // 잠금 충돌이 아니다 — 이 후보로 발행한 버전이 생겨 다시 열 수 없다(T-178). 서버 문구를 그대로 보이고 화면을 새로 받는다
+      refresh();
+      toast(err.response.data.message ?? fallback, 'error');
+    } else if (err?.response?.status === 409) {
       setConflict(true);
       refresh();
       toast('그 사이 다른 사람이 이 후보를 바꿨습니다. 최신 내용을 불러왔습니다.', 'error');
@@ -819,7 +829,7 @@ function HistoryCard({ history }: { history: AmendmentHistory }) {
       node: (
         <div>
           <p className="text-gray-800">
-            <b>{STATE_CHANGE_LABEL(c.fromState, c.toState)}</b> · 판 {c.revision} · {c.actor?.name ?? '알 수 없음'} ·{' '}
+            <b>{c.kind === 'correction' ? <CorrectionHistoryLabel fromState={c.fromState} toState={c.toState} /> : STATE_CHANGE_LABEL(c.fromState, c.toState)}</b> · 판 {c.revision} · {c.actor?.name ?? '알 수 없음'} ·{' '}
             {new Date(c.createdAt).toLocaleString('ko-KR')}
           </p>
           {c.reason && <p className="text-gray-600">사유: {c.reason}</p>}

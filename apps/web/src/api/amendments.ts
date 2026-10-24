@@ -123,6 +123,14 @@ export type AmendmentDetail = AmendmentCandidate & {
     at: string;
     by: { id: string; name: string | null } | null;
   } | null;
+  /** 마지막 결정 뒤의 정정(T-178) — 반려 정정(reject)·승인 철회(withdraw). 그 뒤 새 결정이 있으면 null */
+  correction: {
+    kind: 'reject' | 'withdraw';
+    revision: number;
+    reason: string | null;
+    at: string;
+    by: { id: string; name: string | null } | null;
+  } | null;
   /** 승인으로 발행된 후속 버전 */
   resultVersion: { id: string; versionNum: number; effectiveDate: string | null; publishedAt: string | null } | null;
   /** 같은 승인을 다시 보냈을 때(응답 유실) — 새로 발행하지 않고 기존 결과 */
@@ -180,6 +188,8 @@ export type AmendmentHistory = {
     reason: string | null;
     actor: { id: string; name: string | null } | null;
     createdAt: string;
+    /** 정정 전환(T-178) — 반려 정정·승인 철회 */
+    kind: 'transition' | 'correction';
   }[];
 };
 
@@ -312,7 +322,12 @@ export const amendmentsApi = {
     id: string,
     body: { reason: string; expectedRevision: number; expectedLockVersion: number },
   ): Promise<AmendmentDetail> => client.post(`/amendments/${id}/reject`, body).then((r) => r.data),
+  /** 반려 정정(관리자, T-178) — 본문을 바꾸지 않고 반려를 되돌려 작성 상태로 */
+  correctRejection: (
+    id: string,
+    body: { reason: string; expectedRevision: number; expectedLockVersion: number },
+  ): Promise<AmendmentDetail> => client.post(`/amendments/${id}/correct-rejection`, body).then((r) => r.data),
 };
 
 /** 승인을 막은 이유(409 의 reason) — 화면 안내용 */
-export type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed' | 'variable_changed';
+export type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed' | 'variable_changed' | 'issued_source';

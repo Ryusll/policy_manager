@@ -14,6 +14,18 @@ export class AuditLogQueryDto {
   @MaxLength(64)
   userId?: string;
 
+  @ApiProperty({ required: false, description: '대상 종류(정확히 일치) — 예: `amendment_candidate`, `ArticleVersion` (T-178)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  entityType?: string;
+
+  @ApiProperty({ required: false, description: '대상 id(정확히 일치) — 한 대상의 기록만 (T-178)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  entityId?: string;
+
   @ApiProperty({ required: false, description: '시작일 YYYY-MM-DD (그날 00:00부터)' })
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from 은 YYYY-MM-DD 형식이어야 합니다.' })

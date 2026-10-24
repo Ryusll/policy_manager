@@ -3,6 +3,7 @@ import { LawChangesModule } from '../law-changes/law-changes.module';
 import { VariablesModule } from '../variables/variables.module';
 import { AmendmentsController } from './amendments.controller';
 import { AmendmentsService } from './amendments.service';
+import { AmendmentCorrectionService } from './amendment-correction';
 
 /**
  * S7 법령 개정 연계 — 개정 후보 (T-106).
@@ -12,7 +13,7 @@ import { AmendmentsService } from './amendments.service';
 @Module({
   imports: [LawChangesModule, VariablesModule],
   controllers: [AmendmentsController],
-  providers: [AmendmentsService],
+  providers: [AmendmentsService, AmendmentCorrectionService],
   exports: [AmendmentsService],
 })
 export class AmendmentsModule {}

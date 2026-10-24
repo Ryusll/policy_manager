@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
 import { auditLogsApi, type AuditLogFilter } from '../api/auditLogs';
 import { useAuthStore } from '../stores/authStore';
 import { AUDIT_GROUPS, auditActionLabel, isDestructiveAction } from '../lib/auditLabels';
+import { auditEntityHref, entityFilterFrom } from '../lib/auditCorrection';
+import { AuditCorrectionBadges, AuditCorrectionChain } from '../components/AuditCorrectionChain';
+import { useI18n } from '../i18n/useI18n';
 
 /**
  * 감사 로그 조회 (T-11).
@@ -27,9 +31,12 @@ function DetailRow({ id }: { id: string }) {
   if (isError) return <p className="text-xs text-red-600">상세를 불러오지 못했습니다.</p>;
 
   return (
-    <pre className="text-[11px] leading-relaxed text-gray-700 whitespace-pre-wrap break-all max-h-72 overflow-y-auto">
-      {JSON.stringify(data?.details ?? {}, null, 2)}
-    </pre>
+    <>
+      {data && <AuditCorrectionChain data={data} />}
+      <pre className="text-[11px] leading-relaxed text-gray-700 whitespace-pre-wrap break-all max-h-72 overflow-y-auto">
+        {JSON.stringify(data?.details ?? {}, null, 2)}
+      </pre>
+    </>
   );
 }
 
@@ -37,12 +44,18 @@ export default function AuditLogPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
 
+  const { t } = useI18n();
   const [filter, setFilter] = useState<AuditLogFilter>({ page: 1, limit: PAGE_SIZE });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // 한 대상의 기록만(T-178) — 주소로 받아, 정정 사슬·대상 칩에서 바로 열 수 있다. 대상이 바뀌면 첫 장으로
+  const [params, setParams] = useSearchParams();
+  const entity = entityFilterFrom(params);
+  const entityKey = entity ? `${entity.entityType}:${entity.entityId}` : '';
+  useEffect(() => setFilter((prev) => ({ ...prev, page: 1 })), [entityKey]);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['audit-logs', filter],
-    queryFn: () => auditLogsApi.list(filter),
+    queryKey: ['audit-logs', filter, entityKey],
+    queryFn: () => auditLogsApi.list({ ...filter, ...(entity ?? {}) }),
     enabled: isAdmin,
   });
 
@@ -158,11 +171,22 @@ export default function AuditLogPage() {
           <span className="text-xs text-gray-600" aria-live="polite">
             {isLoading ? '불러오는 중…' : `${total.toLocaleString('ko-KR')}건`}
           </span>
-          {(filter.action || filter.userId || filter.from || filter.to) && (
+          {entity && (
+            <span className="text-[11px] text-gray-700 bg-gray-100 border border-gray-200 rounded px-1.5 py-0.5" data-testid="audit-entity-filter">
+              {t('auditCorrection.entityFilter', { type: entity.entityType, id: entity.entityId.slice(0, 8) })}
+              <button type="button" className="ml-1 text-navy-700" aria-label={t('auditCorrection.entityFilterClear')} onClick={() => setParams({})}>
+                ×
+              </button>
+            </span>
+          )}
+          {(filter.action || filter.userId || filter.from || filter.to || entity) && (
             <button
               type="button"
               className="ml-auto text-xs text-navy-700 hover:underline"
-              onClick={() => setFilter({ page: 1, limit: PAGE_SIZE })}
+              onClick={() => {
+                setFilter({ page: 1, limit: PAGE_SIZE });
+                setParams({});
+              }}
             >
               필터 지우기
             </button>
@@ -188,7 +212,7 @@ export default function AuditLogPage() {
                   <button
                     type="button"
                     onClick={() => toggle(row.id)}
-                    disabled={!row.hasDetails}
+                    disabled={!row.hasDetails && !row.correctedCount}
                     className="mt-0.5 text-gray-400 hover:text-navy-700 disabled:opacity-25 shrink-0"
                     aria-label={open ? '상세 접기' : '상세 펼치기'}
                     aria-expanded={open}
@@ -213,6 +237,7 @@ export default function AuditLogPage() {
                           {row.entityType}
                         </span>
                       )}
+                      <AuditCorrectionBadges row={row} />
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">
                       {new Date(row.createdAt).toLocaleString('ko-KR')} ·{' '}
@@ -224,10 +249,14 @@ export default function AuditLogPage() {
                       </div>
                     )}
                   </div>
-                  {row.entityId && (
-                    <span className="hidden sm:block shrink-0 font-mono text-[10px] text-gray-400 mt-1">
+                  {row.entityId && row.entityType && (
+                    <Link
+                      to={auditEntityHref(row.entityType, row.entityId)}
+                      title={t('auditCorrection.filterByEntity')}
+                      className="hidden sm:block shrink-0 font-mono text-[10px] text-gray-400 hover:text-navy-700 mt-1"
+                    >
                       {row.entityId.slice(0, 8)}
-                    </span>
+                    </Link>
                   )}
                 </div>
               </li>

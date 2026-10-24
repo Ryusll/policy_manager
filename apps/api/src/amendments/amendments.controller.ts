@@ -2,9 +2,11 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Request } f
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/guards/decorators';
 import { AmendmentsService } from './amendments.service';
+import { AmendmentCorrectionService } from './amendment-correction';
 import {
   AmendmentListQueryDto,
   ApproveAmendmentDto,
+  CorrectRejectionDto,
   EditAmendmentDto,
   GenerateAmendmentsDto,
   RegenerateAmendmentDto,
@@ -21,7 +23,10 @@ import {
 @Controller('amendments')
 @Roles('admin', 'editor')
 export class AmendmentsController {
-  constructor(private readonly service: AmendmentsService) {}
+  constructor(
+    private readonly service: AmendmentsService,
+    private readonly correction: AmendmentCorrectionService,
+  ) {}
 
   @Post('generate')
   @HttpCode(200)
@@ -92,5 +97,16 @@ export class AmendmentsController {
   @ApiOperation({ summary: '반려(관리자) — 검토 중인 후보만, 사유 필수. 발행본은 그대로' })
   reject(@Request() req: any, @Param('id') id: string, @Body() dto: RejectAmendmentDto) {
     return this.service.reject(req.user.tenantId, id, req.user.id, dto);
+  }
+
+  @Post(':id/correct-rejection')
+  @HttpCode(200)
+  @Roles('admin')
+  @ApiOperation({
+    summary: '반려 정정(관리자, T-178) — 본문을 바꾸지 않고 반려를 되돌려 작성 상태로. 사유 필수, 원 반려 기록은 그대로',
+  })
+  async correctRejection(@Request() req: { user: { tenantId: string; id: string } }, @Param('id') id: string, @Body() dto: CorrectRejectionDto) {
+    await this.correction.correctRejection(req.user.tenantId, id, req.user.id, dto);
+    return this.service.get(req.user.tenantId, id);
   }
 }

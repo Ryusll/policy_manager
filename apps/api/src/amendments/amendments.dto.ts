@@ -117,6 +117,14 @@ export class RejectAmendmentDto extends LockedRequestDto {
   reason: string;
 }
 
+/** 반려 정정(T-178) — 본문을 바꾸지 않고 반려를 되돌린다 */
+export class CorrectRejectionDto extends LockedRequestDto {
+  @ApiProperty({ description: '정정 사유 — 필수(원 반려 사유는 그대로 남고, 이 사유가 정정 기록이 된다)' })
+  @IsString()
+  @MaxLength(1000)
+  reason: string;
+}
+
 export class RegenerateAmendmentDto {
   @ApiPropertyOptional({ description: '이 날 시행 중인 본문을 기준으로(승인하려던 시행일). 생략하면 법령 시행일과 오늘 중 늦은 날' })
   @IsOptional()

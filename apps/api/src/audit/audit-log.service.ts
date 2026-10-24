@@ -7,6 +7,12 @@ import {
   summarizeDetails,
 } from './audit-query';
 
+/** 정정 기록의 사유 — details.reason(문자열)만 */
+const correctionReason = (details: unknown): string | null => {
+  const r = details && typeof details === 'object' && !Array.isArray(details) ? (details as { reason?: unknown }).reason : null;
+  return typeof r === 'string' ? r : null;
+};
+
 /** 감사 로그 조회 (T-11). 기록은 `AuditService`, 읽기는 여기. */
 @Injectable()
 export class AuditLogService {
@@ -27,28 +33,47 @@ export class AuditLogService {
           entityId: true,
           createdAt: true,
           details: true,
+          correctsId: true,
           user: { select: { id: true, email: true, name: true } },
+          // 이 기록을 정정한 기록 수(T-178) — 목록에 "정정됨"
+          _count: { select: { correctedBy: { where: { tenantId } } } },
         },
       }),
       this.prisma.auditLog.count({ where: plan.where as any }),
     ]);
 
     return {
-      rows: rows.map(({ details, ...row }) => ({ ...row, ...summarizeDetails(details) })),
+      rows: rows.map(({ details, _count, ...row }) => ({ ...row, correctedCount: _count.correctedBy, ...summarizeDetails(details) })),
       total,
       page: plan.page,
       limit: plan.limit,
     };
   }
 
-  /** 목록에서 뺀 `details` 본문. 펼칠 때만 받아 간다. */
+  /**
+   * 목록에서 뺀 `details` 본문. 펼칠 때만 받아 간다. 정정 사슬(T-178)도 함께 — 이 기록이 정정한 원 기록(corrects)과 이 기록을 정정한
+   * 기록들(correctedBy, 정정 사유와 함께). 원 기록과 정정 기록은 대상(entity)이 다를 수 있어(후보 승인 ↔ 버전 철회) 대상이 아니라
+   * corrects_id 로 잇는다.
+   */
   async findOne(tenantId: string, id: string) {
+    const actor = { select: { id: true, email: true, name: true } } as const;
+    const link = { id: true, tenantId: true, action: true, entityType: true, entityId: true, createdAt: true, user: actor } as const;
     const row = await this.prisma.auditLog.findFirst({
       where: { id, tenantId },
-      include: { user: { select: { id: true, email: true, name: true } } },
+      include: {
+        user: actor,
+        corrects: { select: link },
+        correctedBy: { where: { tenantId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { ...link, details: true } },
+      },
     });
     if (!row) throw new NotFoundException('감사 기록을 찾을 수 없습니다.');
-    return row;
+    const { corrects, correctedBy, ...rest } = row;
+    const strip = ({ tenantId: _t, ...l }: { tenantId: string } & Record<string, unknown>) => l;
+    return {
+      ...rest,
+      corrects: corrects && corrects.tenantId === tenantId ? strip(corrects) : null,
+      correctedBy: correctedBy.map(({ details, ...c }) => ({ ...strip(c), reason: correctionReason(details) })),
+    };
   }
 
   /**

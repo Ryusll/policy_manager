@@ -30,6 +30,7 @@ import { diffLawText } from './amendment-text';
 import { generateRuleCandidate, RULES, RULESET_VERSION, TEMPLATES } from './amendment-rules';
 import { articlesWithCandidates, capConfidence, PARENT_LINK_FLAG } from './amendment-reach';
 import { CANDIDATE_SELECT, currentState, presentCandidate } from './amendment-present';
+import { correctionAfter, detachStaleSources, recordSourceDetach, reopenRejectedLocked } from './amendment-correction';
 import { contentHash, hasSubstantiveChange, historyFingerprint } from './amendment-revision';
 import { diffCandidate, relinkDiff, type AppliedRule } from './amendment-diff';
 import type {
@@ -104,7 +105,8 @@ const OWNED_SELECT = {
 type OwnedCandidate = Prisma.AmendmentCandidateGetPayload<{ select: typeof OWNED_SELECT }>;
 
 /** 승인을 막는 이유 — 화면이 원인별로 안내한다(코덱스 자문 결정 3) */
-type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed' | 'variable_changed';
+/** issued_source — 이 후보로 발행한 버전이 이미 있다(T-178, amendment-correction 의 assertNoIssuedSource 가 같은 모양으로 던진다) */
+type ApproveBlock = 'undated_history' | 'repealed' | 'base_mismatch' | 'later_version' | 'history_changed' | 'variable_changed' | 'issued_source';
 /** 지금 다시 만들면 고를 기준 본문 — 기준일에 조문이 폐지돼 있으면 id 없이 repealed(T-126) */
 type CurrentBase = { id: string | null; repealed: boolean };
 const blocked = (reason: ApproveBlock, message: string) => new ConflictException({ message, reason });
@@ -518,6 +520,11 @@ export class AmendmentsService {
     const fromState = cand.reviewState;
 
     await this.prisma.$transaction(async (tx) => {
+      // 반려된 후보를 고쳐 다시 여는 것 — 반려 정정과 같은 판정·떼기(T-178: 발행본이 후보를 쥐면 409, 옛 철회 초안의 원천 연결 떼기)
+      const detached =
+        fromState === 'rejected'
+          ? await reopenRejectedLocked(tx, { tenantId, userId, candidateId: id, articleId: cand.articleId, cause: 'amendment.edit', what: '고쳐도 다시 승인할 수 없습니다' })
+          : null;
       // 조건부 갱신 — 읽은 뒤 다른 요청이 먼저 바꿨으면 0건이다
       const updated = await tx.amendmentCandidate.updateMany({
         where: { id, tenantId, revision: cand.revision, lockVersion: cand.lockVersion },
@@ -575,6 +582,7 @@ export class AmendmentsService {
             fromState,
             toState: 'draft',
             unexplained: diff.unexplained,
+            ...(detached ? { detachedVersionIds: [detached.id] } : {}),
           },
         },
       });
@@ -815,6 +823,8 @@ export class AmendmentsService {
         where: { articleId: cand.articleId, status: 'published' },
         data: { status: 'archived' },
       });
+      // T-178 전 철회가 원천 후보를 남긴 초안이 있으면 연결을 뗀다(원천 후보 id 는 유일)
+      const detached = await detachStaleSources(tx, id);
       const version = await tx.articleVersion.create({
         data: {
           articleId: cand.articleId, // 조문 식별자를 유지한다 — 연결·이력이 그대로 이어진다(청구항 1)
@@ -832,6 +842,7 @@ export class AmendmentsService {
         },
         select: { id: true, versionNum: true },
       });
+      if (detached) await recordSourceDetach(tx, { tenantId, userId, candidateId: id, newVersionId: version.id, cause: 'amendment.approve', detached });
       // 기준 본문의 변수 연결을 새 버전으로 옮긴다(T-109) — 후보가 값을 넣은 자리는 그 값으로 잇고, 그 밖에 후보가
       // 바꾼 구간에 걸린 연결은 "다시 이어야 함"
       await this.variables.inheritBindings(
@@ -906,6 +917,7 @@ export class AmendmentsService {
             // 변수 선택(T-109 ②, 특허 도 12) — 어느 연결에 어떤 값(유효기간·범위)을 넣었는지
             plannedEffectiveDate: dateOnly(cand.plannedEffectiveDate),
             variables: variableSummary(cand.rationale),
+            ...(detached ? { detachedVersionIds: [detached.id] } : {}),
           } as Prisma.InputJsonValue,
         },
       });
@@ -1084,6 +1096,8 @@ export class AmendmentsService {
         reason: c.reason,
         actor: who(c.actorId),
         createdAt: c.createdAt,
+        /** 정정 전환(T-178) — 반려 정정·승인 철회 */
+        kind: c.kind,
       })),
     };
   }
@@ -1280,10 +1294,16 @@ export class AmendmentsService {
       orderBy: { createdAt: 'desc' },
       select: { toState: true, revision: true, reason: true, actorId: true, createdAt: true },
     });
-    const resultVersion = await this.prisma.articleVersion.findUnique({
+    const correction = await correctionAfter(this.prisma, tenantId, id, decision?.createdAt ?? null);
+    // 발행된 것만 결과다 — T-178 전 철회가 남긴 초안은 원천 후보를 쥐고 있어도 결과가 아니다
+    const resultRow = await this.prisma.articleVersion.findUnique({
       where: { sourceCandidateId: id },
-      select: { id: true, versionNum: true, effectiveDate: true, publishedAt: true },
+      select: { id: true, versionNum: true, effectiveDate: true, publishedAt: true, status: true },
     });
+    const resultVersion =
+      resultRow && (resultRow.status === 'published' || resultRow.status === 'archived')
+        ? { id: resultRow.id, versionNum: resultRow.versionNum, effectiveDate: resultRow.effectiveDate, publishedAt: resultRow.publishedAt }
+        : null;
     const currentBase =
       currentBaseId && currentBaseId !== row.baseVersionId
         ? await this.prisma.articleVersion.findUnique({
@@ -1304,7 +1324,7 @@ export class AmendmentsService {
       orderBy: { createdAt: 'desc' },
       select: { id: true, reviewState: true, revision: true, createdAt: true, baseVersion: { select: { versionNum: true } } },
     });
-    const names = await this.userNames(tenantId, [row.createdBy, reviewRequest?.actorId, decision?.actorId]);
+    const names = await this.userNames(tenantId, [row.createdBy, reviewRequest?.actorId, decision?.actorId, correction?.actorId]);
 
     return {
       ...presentCandidate(rest),
@@ -1318,6 +1338,16 @@ export class AmendmentsService {
             reason: decision.reason,
             at: decision.createdAt,
             by: decision.actorId ? { id: decision.actorId, name: names.get(decision.actorId) ?? null } : null,
+          }
+        : null,
+      /** 마지막 결정 뒤의 정정(T-178) — 반려 정정(reject)·승인 철회(withdraw). 그 뒤 새 결정이 있으면 null */
+      correction: correction
+        ? {
+            kind: correction.kind,
+            revision: correction.revision,
+            reason: correction.reason,
+            at: correction.createdAt,
+            by: correction.actorId ? { id: correction.actorId, name: names.get(correction.actorId) ?? null } : null,
           }
         : null,
       /** 승인으로 발행된 후속 버전 */

@@ -10,6 +10,9 @@ import { kstDayStart } from '../common/date-only';
 export type AuditQueryInput = {
   action?: string;
   userId?: string;
+  /** 대상 종류·id — 정확히 일치(T-178). 한 대상(후보·버전)의 기록을 모아 본다 */
+  entityType?: string;
+  entityId?: string;
   /** YYYY-MM-DD — 한국 시간 그날 0시부터 */
   from?: string;
   /** YYYY-MM-DD — 한국 시간 그날 끝까지(끝날을 포함하지 않으면 "오늘"을 골라도 오늘 게 안 나온다) */
@@ -51,6 +54,11 @@ export function buildAuditWhere(tenantId: string, input: AuditQueryInput): Recor
 
   const userId = String(input.userId ?? '').trim();
   if (userId) where.userId = userId;
+
+  const entityType = String(input.entityType ?? '').trim();
+  if (entityType) where.entityType = entityType;
+  const entityId = String(input.entityId ?? '').trim();
+  if (entityId) where.entityId = entityId;
 
   // 날짜는 **한국 날짜**로 자른다(T-129). UTC 하루로 자르면 한국 시간 0~9시 기록이 전날로 잡혀, 오늘을 고르면
   // 오늘 0~9시 기록이 빠지고 다음 날 0~9시 기록이 들어온다. 없는 날짜(2026-02-31)는 거르지 않는다.

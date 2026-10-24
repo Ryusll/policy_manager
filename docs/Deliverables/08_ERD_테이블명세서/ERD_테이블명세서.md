@@ -123,7 +123,7 @@ Tenant 1───1 BillingCustomer 1───N BillingSubscription 1───N B
 | publishedAt | datetime? | **발행일** — 시스템에서 시행본으로 발행한 시각(T-108). 시행일·법령 시행일과 다르고 시점 조회의 기준이 아니다. 개정 후보 승인·일반 승인·한꺼번에 시행·가져오기 확정·JSON 일괄 등록·재파싱 묶음 승인이 남긴다. 그 전 발행 이력은 T-111 이 승인 시각으로 채웠다(아래 표시). 승인 시각도 없는 발행 이력은 비어 있다 — 화면은 "발행 기록 없음" |
 | publishedAtFromApproval | boolean (기본 false) | 발행일을 그때 기록하지 않고 T-111 이 승인 시각(`approvedAt`)에서 옮겨 적었다 — 화면에 "승인 기록으로 보정". 두 시각이 같다는 것만으로는 그때 기록한 것과 가를 수 없어 따로 둔다(마이그레이션 `20261010010000_published_at_backfill`) |
 | changeEventId | uuid FK? → LawChangeEvent (SetNull) | 이 버전을 낳은 법령 변경 — 개정 후보 승인으로 발행됐을 때만(T-108) |
-| sourceCandidateId | uuid FK? unique → AmendmentCandidate (SetNull) | 이 버전을 낳은 개정 후보(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다 |
+| sourceCandidateId | uuid FK? unique → AmendmentCandidate (SetNull) | 이 버전을 낳은 개정 후보(T-108). 후보 쪽에는 따로 두지 않고 이 관계로 찾는다. 시행 예정 철회는 이 연결과 `changeEventId` 를 뗀다(T-178 — 지운 값은 철회 감사 `before` 에). 그래서 발행되지 않은 버전(초안·검토 중)은 후보를 쥐지 않는다 — T-178 마이그레이션이 그 전 철회가 남긴 초안의 연결을 떼고 버전마다 감사(`version.source_detach`, cause `migration`)를 남겼다 |
 | repealedOn | date? | **폐지 시행일**(T-126) — "게시본 폐지"로 내린 버전만 있다(폐지한 날, 한국 날짜). 이 날부터 조문은 시행 중이 아니다: 시점 조회가 이 버전을 고르면 옛 버전으로 되돌아가지 않고 "폐지"로 본다(규정 시점 조회·신구 대비·법령 영향 분석·개정 후보 공통). 새 버전에 밀려 내려간 버전은 비어 있다. 마이그레이션 `20261009120000_article_repeal` 이 기존 폐지를 감사 기록(`version.archive`, 같은 회사) 시각의 한국 날짜로 채웠다 — 감사가 없는 archived 는 비워 둠 |
 | structure | json? | **버전별 계층**(T-110 ②, 특허 도 5·13) — 발행 이력이면 그 버전이 시행된 동안의 **얼린 계층**(장 id·번호·제목, 절, 조·가지·항·목, 조 제목 — 계층이 실제로 바뀌는 승인 때 그 조문의 얼리지 않은 발행 이력 모두에 넣는다), 초안·검토 중이면 재파싱의 **제안 계층**(승인 때 조문 행으로 옮기고 비운다). 시행본은 늘 비어 있다(지금 계층 = 조문 행). 옛 기록은 비어 있어 지금 계층을 따른다 |
 | reparseItemId | uuid? (unique) | 이 버전을 만든 재파싱 검토 항목(T-110 ②) — 묶음으로만 검토 요청·승인·반려한다(단건 처리·한꺼번에 시행에서 빠진다) |
@@ -169,7 +169,8 @@ NotificationGroupMember: 복합 PK `[groupId, userId]`, N:M 매핑 테이블.
 tenantId FK, userId FK, kind(기본 "policy_revision", 법령 개정 후보 알림은 "law_amendment" — T-106), title, body(text), policyId/articleId/versionId(참조용, FK 아님), link?(규정이 아닌 화면으로 가는 이동 경로, 예 `/laws/:id?change=` — T-106), readAt. 인덱스: `[userId, readAt, createdAt]`, `[tenantId, createdAt]`.
 
 ### AuditLog (`audit_logs`)
-tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json). 저장과 같은 트랜잭션에 쓰는 경로가 있다 — 가져오기 확정·새 규정·일괄 등록은 본문과 함께 확정·롤백된다(T-135). 가져오기 확정이 남긴 기록은 `details.sessionId`(원문 세션)로 묶인다.
+tenantId FK, userId FK?(SetNull), action, entityType, entityId, details(json), **correctsId?**(자기 참조 FK → 정정 대상 원 감사 기록, NO ACTION — T-178). 저장과 같은 트랜잭션에 쓰는 경로가 있다 — 가져오기 확정·새 규정·일괄 등록은 본문과 함께 확정·롤백된다(T-135). 가져오기 확정이 남긴 기록은 `details.sessionId`(원문 세션)로 묶인다.
+**추가만 한다**(T-178, 특허 도 12): 앱에는 감사 기록 수정·삭제 경로가 없다(가드 시험 `tests/auditAppendOnly.test.ts`). 승인·반려 뒤의 정정은 원 기록을 두고, 원 기록을 가리키는 정정 기록(`details.reason`·`before`·`after`)을 상태 변경과 같은 트랜잭션에 쓴다 — 쓰는 곳은 `audit/audit-correction.ts` 하나이고 정정 짝(어떤 action 이 어떤 action 을 정정하는가)도 거기 표 하나다. 회사 행을 지우면 연쇄로 함께 지워지는 것, DB 수준 강제(트리거·권한)와 보관·파기는 D-19. 인덱스(T-178): `[tenantId, createdAt]`, `[tenantId, entityType, entityId, createdAt]`, `[tenantId, correctsId]`. 마이그레이션 `20261024090000_audit_corrections`.
 
 ### AuthSession (`auth_sessions`) — T-137 로그인 세션(기기마다 하나)
 userId FK(cascade), tokenHash(지금 유효한 갱신 토큰의 sha256 — 원문은 저장하지 않는다, 갱신마다 바뀜), remember(자동 로그인), expiresAt(갱신마다 다시 늘어남 — 30일/12시간), lastUsedAt, userAgent(≤300), revokedAt(로그아웃·비밀번호 변경), createdAt. `@@index([userId])`. 끝난 세션은 그 사람이 다시 로그인할 때 지운다
@@ -414,7 +415,7 @@ tenantId FK(cascade), candidateId FK → AmendmentCandidate(cascade), revision(i
 유니크 `[candidateId, revision]`, 인덱스 `[tenantId, candidateId]`. 마이그레이션이 기존 후보의 생성본을 판 1 로 채웠다.
 
 #### AmendmentStateChange (`amendment_state_changes`) — 개정 후보의 상태 전환 기록 ⚠️ 테넌트별 ✅ 구현됨 (T-107)
-본문이 바뀌지 않는 전환(검토 요청 등)도 남아야 해서 판과 따로 둔다. tenantId FK(cascade), candidateId FK(cascade), fromState·toState(enum AmendmentState), revision(int — 전환이 가리키는 판, 검토 요청이면 검토 대상 판), reason(text? — 요청 사유·요청 취소 사유·반려 사유), actorId?, createdAt. 인덱스 `[candidateId, createdAt]`.
+본문이 바뀌지 않는 전환(검토 요청 등)도 남아야 해서 판과 따로 둔다. tenantId FK(cascade), candidateId FK(cascade), fromState·toState(enum AmendmentState), revision(int — 전환이 가리키는 판, 검토 요청이면 검토 대상 판), reason(text? — 요청 사유·요청 취소 사유·반려 사유·정정 사유), actorId?, **kind**(enum AmendmentChangeKind — `transition` 기본 / `correction`: 앞선 결정을 바로잡는 전환 — 반려 정정 `rejected → draft`, 시행 예정 철회 `approved → draft`, T-178), createdAt. 인덱스 `[candidateId, createdAt]`. 상태값은 늘리지 않고 전환 행의 종류로 정정을 가린다. 마이그레이션이 T-178 전 철회가 남긴 `approved → rejected` 전환(그 경로 하나뿐)을 `correction` 으로 채웠다.
 진행 중인 검토 요청 = 후보가 검토 상태일 때 가장 최근의 `→ review` 전환.
 
 > 판과 상태 전환은 후보와 함께 지워진다(조문·기준 버전 삭제 → 후보 cascade). 초안의 작업 기록이라 그렇게 두고, 감사 로그(`amendment.edit`·`amendment.request_review`)에는 판 번호·해시·사유가 남는다. 승인된 후보의 보존은 T-108 에서 정한다.

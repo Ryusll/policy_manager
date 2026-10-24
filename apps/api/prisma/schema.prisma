@@ -640,11 +640,18 @@ model AuditLog {
   entityType String   @map("entity_type")
   entityId   String?  @map("entity_id")
   details    Json?
+  /// 정정 대상 — 같은 회사의 원 감사 기록(T-178, 특허 도 12). 원 기록은 고치거나 지우지 않고, 정정은 사유·전·후를 담은 후속 기록으로 쌓는다
+  correctsId String?  @map("corrects_id")
   createdAt  DateTime @default(now()) @map("created_at")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  corrects    AuditLog?  @relation("AuditCorrection", fields: [correctsId], references: [id], onDelete: NoAction)
+  correctedBy AuditLog[] @relation("AuditCorrection")
 
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entityType, entityId, createdAt])
+  @@index([tenantId, correctsId])
   @@map("audit_logs")
 }
 
@@ -1225,6 +1232,8 @@ model AmendmentStateChange {
   /// 요청 사유(본문 차이가 없으면 필수)·취소 사유·반려 사유
   reason      String?        @db.Text
   actorId     String?        @map("actor_id")
+  /// 결정·요청에 따른 전환인가, 앞선 결정을 바로잡는 정정인가(T-178) — 반려 정정, 시행 예정 철회
+  kind        AmendmentChangeKind @default(transition)
   createdAt   DateTime       @default(now()) @map("created_at")
 
   tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -1232,6 +1241,14 @@ model AmendmentStateChange {
 
   @@index([candidateId, createdAt])
   @@map("amendment_state_changes")
+}
+
+/// 개정 후보 상태 전환의 종류(T-178). 상태값은 늘리지 않고 전환 행으로 정정을 가린다
+enum AmendmentChangeKind {
+  /// 검토 요청·승인·반려·손질에 따른 전환
+  transition
+  /// 앞선 결정을 바로잡는 전환 — 반려 정정(반려 → 작성), 시행 예정 철회(승인 → 작성)
+  correction
 }
 
 enum AmendmentMethod {
