@@ -60,6 +60,7 @@ import {
 } from './policies.dto';
 import { ARTICLE_ORDER, formatJo } from '../common/article-label';
 import { VERSION_LAW_CHANGE, withLawChange } from '../versions/version-law-change';
+import { readSnapshot, type SnapshotDb } from '../common/read-snapshot';
 import { LONG_LOCK_WAIT_MS, lockArticlesForDelete, lockPolicyForDelete, lockPolicyRow } from '../common/row-locks';
 
 /**
@@ -334,14 +335,14 @@ export class PoliciesService {
    * 조문마다 오늘 시행 중인 버전 하나(T-127 규칙). SQL 로 id 만 고른 뒤 그 버전만 읽는다 — 중첩 include 의 `take: 1` 은
    * Prisma 5.22 가 메모리에서 잘라 조문마다 발행 이력 전부(본문 포함)를 읽었다(`currentVersionIdsSql`).
    */
-  private async currentVersionsOf<L extends boolean>(articleIds: string[], today: Date, withLawChange: L) {
+  private async currentVersionsOf<L extends boolean>(db: SnapshotDb, articleIds: string[], today: Date, withLawChange: L) {
     type Row = L extends true
       ? Prisma.ArticleVersionGetPayload<{ include: { changeEvent: typeof VERSION_LAW_CHANGE } }>
       : Prisma.ArticleVersionGetPayload<object>;
     if (!articleIds.length) return new Map<string, Row>();
-    const picked = await this.prisma.$queryRaw<{ id: string }[]>(currentVersionIdsSql(articleIds, today));
+    const picked = await db.$queryRaw<{ id: string }[]>(currentVersionIdsSql(articleIds, today));
     const rows = picked.length
-      ? await this.prisma.articleVersion.findMany({
+      ? await db.articleVersion.findMany({
           where: { id: { in: picked.map((p) => p.id) } },
           ...(withLawChange ? { include: { changeEvent: VERSION_LAW_CHANGE } } : {}),
         })
@@ -380,7 +381,15 @@ export class PoliciesService {
    */
   async findOne(tenantId: string, id: string, opts: { includePending?: boolean; detail?: boolean } = {}) {
     const today = todayDateOnly();
-    const policy = await this.prisma.policy.findFirst({
+    // 한 스냅숏으로 읽고(T-180, PAT-22) — 조문 행·오늘 판 고르기·다시 읽기·시행 예정·초안이 같은 발행 이력 상태(common/read-snapshot).
+    // 조립은 읽은 뒤 tx 밖에서 — 계산하는 동안 연결을 쥐지 않게
+    const read = await readSnapshot(this.prisma, (db) => this.readOneIn(db, tenantId, id, today, opts));
+    return this.shapeOne(read, today, opts);
+  }
+
+  /** findOne 의 읽기만(T-180) — 스냅숏 안에서 부른다 */
+  private async readOneIn(db: SnapshotDb, tenantId: string, id: string, today: Date, opts: { includePending?: boolean; detail?: boolean }) {
+    const policy = await db.policy.findFirst({
       where: { id, tenantId },
       include: {
         template: true,
@@ -408,7 +417,34 @@ export class PoliciesService {
     if (!policy) throw new NotFoundException('Policy not found');
     const ids = policy.chapters.flatMap((c) => c.articles.map((a) => a.id));
     // 조문마다 오늘 시행 중인 버전 0~1개(연혁 탭의 날짜 3종 — 법령 시행일, T-111)
-    const currentOf = await this.currentVersionsOf(ids, today, true);
+    const currentOf = await this.currentVersionsOf(db, ids, today, true);
+    // 시행 예정(상세 화면만)
+    const scheduledRows =
+      opts.detail && ids.length
+        ? await db.articleVersion.findMany({
+            where: { articleId: { in: ids }, ...scheduledVersionWhere(today) },
+            orderBy: [{ articleId: 'asc' }, { effectiveDate: 'asc' }, { versionNum: 'desc' }],
+            include: { changeEvent: VERSION_LAW_CHANGE },
+          })
+        : [];
+    // 초안·검토 중(편집 권한자만)
+    const pending =
+      opts.includePending && ids.length
+        ? await db.articleVersion.findMany({
+            where: { articleId: { in: ids }, status: { in: ['draft', 'review'] } },
+            orderBy: [{ articleId: 'asc' }, { versionNum: 'desc' }],
+            select: { id: true, articleId: true, versionNum: true, status: true, content: true, updatedAt: true },
+          })
+        : [];
+    return { policy, currentOf, scheduledRows, pending };
+  }
+
+  /** findOne 의 조립(T-180) — 읽은 것만으로, 스냅숏 밖에서. DB 를 다시 읽지 않는다 */
+  private shapeOne(
+    { policy, currentOf, scheduledRows, pending }: Awaited<ReturnType<PoliciesService['readOneIn']>>,
+    today: Date,
+    opts: { includePending?: boolean; detail?: boolean },
+  ) {
     const withCurrent = policy.chapters.map((c) => ({
       ...c,
       articles: c.articles.map((a) => ({ ...a, versions: currentOf.has(a.id) ? [currentOf.get(a.id)!] : [] })),
@@ -416,19 +452,12 @@ export class PoliciesService {
 
     // 시행 예정 — 날짜마다 그날 이기는 버전(번호가 큰 쪽) 하나, 이른 날부터. 상세 화면만
     const scheduledOf = new Map<string, ReturnType<typeof withLawChange<Prisma.ArticleVersionGetPayload<{ include: { changeEvent: typeof VERSION_LAW_CHANGE } }>>>[]>();
-    if (opts.detail && ids.length) {
-      const rows = await this.prisma.articleVersion.findMany({
-        where: { articleId: { in: ids }, ...scheduledVersionWhere(today) },
-        orderBy: [{ articleId: 'asc' }, { effectiveDate: 'asc' }, { versionNum: 'desc' }],
-        include: { changeEvent: VERSION_LAW_CHANGE },
-      });
-      for (const v of rows) {
-        const list = scheduledOf.get(v.articleId) ?? [];
-        const last = list.at(-1);
-        if (last && last.effectiveDate?.getTime() === v.effectiveDate?.getTime()) continue;
-        list.push(withLawChange(v));
-        scheduledOf.set(v.articleId, list);
-      }
+    for (const v of scheduledRows) {
+      const list = scheduledOf.get(v.articleId) ?? [];
+      const last = list.at(-1);
+      if (last && last.effectiveDate?.getTime() === v.effectiveDate?.getTime()) continue;
+      list.push(withLawChange(v));
+      scheduledOf.set(v.articleId, list);
     }
 
     // 오늘 고른 버전 + 상태. 폐지된 조문은 자리를 얼린 값에서 찾아야 해서 조립까지 버전을 들고 간다
@@ -511,13 +540,6 @@ export class PoliciesService {
     const shaped = { ...policy, chapters, ...(current ? { current } : {}) };
     if (!opts.includePending) return shaped;
 
-    const pending = ids.length
-      ? await this.prisma.articleVersion.findMany({
-          where: { articleId: { in: ids }, status: { in: ['draft', 'review'] } },
-          orderBy: [{ articleId: 'asc' }, { versionNum: 'desc' }],
-          select: { id: true, articleId: true, versionNum: true, status: true, content: true, updatedAt: true },
-        })
-      : [];
     const latest = new Map<string, (typeof pending)[number]>();
     for (const v of pending) if (!latest.has(v.articleId)) latest.set(v.articleId, v);
     return {
@@ -538,12 +560,19 @@ export class PoliciesService {
    * `findOne`과 같은 형태로 돌려주므로 전문 보기·인쇄·PDF가 그대로 재사용된다.
    */
   async findOneAsOf(tenantId: string, id: string, asOf: string) {
+    // 날짜부터 — 잘못된 요청에는 연결을 잡지 않는다
     const asOfDate = parseDateOnly(asOf);
     if (!asOfDate) {
       throw new BadRequestException('기준일(date)은 YYYY-MM-DD 형식이어야 합니다.');
     }
+    // 한 스냅숏으로 읽고(T-180, PAT-22) — 계층(장·절·조문 행)과 판·폐지·개정이유가 같은 발행 이력 상태. 조립은 읽은 뒤 tx 밖에서
+    const read = await readSnapshot(this.prisma, (db) => this.readAsOfIn(db, tenantId, id, asOfDate));
+    return this.shapeAsOf(read, asOf, asOfDate);
+  }
 
-    const policy = await this.prisma.policy.findFirst({
+  /** findOneAsOf 의 읽기만(T-180) — 스냅숏 안에서 부른다 */
+  private async readAsOfIn(db: SnapshotDb, tenantId: string, id: string, asOfDate: Date) {
+    const policy = await db.policy.findFirst({
       where: { id, tenantId },
       include: {
         template: true,
@@ -574,7 +603,12 @@ export class PoliciesService {
       },
     });
     if (!policy) throw new NotFoundException('Policy not found');
+    // 시행일이 하나도 기록되지 않았다면 시점 조회가 무의미하다는 신호
+    return { policy, hasEffectiveDates: await this.hasAnyEffectiveDate(db, id) };
+  }
 
+  /** findOneAsOf 의 조립(T-180) — 읽은 것만으로, 스냅숏 밖에서. DB 를 다시 읽지 않는다 */
+  private shapeAsOf({ policy, hasEffectiveDates }: Awaited<ReturnType<PoliciesService['readAsOfIn']>>, asOf: string, asOfDate: Date) {
     let omittedArticles = 0;
     const repealedArticles: Array<{
       id: string;
@@ -618,8 +652,7 @@ export class PoliciesService {
         omittedArticles,
         /** 그날 폐지돼 있어 뺀 조문(T-126) — "그 시점에 없던 조문"과 따로 알린다 */
         repealedArticles,
-        // 시행일이 하나도 기록되지 않았다면 시점 조회가 무의미하다는 신호
-        hasEffectiveDates: await this.hasAnyEffectiveDate(id),
+        hasEffectiveDates,
       },
     };
   }
@@ -638,16 +671,16 @@ export class PoliciesService {
       throw new BadRequestException('from은 to보다 앞선 날짜여야 합니다.');
     }
 
-    const policy = await this.prisma.policy.findFirst({
-      where: { id, tenantId },
-      select: { id: true, code: true, title: true },
+    // 두 기준일을 한 스냅숏에서(T-180) — 같은 발행 이력 상태의 두 시점(한 연결에서 차례로). 맞대기는 읽은 뒤 tx 밖에서
+    const { policy, beforeRows, afterRows } = await readSnapshot(this.prisma, async (db) => {
+      const found = await db.policy.findFirst({
+        where: { id, tenantId },
+        select: { id: true, code: true, title: true },
+      });
+      if (!found) throw new NotFoundException('Policy not found');
+      const [before, after] = await Promise.all([this.articlesAsOf(db, id, fromDate), this.articlesAsOf(db, id, toDate)]);
+      return { policy: found, beforeRows: before, afterRows: after };
     });
-    if (!policy) throw new NotFoundException('Policy not found');
-
-    const [beforeRows, afterRows] = await Promise.all([
-      this.articlesAsOf(id, fromDate),
-      this.articlesAsOf(id, toDate),
-    ]);
 
     const { rows, summary } = buildComparisonRows(beforeRows, afterRows);
     return { policy, from, to, summary, rows };
@@ -667,23 +700,23 @@ export class PoliciesService {
     if (id === targetId) {
       throw new BadRequestException('같은 규정끼리는 비교할 수 없습니다.');
     }
-    const [left, right] = await Promise.all([
-      this.prisma.policy.findFirst({
-        where: { id, tenantId },
-        select: { id: true, code: true, title: true },
-      }),
-      this.prisma.policy.findFirst({
-        where: { id: targetId, tenantId },
-        select: { id: true, code: true, title: true },
-      }),
-    ]);
-    if (!left || !right) throw new NotFoundException('Policy not found');
-
     const today = todayDateOnly();
-    const [leftRows, rightRows] = await Promise.all([
-      this.articlesCurrent(left.id, today),
-      this.articlesCurrent(right.id, today),
-    ]);
+    // 두 규정을 한 스냅숏에서(T-180) — 규정끼리도 같은 발행 이력 상태. 맞대기는 읽은 뒤 tx 밖에서
+    const { left, right, leftRows, rightRows } = await readSnapshot(this.prisma, async (db) => {
+      const [l, r] = await Promise.all([
+        db.policy.findFirst({
+          where: { id, tenantId },
+          select: { id: true, code: true, title: true },
+        }),
+        db.policy.findFirst({
+          where: { id: targetId, tenantId },
+          select: { id: true, code: true, title: true },
+        }),
+      ]);
+      if (!l || !r) throw new NotFoundException('Policy not found');
+      const [lr, rr] = await Promise.all([this.articlesCurrent(db, l.id, today), this.articlesCurrent(db, r.id, today)]);
+      return { left: l, right: r, leftRows: lr, rightRows: rr };
+    });
 
     const { rows, summary } = buildCrossPolicyRows(leftRows, rightRows);
     return { left, right, summary, rows, date: toDateOnlyString(today) };
@@ -697,37 +730,40 @@ export class PoliciesService {
    * 보장이 전혀 없어서 표가 그럴듯하게 틀린다.
    */
   async threeWay(tenantId: string, id: string) {
-    const base = await this.prisma.policy.findFirst({
-      where: { id, tenantId },
-      select: { id: true, code: true, title: true },
-    });
-    if (!base) throw new NotFoundException('Policy not found');
-
-    // 하위 2단계까지만 본다. 3단비교라는 이름 그대로다.
-    const children = await this.prisma.policy.findMany({
-      where: { tenantId, parentId: id },
-      select: { id: true, code: true, title: true },
-      orderBy: { code: 'asc' },
-    });
-    const grandchildren = children.length
-      ? await this.prisma.policy.findMany({
-          where: { tenantId, parentId: { in: children.map((c) => c.id) } },
-          select: { id: true, code: true, title: true },
-          orderBy: { code: 'asc' },
-        })
-      : [];
-
-    const levels: ThreeWayPolicy[] = [
-      { ...base, level: 0 },
-      ...children.map((c) => ({ ...c, level: 1 })),
-      ...grandchildren.map((g) => ({ ...g, level: 2 })),
-    ];
-
     const today = todayDateOnly();
-    const articlesByPolicy = new Map<string, ThreeWayArticle[]>();
-    for (const policy of levels) {
-      articlesByPolicy.set(policy.id, await this.publishedArticles(policy.id, today));
-    }
+    // 기준·하위·손자 규정을 한 스냅숏에서(T-180) — 규정끼리도 같은 발행 이력 상태. 짝짓기는 읽은 뒤 tx 밖에서
+    const { base, levels, articlesByPolicy } = await readSnapshot(this.prisma, async (db) => {
+      const found = await db.policy.findFirst({
+        where: { id, tenantId },
+        select: { id: true, code: true, title: true },
+      });
+      if (!found) throw new NotFoundException('Policy not found');
+
+      // 하위 2단계까지만 본다. 3단비교라는 이름 그대로다.
+      const children = await db.policy.findMany({
+        where: { tenantId, parentId: id },
+        select: { id: true, code: true, title: true },
+        orderBy: { code: 'asc' },
+      });
+      const grandchildren = children.length
+        ? await db.policy.findMany({
+            where: { tenantId, parentId: { in: children.map((c) => c.id) } },
+            select: { id: true, code: true, title: true },
+            orderBy: { code: 'asc' },
+          })
+        : [];
+
+      const all: ThreeWayPolicy[] = [
+        { ...found, level: 0 },
+        ...children.map((c) => ({ ...c, level: 1 })),
+        ...grandchildren.map((g) => ({ ...g, level: 2 })),
+      ];
+      const byPolicy = new Map<string, ThreeWayArticle[]>();
+      for (const policy of all) {
+        byPolicy.set(policy.id, await this.publishedArticles(db, policy.id, today));
+      }
+      return { base: found, levels: all, articlesByPolicy: byPolicy };
+    });
 
     const { rows, unmatched, matchedCount } = buildThreeWayRows(
       articlesByPolicy.get(base.id) || [],
@@ -755,8 +791,8 @@ export class PoliciesService {
    * 3단비교용 조문 목록 — 규정 상세 화면과 같은 "현재" 조립(T-127). 본문은 오늘 시행 중인 것만이고,
    * 초안만·폐지·시행 예정 조문은 본문 없이 자리만(예전과 같다). 시행일 전인 개정 문구로 인용을 짝짓지 않는다.
    */
-  private async publishedArticles(policyId: string, today: Date): Promise<ThreeWayArticle[]> {
-    return (await this.currentArticles(policyId, today)).map((a) => ({
+  private async publishedArticles(db: SnapshotDb, policyId: string, today: Date): Promise<ThreeWayArticle[]> {
+    return (await this.currentArticles(db, policyId, today)).map((a) => ({
       id: a.id,
       number: a.number,
       branchNumber: a.branchNumber,
@@ -771,8 +807,8 @@ export class PoliciesService {
    * 규정의 "현재" 조문 — 규정 상세 화면과 같은 규칙·같은 계층(T-127): 오늘(한국 날짜) 시행 중인 버전,
    * 오늘의 자리(얼린 계층, 조 머리 따라감). 시행일 전인 개정은 넣지 않는다.
    */
-  private async currentArticles(policyId: string, today: Date) {
-    const chapters = await this.prisma.chapter.findMany({
+  private async currentArticles(db: SnapshotDb, policyId: string, today: Date) {
+    const chapters = await db.chapter.findMany({
       where: { policyId },
       include: {
         sections: { orderBy: { number: 'asc' } },
@@ -781,11 +817,11 @@ export class PoliciesService {
       orderBy: { number: 'asc' },
     });
     const ids = chapters.flatMap((c) => c.articles.map((a) => a.id));
-    const currentOf = await this.currentVersionsOf(ids, today, false);
+    const currentOf = await this.currentVersionsOf(db, ids, today, false);
     const scheduled = ids.length
       ? new Set(
           (
-            await this.prisma.articleVersion.findMany({
+            await db.articleVersion.findMany({
               where: { articleId: { in: ids }, ...scheduledVersionWhere(today) },
               select: { articleId: true },
               distinct: ['articleId'],
@@ -814,8 +850,8 @@ export class PoliciesService {
    * 규정 간 비교의 "지금 본문" (T-91). 규정 상세 화면과 같은 기준을 쓴다 — 화면에는 있는 조문이 비교표에서 사라지면
    * "왜 다르냐"는 질문이 생긴다. T-127 부터 그 기준이 "오늘 시행 중인 본문"이라 시행일 전인 개정은 비교하지 않는다.
    */
-  private async articlesCurrent(policyId: string, today: Date): Promise<CompareArticleInput[]> {
-    return (await this.currentArticles(policyId, today))
+  private async articlesCurrent(db: SnapshotDb, policyId: string, today: Date): Promise<CompareArticleInput[]> {
+    return (await this.currentArticles(db, policyId, today))
       .filter((a) => a.currentState === 'in_force')
       .map((a) => ({
         id: a.id,
@@ -829,8 +865,8 @@ export class PoliciesService {
       }));
   }
 
-  private async articlesAsOf(policyId: string, asOfDate: Date): Promise<CompareArticleInput[]> {
-    const articles = await this.prisma.article.findMany({
+  private async articlesAsOf(db: SnapshotDb, policyId: string, asOfDate: Date): Promise<CompareArticleInput[]> {
+    const articles = await db.article.findMany({
       where: { chapter: { policyId } },
       include: {
         versions: {
@@ -861,8 +897,8 @@ export class PoliciesService {
       });
   }
 
-  private async hasAnyEffectiveDate(policyId: string): Promise<boolean> {
-    const count = await this.prisma.articleVersion.count({
+  private async hasAnyEffectiveDate(db: SnapshotDb, policyId: string): Promise<boolean> {
+    const count = await db.articleVersion.count({
       where: {
         effectiveDate: { not: null },
         article: { chapter: { policyId } },
@@ -943,7 +979,7 @@ export class PoliciesService {
   }
 
   async update(tenantId: string, id: string, dto: UpdatePolicyDto, userId: string) {
-    await this.findOne(tenantId, id);
+    await this.assertPolicyInTenant(tenantId, id);
     if (dto.templateId !== undefined) {
       const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } });
       if (!tenant) throw new NotFoundException('Tenant not found');
@@ -1037,7 +1073,7 @@ export class PoliciesService {
   }
 
   async remove(tenantId: string, id: string, userId: string) {
-    await this.findOne(tenantId, id);
+    await this.assertPolicyInTenant(tenantId, id);
     // 규정 → 지울 조문(id 순)을 잡은 뒤 지운다(T-131) — 지우기가 스캔 순서로 잠그면 여러 조문을 id 순으로 가리키는 insert 와
     // 서로 기다리다 멈출 수 있고, 진행 중인 묶음 승인 뒤에 줄 선다
     await this.prisma.$transaction(
@@ -1058,7 +1094,7 @@ export class PoliciesService {
   }
 
   async createChapter(tenantId: string, policyId: string, dto: CreateChapterDto, userId: string) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     const header = this.chapterHeader(() => newChapterHeader(dto));
     const ch = await this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
@@ -1076,7 +1112,7 @@ export class PoliciesService {
   }
 
   async updateChapter(tenantId: string, policyId: string, chapterId: string, dto: UpdateChapterDto) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     return this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
       // 잠근 뒤 읽는다(T-131) — 그 사이 재파싱 승인이 장 제목을 바꿨으면 그 값에 고친다(옛 제목을 되쓰지 않는다)
@@ -1105,7 +1141,7 @@ export class PoliciesService {
   }
 
   async removeChapter(tenantId: string, policyId: string, chapterId: string) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     await this.prisma.$transaction(async (tx) => {
       await lockPolicy(tx, policyId);
       // 잠근 뒤 다시 확인하고, 지울 조문을 id 순으로 잡은 뒤 지운다(T-131)
@@ -1137,7 +1173,7 @@ export class PoliciesService {
 
   /** 절(節)은 선택 계층이다. 절을 지워도 소속 조문은 남고 sectionId만 해제된다(ADR-0011) */
   private async findChapterOrThrow(tenantId: string, policyId: string, chapterId: string) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     const chapter = await this.prisma.chapter.findFirst({ where: { id: chapterId, policyId } });
     if (!chapter) throw new NotFoundException('Chapter not found');
     return chapter;
@@ -1330,7 +1366,7 @@ export class PoliciesService {
     order: ReorderTarget[],
     userId: string,
   ) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     // 규정을 잠근 뒤 읽고 계획을 세운다(T-131) — 그 사이 재파싱 승인이 조문을 옮기거나 새 조문을 넣었으면, 그 전 목록으로 세운
     // 계획이 승인을 되돌리지 않게(새 조가 빠진 차례면 계획 단계에서 400)
     const changed = await this.prisma.$transaction(
@@ -1388,7 +1424,7 @@ export class PoliciesService {
 
   /** 재정렬 화면이 시작점으로 쓸 현재 순서 */
   async listJoOrder(tenantId: string, policyId: string) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     const chapters = await this.prisma.chapter.findMany({
       where: { policyId },
       select: { id: true, number: true, title: true, articles: { select: { number: true, branchNumber: true } } },
@@ -1398,7 +1434,7 @@ export class PoliciesService {
   }
 
   async createAppendix(tenantId: string, policyId: string, dto: CreatePolicyAppendixDto) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     return this.prisma.policyAppendix.create({
       data: {
         policyId,
@@ -1416,7 +1452,7 @@ export class PoliciesService {
     appendixId: string,
     dto: UpdatePolicyAppendixDto,
   ) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     const row = await this.prisma.policyAppendix.findFirst({
       where: { id: appendixId, policyId },
     });
@@ -1433,7 +1469,7 @@ export class PoliciesService {
   }
 
   async removeAppendix(tenantId: string, policyId: string, appendixId: string) {
-    await this.findOne(tenantId, policyId);
+    await this.assertPolicyInTenant(tenantId, policyId);
     const row = await this.prisma.policyAppendix.findFirst({
       where: { id: appendixId, policyId },
     });
@@ -1534,11 +1570,14 @@ export class PoliciesService {
     });
   }
 
-  /** 테넌트 경계 확인만 하는 가벼운 검사 (본문 전체를 끌어오는 findOne 대신) */
-  private async assertPolicyInTenant(tenantId: string, policyId: string) {
+  /**
+   * 테넌트 경계 확인만 하는 가벼운 검사 (본문 전체를 끌어오는 findOne 대신). 소속 확인·파일·내보내기 같은 전문이 아닌 경로가 쓴다 —
+   * findOne 은 요청마다 스냅숏 트랜잭션을 여니(T-180) 소속 확인에 쓰지 않는다
+   */
+  async assertPolicyInTenant(tenantId: string, policyId: string) {
     const policy = await this.prisma.policy.findFirst({
       where: { id: policyId, tenantId },
-      select: { id: true },
+      select: { id: true, code: true, title: true },
     });
     if (!policy) throw new NotFoundException('Policy not found');
     return policy;

@@ -62,6 +62,9 @@ import {
 } from '../lib/legalArticleLabel';
 import CrossPolicyComparePanel from '../components/CrossPolicyComparePanel';
 import { buildPolicyPlainText, policyPlainTextFilename } from '../lib/policyPlainText';
+import { sortAppendices } from '../lib/appendixOrder';
+import { asOfViewState } from '../lib/asOfView';
+import { AsOfStatusBlock } from '../components/AsOfStatusBlock';
 import {
   bodyScaleStyle,
   BODY_SCALE_CLASS,
@@ -753,7 +756,7 @@ export default function PolicyDetailPage() {
   });
 
   // 시점(as-of) 조회: 기준일이 있으면 그날 시행 중이던 본문으로 전문을 갈아끼운다.
-  const { data: asOfPolicy, isFetching: isAsOfLoading } = useQuery({
+  const { data: asOfPolicy, isFetching: isAsOfLoading, isError: isAsOfError, refetch: refetchAsOf } = useQuery({
     queryKey: ['policy', id, 'as-of', asOfDate],
     queryFn: () => policiesApi.getAsOf(id!, asOfDate),
     enabled: !!id && !!asOfDate,
@@ -763,9 +766,26 @@ export default function PolicyDetailPage() {
     queryFn: () => policiesApi.effectiveDates(id!),
     enabled: !!id,
   });
-  /** 전문 보기가 실제로 그리는 규정 — 시점 조회 중이면 그 시점 스냅샷 */
-  const viewPolicy = asOfDate && asOfPolicy ? asOfPolicy : policy;
-  const asOfInfo = asOfDate && asOfPolicy ? asOfPolicy.asOf : null;
+  // 시점 조회 중이면 고른 날짜의 응답만 그린다(T-180) — 받는 중이거나 실패면 현행 본문으로 대신하지 않는다. 전에는 현행 본문에
+  // "D 시점 본문" 라벨·파일명·인쇄 머리말이 붙어 나갔다. 판정·머리말(basisLine)은 lib/asOfView(표 시험)
+  const {
+    blocked: asOfBlocked,
+    failed: asOfFailed,
+    viewPolicy,
+    info: asOfInfo,
+    basisLine,
+  } = asOfViewState({ asOfDate, policy, asOfPolicy, isError: isAsOfError, isFetching: isAsOfLoading, today: serviceToday() });
+  /** 시점 조회는 전문 보기에서만(T-180) — 날짜를 고르면 전문 보기로 */
+  const pickAsOfDate = (d: string) => {
+    setAsOfDate(d);
+    if (d) setArticleViewMode('full');
+  };
+  // 분절 보기는 현행 본문이라 — 분절 보기로 가면(목록·조문 선택·딥링크 어느 길이든) 시점 조회를 풀고 알린다
+  useEffect(() => {
+    if (articleViewMode !== 'segment' || !asOfDate) return;
+    setAsOfDate('');
+    toast(t('asOfView.segmentIsCurrent'), 'info');
+  }, [articleViewMode, asOfDate, t]);
   // 조문 딥링크 해석 (T-73). 번호 기준(`#제3조제1항`·`?jo=3&hang=1`)을 먼저 보고,
   // 옛 `#article-<uuid>` 도 계속 받는다 — 이미 나간 링크를 깨뜨리지 않는다.
   useEffect(() => {
@@ -1733,19 +1753,7 @@ export default function PolicyDetailPage() {
   }, [policy]);
 
   const appendicesGrouped = useMemo(() => {
-    const raw = (policy?.appendices || []) as any[];
-    const kindOrder: AppendixKind[] = ['supplementary', 'annex', 'form'];
-    const rank = (k: string) => {
-      const i = kindOrder.indexOf(k as AppendixKind);
-      return i === -1 ? 99 : i;
-    };
-    const list = [...raw].sort((a: any, b: any) => {
-      const rk = rank(a.kind) - rank(b.kind);
-      if (rk !== 0) return rk;
-      const so = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
-      if (so !== 0) return so;
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    });
+    const list = sortAppendices((policy?.appendices || []) as any[]);
     return {
       all: list,
       supplementary: list.filter((a: any) => a.kind === 'supplementary'),
@@ -1798,27 +1806,29 @@ export default function PolicyDetailPage() {
   );
 
   const downloadFullTextTxt = useCallback(() => {
-    if (!policy) return;
+    if (!policy || asOfBlocked) return;
     const text = buildPolicyPlainText({
       policy,
+      basis: basisLine,
       chapters: fullViewGroups,
-      appendices: appendicesGrouped.all,
+      // 시점 모드는 본문과 같은 응답(같은 스냅숏)의 부칙·별표
+      appendices: asOfInfo ? sortAppendices(viewPolicy?.appendices) : appendicesGrouped.all,
       appendixKindLabel,
     });
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = policyPlainTextFilename(policy.code);
+    a.download = policyPlainTextFilename(policy.code, asOfInfo?.date);
     a.rel = 'noopener';
     a.click();
     URL.revokeObjectURL(url);
     setLawToolMsg('전문 텍스트(.txt)를 내려받았습니다.');
     setTimeout(() => setLawToolMsg(''), 2500);
-  }, [policy, fullViewGroups, appendicesGrouped.all]);
+  }, [policy, fullViewGroups, appendicesGrouped.all, asOfBlocked, asOfInfo, basisLine, viewPolicy?.appendices]);
 
   const downloadPdf = useCallback(async () => {
-    if (!policy || !id) return;
+    if (!policy || !id || asOfBlocked) return;
     setIsExportingPdf(true);
     setLawToolMsg('PDF를 만드는 중입니다…');
     try {
@@ -1826,10 +1836,11 @@ export default function PolicyDetailPage() {
       const html = buildEnterprisePolicyBodyHtml(fullViewGroups, '');
       const metaParts = [
         policy.code ? `코드: ${policy.code}` : '',
-        policy.revisionDate ? `개정일: ${formatKoDate(policy.revisionDate)}` : '',
-        policy.effectiveDate ? `시행일: ${formatKoDate(policy.effectiveDate)}` : '',
+        // 시점 본문에는 현행 규정의 개정일·시행일을 싣지 않는다(T-180)
+        !asOfInfo && policy.revisionDate ? `개정일: ${formatKoDate(policy.revisionDate)}` : '',
+        !asOfInfo && policy.effectiveDate ? `시행일: ${formatKoDate(policy.effectiveDate)}` : '',
         // 어느 날의 본문인지 밝힌다 — 현행은 오늘 시행 중인 본문이라 시행 예정 개정이 생기면 그날 바뀐다(T-127)
-        asOfDate ? `기준일: ${asOfDate} 시점 본문` : `기준일: ${policy.current?.date ?? serviceToday()} 현행 본문`,
+        basisLine,
       ].filter(Boolean);
       const blob = await policiesApi.exportPdf(id, {
         html,
@@ -1841,7 +1852,7 @@ export default function PolicyDetailPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfDate ? `-${asOfDate}` : ''}.pdf`;
+      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfInfo ? `-${asOfInfo.date}` : ''}.pdf`;
       a.rel = 'noopener';
       a.click();
       URL.revokeObjectURL(url);
@@ -1856,7 +1867,7 @@ export default function PolicyDetailPage() {
       setIsExportingPdf(false);
       setTimeout(() => setLawToolMsg(''), 3000);
     }
-  }, [policy, id, fullViewGroups, asOfDate, draftOnlyCount, scheduledArticleCount]);
+  }, [policy, id, fullViewGroups, asOfDate, asOfInfo, asOfBlocked, basisLine, draftOnlyCount, scheduledArticleCount]);
 
   /**
    * 한/글 내보내기 (T-85).
@@ -1866,17 +1877,17 @@ export default function PolicyDetailPage() {
    * 버전은 열지 못하므로 안내 문구에 적어 둔다.
    */
   const downloadHwpx = useCallback(async () => {
-    if (!policy || !id) return;
+    if (!policy || !id || asOfBlocked) return;
     setIsExportingHwpx(true);
     setLawToolMsg('한/글 문서를 만드는 중입니다…');
     try {
-      // PDF 와 같은 빌더로 만든 HTML 을 보낸다(화면 = 인쇄물 = PDF = HWPX).
-      const html = buildEnterprisePolicyBodyHtml(fullViewGroups, '');
+      // PDF 와 같은 빌더로 만든 HTML 을 보낸다(화면 = 인쇄물 = PDF = HWPX). 맨 위에 어느 날의 본문인지(T-180)
+      const html = `<p>${basisLine}</p>${buildEnterprisePolicyBodyHtml(fullViewGroups, '')}`;
       const blob = await policiesApi.exportHwpx(id, { html, title: policy.title });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfDate ? `-${asOfDate}` : ''}.hwpx`;
+      a.download = `${(policy.code || 'policy').replace(/[^\w.-]+/g, '_')}${asOfInfo ? `-${asOfInfo.date}` : ''}.hwpx`;
       a.rel = 'noopener';
       a.click();
       URL.revokeObjectURL(url);
@@ -1893,7 +1904,7 @@ export default function PolicyDetailPage() {
       setIsExportingHwpx(false);
       setTimeout(() => setLawToolMsg(''), 4000);
     }
-  }, [policy, id, fullViewGroups, asOfDate, draftOnlyCount, scheduledArticleCount]);
+  }, [policy, id, fullViewGroups, asOfDate, asOfInfo, asOfBlocked, basisLine, draftOnlyCount, scheduledArticleCount]);
 
   const copyPageUrl = useCallback(async () => {
     try {
@@ -1930,8 +1941,10 @@ export default function PolicyDetailPage() {
         policyCode: policy?.code,
         revisionDate: policy?.revisionDate,
         effectiveDate: policy?.effectiveDate,
+        // 시점 본문이면 현행 규정의 개정일·시행일을 싣지 않는다(T-180 — 그 시점 값은 복원하지 않는다)
+        asOf: asOfInfo?.date ?? null,
       }),
-    [user?.tenantName, policy?.title, policy?.code, policy?.revisionDate, policy?.effectiveDate],
+    [user?.tenantName, policy?.title, policy?.code, policy?.revisionDate, policy?.effectiveDate, asOfInfo?.date],
   );
 
   const relatedQuery = (
@@ -2985,7 +2998,7 @@ export default function PolicyDetailPage() {
                     <button
                       type="button"
                       disabled={!g.effectiveDate}
-                      onClick={() => g.effectiveDate && setAsOfDate(g.effectiveDate)}
+                      onClick={() => g.effectiveDate && pickAsOfDate(g.effectiveDate)}
                       className="rounded border border-amber-300 bg-white px-2 py-0.5 hover:bg-amber-100"
                       title="그날 시점의 본문으로 보기"
                     >
@@ -3084,11 +3097,13 @@ export default function PolicyDetailPage() {
             )}
             <button
               type="button"
+              disabled={asOfBlocked}
+              title={asOfBlocked ? t('asOfView.exportBlocked') : undefined}
               onClick={() => {
                 setArticleViewMode('full');
                 setShowFullTextModal(true);
               }}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-navy-500 bg-navy-800/90 hover:bg-navy-700 text-white px-4 min-h-[48px] text-sm sm:text-base font-medium whitespace-nowrap"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-navy-500 bg-navy-800/90 hover:bg-navy-700 text-white px-4 min-h-[48px] text-sm sm:text-base font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
             >
               전체화면 전문
             </button>
@@ -3131,11 +3146,13 @@ export default function PolicyDetailPage() {
           </select>
           <button
             type="button"
+            disabled={asOfBlocked}
+            title={asOfBlocked ? t('asOfView.exportBlocked') : undefined}
             onClick={() => {
               setArticleViewMode('full');
               setShowFullTextModal(true);
             }}
-            className="inline-flex items-center gap-1.5 text-xs font-medium border border-navy-300 bg-navy-50 text-navy-900 px-2.5 py-1.5 rounded hover:bg-navy-100"
+            className="inline-flex items-center gap-1.5 text-xs font-medium border border-navy-300 bg-navy-50 text-navy-900 px-2.5 py-1.5 rounded hover:bg-navy-100 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileText size={14} aria-hidden />
             전체화면·인쇄
@@ -3143,7 +3160,8 @@ export default function PolicyDetailPage() {
           <button
             type="button"
             onClick={() => void downloadPdf()}
-            disabled={isExportingPdf}
+            disabled={isExportingPdf || asOfBlocked}
+            title={asOfBlocked ? t('asOfView.exportBlocked') : undefined}
             className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Download size={14} aria-hidden />
@@ -3152,8 +3170,8 @@ export default function PolicyDetailPage() {
           <button
             type="button"
             onClick={() => void downloadHwpx()}
-            disabled={isExportingHwpx}
-            title="한/글 2014 이상에서 열리는 .hwpx 로 저장합니다"
+            disabled={isExportingHwpx || asOfBlocked}
+            title={asOfBlocked ? t('asOfView.exportBlocked') : '한/글 2014 이상에서 열리는 .hwpx 로 저장합니다'}
             className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Download size={14} aria-hidden />
@@ -3162,7 +3180,9 @@ export default function PolicyDetailPage() {
           <button
             type="button"
             onClick={downloadFullTextTxt}
-            className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50"
+            disabled={asOfBlocked}
+            title={asOfBlocked ? t('asOfView.exportBlocked') : undefined}
+            className="inline-flex items-center gap-1.5 text-xs font-medium border border-gray-300 bg-white px-2.5 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Download size={14} aria-hidden />
             전문 .txt
@@ -3205,13 +3225,13 @@ export default function PolicyDetailPage() {
             type="date"
             className="input text-xs py-1.5 w-[10.5rem]"
             value={asOfDate}
-            onChange={(e) => setAsOfDate(e.target.value)}
+            onChange={(e) => pickAsOfDate(e.target.value)}
           />
           {effectiveDates.length > 0 && (
             <select
               className="input text-xs py-1.5 max-w-[12rem]"
               value=""
-              onChange={(e) => e.target.value && setAsOfDate(e.target.value)}
+              onChange={(e) => e.target.value && pickAsOfDate(e.target.value)}
               aria-label="본문이 바뀐 시행일로 이동"
             >
               <option value="">개정 시점 선택…</option>
@@ -3231,14 +3251,29 @@ export default function PolicyDetailPage() {
               >
                 현행으로
               </button>
-              <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
-                {isAsOfLoading
-                  ? '불러오는 중…'
-                  : `${asOfDate} 시점 본문입니다${
-                      asOfInfo?.omittedArticles ? ` (그 시점에 없던 조문 ${asOfInfo.omittedArticles}개 제외)` : ''
-                    }`}
+              <span
+                className={clsx(
+                  'text-[11px] rounded px-2 py-0.5 border',
+                  asOfFailed ? 'text-red-800 bg-red-50 border-red-200' : 'text-amber-800 bg-amber-50 border-amber-200',
+                )}
+                role={asOfFailed ? 'alert' : undefined}
+              >
+                {asOfInfo
+                  ? `${t('asOfView.ready', { date: asOfInfo.date })}${asOfInfo.omittedArticles ? t('asOfView.omitted', { count: asOfInfo.omittedArticles }) : ''}`
+                  : asOfFailed
+                    ? t('asOfView.loadFailed')
+                    : t('asOfView.loading', { date: asOfDate })}
               </span>
-              {!isAsOfLoading && asOfInfo?.repealedArticles?.length > 0 && (
+              {asOfFailed && (
+                <button
+                  type="button"
+                  onClick={() => void refetchAsOf()}
+                  className="text-[11px] px-2 py-1 rounded border border-red-300 bg-white text-red-800 hover:bg-red-50"
+                >
+                  {t('asOfView.retry')}
+                </button>
+              )}
+              {!isAsOfLoading && asOfInfo && asOfInfo.repealedArticles.length > 0 && (
                 <span className="text-[11px] text-red-800 bg-red-50 border border-red-200 rounded px-2 py-0.5" data-testid="as-of-repealed">
                   그날 폐지돼 있어 뺀 조문 {asOfInfo.repealedArticles.length}개:{' '}
                   {asOfInfo.repealedArticles
@@ -4189,15 +4224,21 @@ export default function PolicyDetailPage() {
                   <div className={clsx(sourcePdfUrl && 'lg:grid lg:grid-cols-2 lg:gap-3 lg:items-start')}>
                     <div
                       ref={fullViewMainRef}
+                      data-testid="policy-full-view-body"
                       className={clsx('p-4 space-y-3', BODY_SCALE_CLASS)}
                       style={bodyScaleStyle(bodyScale)}
                     >
-                      <TemplateRenderer
-                        template={activeTemplate}
-                        data={templateRenderData}
-                        fullViewGroups={fullViewGroups}
-                        highlightQuery={fullViewSearchQuery}
-                      />
+                      {/* 시점 응답이 아직 없으면 양식(현행 머리)·빈 본문 대신 받는 중·실패를(T-180) */}
+                      {asOfBlocked ? (
+                        <AsOfStatusBlock date={asOfDate} failed={asOfFailed} onRetry={() => void refetchAsOf()} />
+                      ) : (
+                        <TemplateRenderer
+                          template={activeTemplate}
+                          data={templateRenderData}
+                          fullViewGroups={fullViewGroups}
+                          highlightQuery={fullViewSearchQuery}
+                        />
+                      )}
                     </div>
                     {sourcePdfUrl && (
                       <iframe
@@ -4659,8 +4700,10 @@ export default function PolicyDetailPage() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  disabled={asOfBlocked}
+                  title={asOfBlocked ? t('asOfView.exportBlocked') : undefined}
                   onClick={() => window.print()}
-                  className="rounded border border-navy-500 bg-navy-800 hover:bg-navy-700 px-3 py-1.5 text-sm"
+                  className="rounded border border-navy-500 bg-navy-800 hover:bg-navy-700 px-3 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   인쇄
                 </button>
@@ -4680,7 +4723,7 @@ export default function PolicyDetailPage() {
                 <h2 className="text-xl font-bold text-gray-900">{policy.title}</h2>
                 <p className="text-sm text-gray-600 mt-1">
                   출력일: {new Date().toLocaleDateString('ko-KR')}
-                  {` · 기준: ${asOfDate ? `${asOfDate} 시점` : `${policy.current?.date ?? serviceToday()} 현행`} 본문`}
+                  {asOfBlocked ? '' : ` · ${basisLine}`}
                   {printSelection.size > 0 && ` · 선택 조문 ${printSelection.size}건만 출력 (전문 아님)`}
                 </p>
               </div>
@@ -4740,12 +4783,16 @@ export default function PolicyDetailPage() {
                 className={clsx('space-y-3', BODY_SCALE_CLASS)}
                 style={bodyScaleStyle(bodyScale)}
               >
-                <TemplateRenderer
-                  template={activeTemplate}
-                  data={templateRenderData}
-                  fullViewGroups={printableGroups}
-                  highlightQuery={fullViewSearchQuery}
-                />
+                {asOfBlocked ? (
+                  <AsOfStatusBlock date={asOfDate} failed={asOfFailed} onRetry={() => void refetchAsOf()} />
+                ) : (
+                  <TemplateRenderer
+                    template={activeTemplate}
+                    data={templateRenderData}
+                    fullViewGroups={printableGroups}
+                    highlightQuery={fullViewSearchQuery}
+                  />
+                )}
               </div>
             </div>
           </div>

@@ -1,9 +1,7 @@
 import { ArgumentsHost, Catch, ConflictException, HttpException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
-import { LOCK_BUSY_MESSAGE, LockBusyException } from './row-locks';
-
-export const TX_BUSY_MESSAGE = '요청이 몰려 처리를 시작하지 못했습니다 — 잠시 뒤 다시 시도하세요.';
+import { LOCK_BUSY_MESSAGE, LockBusyException, TX_BUSY_MESSAGE } from './row-locks';
 
 /**
  * 잠금 다툼을 다시 시도할 수 있는 응답으로 바꾸고 남긴다(T-131).
@@ -13,7 +11,8 @@ export const TX_BUSY_MESSAGE = '요청이 몰려 처리를 시작하지 못했�
  * 오류로 올라오므로 같은 409 로 바꾼다.
  * - 잠금을 못 잡음(55P03)·교착(40P01, Prisma P2034) → 409 `LOCK_BUSY_MESSAGE`. 교착은 잠금 순서가 어긋났다는 뜻이라 오류로 남긴다
  * - 트랜잭션을 시작하지 못함(P2028 "Unable to start a transaction" — 커넥션을 못 얻어 아무것도 하지 않았다) → 503
- * 그 밖의 Prisma 오류(트랜잭션 제한을 넘김·커넥션 대기 초과 P2024 처럼 이미 일부를 했을 수 있는 것 포함)는 지금처럼 기본 처리(500, 오류 로그)
+ * 그 밖의 Prisma 오류(트랜잭션 제한을 넘김·커넥션 대기 초과 P2024 처럼 이미 일부를 했을 수 있는 것 포함)는 지금처럼 기본 처리(500, 오류 로그).
+ * 다만 스냅숏 읽기(`read-snapshot.ts`, T-180)는 읽기만 했으니 제한 초과·P2024 를 거기서 직접 503 으로 바꾸고 경고로 남긴다
  */
 export function lockBusyException(e: unknown): HttpException | null {
   const known = e instanceof Prisma.PrismaClientKnownRequestError ? e : null;

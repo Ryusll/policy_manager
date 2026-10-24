@@ -447,6 +447,14 @@ export const messages: Record<Locale, Msg> = {
     'versionWithdraw.dialogNotify':
       '개정 알림을 받는 사람에게 철회를 알립니다. 개정 후보로 승인한 버전이면 그 후보는 작성 상태로 돌아가(승인 철회 정정 기록이 남습니다) 다시 검토·승인할 수 있습니다.',
     'versionWithdraw.candidateReopened': '이 버전을 승인했던 개정 후보는 작성 상태로 돌아갔습니다 — 다시 검토를 요청해 승인할 수 있습니다.',
+    // 시점 조회 (T-180, PAT-22)
+    'asOfView.loadFailed': '시점 본문을 불러오지 못했습니다 — 다시 시도하거나 현행으로 돌아가세요(현행 본문을 그 시점 본문으로 보여 주지 않습니다).',
+    'asOfView.exportBlocked': '시점 본문을 다 불러온 뒤에 인쇄·내보내기를 할 수 있습니다.',
+    'asOfView.loading': '{date} 시점 본문을 불러오는 중…',
+    'asOfView.ready': '{date} 시점 본문입니다',
+    'asOfView.omitted': ' (그 시점에 없던 조문 {count}개 제외)',
+    'asOfView.retry': '다시 시도',
+    'asOfView.segmentIsCurrent': '분절 보기는 현행 본문입니다 — 시점 조회를 닫았습니다. 시점 본문은 전문 보기에서 볼 수 있습니다.',
     'amendmentCorrection.notice.reject': '반려 정정됨',
     'amendmentCorrection.notice.withdraw': '승인 철회됨 (시행 예정 철회)',
     'amendmentCorrection.notice.meta': '{name} · {at}',
@@ -949,6 +957,13 @@ export const messages: Record<Locale, Msg> = {
     'versionWithdraw.dialogNotify':
       'People who receive revision notices are told about the withdrawal. If the version was approved from an amendment candidate, the candidate returns to draft (a correction record of the withdrawn approval is kept) and can be reviewed and approved again.',
     'versionWithdraw.candidateReopened': 'The amendment candidate that approved this version is back in draft — request review again to approve it.',
+    'asOfView.loadFailed': 'Could not load the text as of that date — try again or go back to current (the current text is not shown as that date).',
+    'asOfView.exportBlocked': 'Print and export become available once the text as of that date has loaded.',
+    'asOfView.loading': 'Loading the text as of {date}…',
+    'asOfView.ready': 'Showing the text as of {date}',
+    'asOfView.omitted': ' ({count} articles that did not exist then are left out)',
+    'asOfView.retry': 'Try again',
+    'asOfView.segmentIsCurrent': 'Segment view shows the current text, so the as-of view was closed. Use the full-text view to see a past date.',
     'amendmentCorrection.notice.reject': 'Rejection corrected',
     'amendmentCorrection.notice.withdraw': 'Approval withdrawn (scheduled version withdrawn)',
     'amendmentCorrection.notice.meta': '{name} · {at}',

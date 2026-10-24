@@ -175,3 +175,18 @@ describe('전문 텍스트 — 오늘 시행 중인 본문만 (T-127)', () => {
   });
 });
 
+
+describe('전문 텍스트 — 어느 날의 본문인지 (T-180)', () => {
+  it('제목 아래에 기준 줄을 넣고, 시점 본문이면 파일명에 그 날짜를 붙인다 (T-180)', () => {
+    const text = buildPolicyPlainText({ policy, basis: '기준일: 2021-06-01 시점 본문', chapters: [] });
+    expect(text.split('\n').slice(0, 2)).toEqual(['HR-001 인사규정', '기준일: 2021-06-01 시점 본문']);
+    expect(policyPlainTextFilename('HR-001', '2021-06-01')).toBe('HR-001-2021-06-01-full.txt');
+    // 현행은 지금처럼, 날짜 꼴이 아니면 붙이지 않는다
+    expect(policyPlainTextFilename('HR-001', null)).toBe('HR-001-full.txt');
+    expect(policyPlainTextFilename('HR-001', '../x')).toBe('HR-001-full.txt');
+  });
+
+  it('기준 줄이 없으면 예전 머리 그대로 (T-180)', () => {
+    expect(buildPolicyPlainText({ policy, chapters: [] }).split('\n').slice(0, 2)).toEqual(['HR-001 인사규정', '']);
+  });
+});

@@ -40,6 +40,8 @@ export const LOCK_WAIT_MS = 3_000;
 export const LONG_LOCK_WAIT_MS = 30_000;
 
 export const LOCK_BUSY_MESSAGE = '다른 작업이 같은 규정을 고치는 중입니다 — 잠시 뒤 다시 시도하세요.';
+/** 연결을 못 얻어 트랜잭션을 시작하지 못함(503) — lock-busy 필터와 스냅숏 읽기(read-snapshot)가 함께 쓴다 */
+export const TX_BUSY_MESSAGE = '요청이 몰려 처리를 시작하지 못했습니다 — 잠시 뒤 다시 시도하세요.';
 export const VARIABLE_BUSY_MESSAGE = '다른 작업이 이 변수를 쓰는 중입니다 — 잠시 뒤 다시 시도하세요.';
 export const TENANT_BUSY_MESSAGE = '다른 사람이 규정을 등록하는 중입니다 — 잠시 뒤 다시 시도하세요.';
 export const LAW_BUSY_MESSAGE = '다른 작업이 이 법령을 저장하는 중입니다 — 잠시 뒤 다시 시도하세요.';

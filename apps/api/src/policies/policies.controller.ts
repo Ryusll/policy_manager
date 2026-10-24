@@ -441,7 +441,7 @@ export class PoliciesController {
     if (!file) throw new NotFoundException('파일이 없습니다.');
     // multer 는 핸들러보다 먼저 디스크에 쓴다. 소유가 아니면 남기지 않고 지운다.
     try {
-      await this.policiesService.findOne(req.user.tenantId, id);
+      await this.policiesService.assertPolicyInTenant(req.user.tenantId, id);
     } catch (e) {
       try { unlinkSync(file.path); } catch { /* 이미 없으면 그만 */ }
       throw e;
@@ -468,7 +468,7 @@ export class PoliciesController {
   @Get(':id/files')
   @ApiOperation({ summary: '규정 파일 목록 조회' })
   async listFiles(@Request() req: any, @Param('id') id: string) {
-    await this.policiesService.findOne(req.user.tenantId, id);
+    await this.policiesService.assertPolicyInTenant(req.user.tenantId, id);
     const dir = this.safe(() => policyUploadDir(req.user.tenantId, id));
     if (!existsSync(dir)) return [];
     return readdirSync(dir).map((filename: string) => {
@@ -493,7 +493,7 @@ export class PoliciesController {
     @Res() res: Response,
   ) {
     // 테넌트 밖 규정으로 파일명을 만들지 못하도록 먼저 소유 확인
-    const policy = await this.policiesService.findOne(req.user.tenantId, id);
+    const policy = await this.policiesService.assertPolicyInTenant(req.user.tenantId, id);
     const pdf = await this.policyPdfService.render({
       html: dto.html,
       title: dto.title ?? policy.title,
@@ -544,7 +544,7 @@ export class PoliciesController {
     @Body() dto: ExportPolicyHwpxDto,
     @Res() res: Response,
   ) {
-    const policy = await this.policiesService.findOne(req.user.tenantId, id);
+    const policy = await this.policiesService.assertPolicyInTenant(req.user.tenantId, id);
     const hwpx = await this.policyHwpxService.render({
       html: dto.html,
       title: dto.title ?? policy.title,
@@ -580,7 +580,7 @@ export class PoliciesController {
     @Param('filename') filename: string,
     @Res() res: Response,
   ) {
-    await this.policiesService.findOne(req.user.tenantId, id);
+    await this.policiesService.assertPolicyInTenant(req.user.tenantId, id);
     const filePath = this.safe(() => policyUploadFilePath(req.user.tenantId, id, filename));
     if (!existsSync(filePath)) throw new NotFoundException('파일을 찾을 수 없습니다.');
     res.download(filePath, originalNameFromStored(filename));
@@ -595,7 +595,7 @@ export class PoliciesController {
     @Param('id') id: string,
     @Param('filename') filename: string,
   ) {
-    await this.policiesService.findOne(req.user.tenantId, id);
+    await this.policiesService.assertPolicyInTenant(req.user.tenantId, id);
     const filePath = this.safe(() => policyUploadFilePath(req.user.tenantId, id, filename));
     if (!existsSync(filePath)) throw new NotFoundException('파일을 찾을 수 없습니다.');
     unlinkSync(filePath);

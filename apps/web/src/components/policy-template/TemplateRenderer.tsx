@@ -362,7 +362,8 @@ export default function TemplateRenderer({
     const useA4Print = basicConfig.useA4Print !== false;
     const chapterPageBreak = basicConfig.chapterPageBreak === true;
     const showPageNumber = basicConfig.showPageNumber === true;
-    const revisionDate = String(data?.revisionDate || data?.today || '');
+    // 시점 본문(T-180)이면 빈 개정일을 출력일로 채우지 않는다 — 그날의 개정일처럼 읽힌다
+    const revisionDate = data?.asOf ? '' : String(data?.revisionDate || data?.today || '');
     const effectiveDate = String(data?.effectiveDate || '');
     return (
       <div className="space-y-3 basic-template-wrap">

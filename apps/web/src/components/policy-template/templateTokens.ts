@@ -91,6 +91,11 @@ export type TemplateTokenSource = {
   effectiveDate?: string | Date | null;
   /** 출력일. 미지정 시 오늘 */
   today?: string | null;
+  /**
+   * 시점 본문(T-180)이면 그 기준일. 이때는 현행 규정의 개정일·시행일을 싣지 않는다 — 그 시점의 값은 복원하지 않으니 비워 두고,
+   * 기본 양식도 빈 개정일을 출력일로 채우지 않는다
+   */
+  asOf?: string | null;
 };
 
 function toIso(value?: string | Date | null): string | null {
@@ -107,8 +112,9 @@ export function buildTemplateTokenData(src: TemplateTokenSource): Record<string,
       code: src.policyCode || '',
     },
     today: src.today || new Date().toLocaleDateString('ko-KR'),
-    revisionDate: formatKoDate(toIso(src.revisionDate)) || '',
-    effectiveDate: formatKoDate(toIso(src.effectiveDate)) || '',
+    revisionDate: src.asOf ? '' : formatKoDate(toIso(src.revisionDate)) || '',
+    effectiveDate: src.asOf ? '' : formatKoDate(toIso(src.effectiveDate)) || '',
+    asOf: src.asOf || '',
   };
 }
 

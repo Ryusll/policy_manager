@@ -22,6 +22,8 @@ export type PlainTextAppendix = {
 
 export type PlainTextInput = {
   policy: { code?: string | null; title?: string | null };
+  /** 어느 날의 본문인지(T-180) — 제목 아래 한 줄. 예: `기준일: 2021-06-01 시점 본문` */
+  basis?: string;
   /** `buildFullViewGroups` 결과 — 장마다 `allGroups` 를 갖는다 */
   chapters: any[];
   appendices?: PlainTextAppendix[];
@@ -30,8 +32,8 @@ export type PlainTextInput = {
 };
 
 export function buildPolicyPlainText(input: PlainTextInput): string {
-  const { policy, chapters, appendices = [], appendixKindLabel = {} } = input;
-  const lines: string[] = [`${policy.code ?? ''} ${policy.title ?? ''}`.trim(), ''];
+  const { policy, basis, chapters, appendices = [], appendixKindLabel = {} } = input;
+  const lines: string[] = [`${policy.code ?? ''} ${policy.title ?? ''}`.trim(), ...(basis ? [basis] : []), ''];
 
   for (const chapter of chapters || []) {
     lines.push('');
@@ -64,7 +66,8 @@ export function buildPolicyPlainText(input: PlainTextInput): string {
   return lines.join('\n');
 }
 
-/** 파일명은 규정 코드를 쓰되 경로·확장자로 오해될 문자를 지운다 */
-export function policyPlainTextFilename(code?: string | null): string {
-  return `${String(code || 'policy').replace(/[^\w.-]+/g, '_')}-full.txt`;
+/** 파일명은 규정 코드를 쓰되 경로·확장자로 오해될 문자를 지운다. 시점 본문이면 그 날짜를 붙인다(T-180 — PDF·한/글과 같게) */
+export function policyPlainTextFilename(code?: string | null, asOfDate?: string | null): string {
+  const date = asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? `-${asOfDate}` : '';
+  return `${String(code || 'policy').replace(/[^\w.-]+/g, '_')}${date}-full.txt`;
 }
