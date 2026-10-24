@@ -225,7 +225,7 @@
 
 > 원천 연결 떼기 감사 `version.source_detach`(대상 = 그 버전) — details `cause` 는 떼게 한 것: `amendment.approve`(같은 후보 재승인, `newVersionId` 있음)·`amendment.reject_correct`·`amendment.edit`(반려에서 다시 열기)·`migration`(T-178 마이그레이션이 그 전 철회 초안을 정리, 수행자 없음). (T-178)
 
-> **감사 로그는 추가만 한다**(T-178, 특허 도 12). 앱에는 감사 기록을 고치거나 지우는 API·코드가 없고(가드 시험), 승인·반려 뒤의 정정은 원 기록을 그대로 두고 원 기록을 가리키는(`correctsId`) 정정 기록으로 남는다 — `details` 에 `reason`(정정 사유)·`before`·`after`. 정정 기록과 원 기록의 짝: `amendment.reject_correct` → `amendment.reject`(또는 T-178 전 철회가 후보를 반려로 돌렸으면 그 `version.withdraw`), `version.withdraw` → `amendment.approve`·`version.approve`. 원 기록을 찾지 못하면(감사를 남기기 전의 승인, 한꺼번에 시행·가져오기처럼 버전 하나를 가리키는 기록이 없는 발행, 정정을 잇기 전의 철회 뒤 다시 나간 발행) 비워 둔다 — 짐작해 잇지 않는다.
+> **감사 로그는 추가만 한다**(T-178, 특허 도 12). 앱에는 감사 기록을 고치거나 지우는 API·코드가 없고(가드 시험), 승인·반려 뒤의 정정은 원 기록을 그대로 두고 원 기록을 가리키는(`correctsId`) 정정 기록으로 남는다 — `details` 에 `reason`(정정 사유)·`before`·`after`. 정정 기록과 원 기록의 짝: `amendment.reject_correct` → `amendment.reject`(또는 T-178 전 철회가 후보를 반려로 돌렸으면 그 `version.withdraw`), `version.withdraw` → `amendment.approve`·`version.approve`. 원 기록을 찾지 못하면(감사를 남기기 전의 승인, 한꺼번에 시행·가져오기처럼 버전 하나를 가리키는 기록이 없는 발행 — 그 버전의 마지막 철회 뒤에 그런 발행으로 다시 나간 경우 포함) 비워 둔다 — 짐작해 잇지 않는다.
 
 > **목록에서 `details` 를 뺀 이유**: 템플릿 수정 기록의 `details` 에는 before/after 스냅샷(레이아웃 JSON + CSS 전문)이 들어 있어, 50건이면 응답이 수 MB 가 된다. 목록에서는 펼치기 전까지 쓰지 않는다.
 

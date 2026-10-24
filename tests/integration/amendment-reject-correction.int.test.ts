@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'crypto';
 import { api, createTenant, createPolicyWithArticle, login, waitForApi } from './helpers';
 import { brief, expect409, sleepTrigger, sql, waitForBlockedBy, waitForSleep } from './race';
-import { auditRowHash, lockOf, seedReviewCandidate } from './amendment-seed';
+import { auditRowHash, lockOf, seedReviewCandidate, simulateLegacyWithdraw } from './amendment-seed';
 
 const day = (offset: number) => new Date(Date.now() + 9 * 3_600_000 + offset * 86_400_000).toISOString().slice(0, 10);
 const PW = 'EditorPass!234';
@@ -63,9 +63,12 @@ describe('T-178 개정 후보 반려 정정', () => {
     const beforeBody = (await api(`/amendments/${s.candidateId}`, { token: t.token })).body;
     const rejectAuditId = await reject(s.candidateId, '기준일 착오로 반려');
     const rejectHash = auditRowHash(rejectAuditId);
+    const notices = () => sql(`SELECT count(*) FROM user_notifications WHERE tenant_id = '${t.user.tenantId}';`);
+    const noticesBefore = notices();
 
     const res = await correct(s.candidateId, '반려 판단 착오 — 다시 검토');
     expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(notices()).toBe(noticesBefore); // 정정은 알리지 않는다
     expect(res.body.reviewState).toBe('draft');
     expect(res.body.revision).toBe(beforeBody.revision);
     expect(res.body.candidateContent).toBe(beforeBody.candidateContent);
@@ -236,5 +239,32 @@ describe('T-178 개정 후보 반려 정정', () => {
     expect(sql(`SELECT status || '|' || source_candidate_id FROM article_versions WHERE id = '${versionId}';`)).toBe(`published|${s.candidateId}`);
     expect(sql(`SELECT review_state FROM amendment_candidates WHERE id = '${s.candidateId}';`)).toBe('rejected');
     expect(corrections(s.candidateId)).toBe('0');
+  }, 120_000);
+
+  it('정정 감사를 쓰지 못하면 정정 전체가 되돌려진다 — 상태·정정 전환·옛 초안 연결 떼기 모두(같은 트랜잭션) (T-178)', async () => {
+    const s = await seed('원자성');
+    const ok = await post(`/amendments/${s.candidateId}/approve`, { effectiveDate: E, changeNote: '법령 반영', ...(await lockOf(t.token, s.candidateId)) });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const versionId = ok.body.resultVersion.id as string;
+    simulateLegacyWithdraw({ tenantId: t.user.tenantId, userId: t.user.id, candidateId: s.candidateId, articleId: s.articleId, versionId });
+    const before = sql(`SELECT review_state || '|' || lock_version FROM amendment_candidates WHERE id = '${s.candidateId}';`);
+    sql(`
+      CREATE OR REPLACE FUNCTION t178_fail_fix() RETURNS trigger LANGUAGE plpgsql AS $f$
+      BEGIN
+        IF NEW.action = 'amendment.reject_correct' AND NEW.entity_id = '${s.candidateId}' THEN RAISE EXCEPTION 't178 correction audit failed'; END IF;
+        RETURN NEW;
+      END $f$;
+      DROP TRIGGER IF EXISTS t178_fail_fix ON audit_logs;
+      CREATE TRIGGER t178_fail_fix BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION t178_fail_fix();
+    `);
+    try {
+      expect((await correct(s.candidateId, '감사 실패')).status).toBe(500);
+    } finally {
+      sql(`DROP TRIGGER IF EXISTS t178_fail_fix ON audit_logs; DROP FUNCTION IF EXISTS t178_fail_fix();`);
+    }
+    expect(sql(`SELECT review_state || '|' || lock_version FROM amendment_candidates WHERE id = '${s.candidateId}';`)).toBe(before);
+    expect(sql(`SELECT count(*) FROM amendment_state_changes WHERE candidate_id = '${s.candidateId}' AND to_state = 'draft' AND kind = 'correction';`)).toBe('0');
+    expect(sql(`SELECT source_candidate_id FROM article_versions WHERE id = '${versionId}';`)).toBe(s.candidateId);
+    expect(sql(`SELECT count(*) FROM audit_logs WHERE action = 'version.source_detach' AND entity_id = '${versionId}';`)).toBe('0');
   }, 120_000);
 });

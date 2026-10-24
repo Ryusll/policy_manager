@@ -99,12 +99,8 @@ export async function findApprovalAudit(
     });
   }
   return db.auditLog.findFirst({
-    where: {
-      tenantId,
-      OR: byVersion,
-      correctedBy: { none: { action: 'version.withdraw' } },
-      ...(lastWithdraw ? { createdAt: { gt: lastWithdraw.createdAt } } : {}),
-    },
+    // 철회가 거둔 승인은 모두 그 버전의 마지막 철회보다 앞이다 — "정정됨" 여부를 따로 묻지 않는다(회사 조건 없는 부분 질의가 감사 표를 훑는다)
+    where: { tenantId, OR: byVersion, ...(lastWithdraw ? { createdAt: { gt: lastWithdraw.createdAt } } : {}) },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     select: TARGET_SELECT,
   });

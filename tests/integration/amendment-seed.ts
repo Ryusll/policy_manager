@@ -24,19 +24,6 @@ export async function seedReviewCandidate(
     INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
       VALUES ('${ev}', '${lawId}', '${lawArt}', '60/1/', 'modified', '사용자는 근로자에게 15일의 유급휴가를 주어야 한다.', '사용자는 근로자에게 20일의 유급휴가를 주어야 한다.', 'v1:p1', 'v1:p2', '${o.lawEffective}', 'poll', now());
   `);
-  const art = await post(`/policies/${policyId}/chapters/${chapterId}/articles`, { number: o.number, title: `조${o.number}`, content: '직원에게는 매년 15일의 연차휴가를 준다.' });
-  expect(art.status, JSON.stringify(art.body)).toBeLessThan(300);
-  const articleId = art.body.id as string;
-  const pub = await post(`/policies/${policyId}/publish-drafts`, { changeNote: '제정', effectiveDate: '2020-01-01' });
-  expect(pub.status, JSON.stringify(pub.body)).toBeLessThan(300);
-  const link = await post('/law-links', { lawArticleId: lawArt, articleId, relationType: 'delegation', evidenceText: '연차휴가 일수' });
-  expect(link.status, JSON.stringify(link.body)).toBe(201);
-  const g = await post('/amendments/generate', { changeEventId: ev });
-  expect(g.status, JSON.stringify(g.body)).toBe(200);
-  const candidateId = g.body.created.find((c: any) => c.articleId === articleId).id as string;
-  const c = (await api(`/amendments/${candidateId}`, { token })).body;
-  const review = await post(`/amendments/${candidateId}/review`, { expectedRevision: c.revision, expectedLockVersion: c.lockVersion });
-  expect(review.status, JSON.stringify(review.body)).toBe(200);
   const cleanup = () =>
     sql(`
       DELETE FROM amendment_candidates WHERE change_event_id = '${ev}';
@@ -44,7 +31,31 @@ export async function seedReviewCandidate(
       DELETE FROM law_links WHERE law_article_id = '${lawArt}';
       DELETE FROM laws WHERE id = '${lawId}'; DELETE FROM law_sources WHERE id = '${sourceId}';
     `);
-  return { candidateId, articleId, changeEventId: ev, cleanup };
+  // 중간 단언이 실패해도 심은 법령이 남지 않게(남은 법령은 다른 시험의 동기화 순서를 바꾼다) — 정리하고 다시 던진다
+  try {
+    const art = await post(`/policies/${policyId}/chapters/${chapterId}/articles`, { number: o.number, title: `조${o.number}`, content: '직원에게는 매년 15일의 연차휴가를 준다.' });
+    expect(art.status, JSON.stringify(art.body)).toBeLessThan(300);
+    const articleId = art.body.id as string;
+    const pub = await post(`/policies/${policyId}/publish-drafts`, { changeNote: '제정', effectiveDate: '2020-01-01' });
+    expect(pub.status, JSON.stringify(pub.body)).toBeLessThan(300);
+    const link = await post('/law-links', { lawArticleId: lawArt, articleId, relationType: 'delegation', evidenceText: '연차휴가 일수' });
+    expect(link.status, JSON.stringify(link.body)).toBe(201);
+    const g = await post('/amendments/generate', { changeEventId: ev });
+    expect(g.status, JSON.stringify(g.body)).toBe(200);
+    const candidateId = g.body.created.find((c: any) => c.articleId === articleId).id as string;
+    const c = (await api(`/amendments/${candidateId}`, { token })).body;
+    const review = await post(`/amendments/${candidateId}/review`, { expectedRevision: c.revision, expectedLockVersion: c.lockVersion });
+    expect(review.status, JSON.stringify(review.body)).toBe(200);
+    return { candidateId, articleId, changeEventId: ev, cleanup };
+  } catch (e) {
+    // 정리가 실패해도 원래 실패를 가리지 않는다 — 정리 실패는 경고로 남기고 원래 오류를 던진다
+    try {
+      cleanup();
+    } catch (c) {
+      console.warn('시드 정리 실패', c);
+    }
+    throw e;
+  }
 }
 
 /** 후보의 지금 판·잠금 — 승인·반려·정정 요청에 싣는다 */

@@ -444,6 +444,9 @@ export const messages: Record<Locale, Msg> = {
     'amendmentCorrection.unknown': '알 수 없음',
     'amendmentCorrection.blocked': '이 후보로 발행한 버전(v{num})이 이미 있어 이 후보는 다시 승인할 수 없습니다 — 반려 정정이나 손질로 다시 열지 않습니다.',
     'amendmentCorrection.blockedLink': '규정 화면에서 그 버전 확인하기',
+    'versionWithdraw.dialogNotify':
+      '개정 알림을 받는 사람에게 철회를 알립니다. 개정 후보로 승인한 버전이면 그 후보는 작성 상태로 돌아가(승인 철회 정정 기록이 남습니다) 다시 검토·승인할 수 있습니다.',
+    'versionWithdraw.candidateReopened': '이 버전을 승인했던 개정 후보는 작성 상태로 돌아갔습니다 — 다시 검토를 요청해 승인할 수 있습니다.',
     'amendmentCorrection.notice.reject': '반려 정정됨',
     'amendmentCorrection.notice.withdraw': '승인 철회됨 (시행 예정 철회)',
     'amendmentCorrection.notice.meta': '{name} · {at}',
@@ -943,6 +946,9 @@ export const messages: Record<Locale, Msg> = {
     'amendmentCorrection.unknown': 'Unknown',
     'amendmentCorrection.blocked': 'Version v{num} was already published from this candidate, so it cannot be approved again — it is not reopened by correcting the rejection or editing it.',
     'amendmentCorrection.blockedLink': 'Check that version on the regulation page',
+    'versionWithdraw.dialogNotify':
+      'People who receive revision notices are told about the withdrawal. If the version was approved from an amendment candidate, the candidate returns to draft (a correction record of the withdrawn approval is kept) and can be reviewed and approved again.',
+    'versionWithdraw.candidateReopened': 'The amendment candidate that approved this version is back in draft — request review again to approve it.',
     'amendmentCorrection.notice.reject': 'Rejection corrected',
     'amendmentCorrection.notice.withdraw': 'Approval withdrawn (scheduled version withdrawn)',
     'amendmentCorrection.notice.meta': '{name} · {at}',

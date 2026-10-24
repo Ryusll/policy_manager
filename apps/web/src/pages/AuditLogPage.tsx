@@ -47,11 +47,12 @@ export default function AuditLogPage() {
   const { t } = useI18n();
   const [filter, setFilter] = useState<AuditLogFilter>({ page: 1, limit: PAGE_SIZE });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  // 한 대상의 기록만(T-178) — 주소로 받아, 정정 사슬·대상 칩에서 바로 열 수 있다. 대상이 바뀌면 첫 장으로
+  // 한 대상의 기록만(T-178) — 주소로 받아, 정정 사슬·대상 칩에서 바로 열 수 있다. 다른 대상으로 옮겨 가면 분류·수행자·기간 필터를
+  // 비운다(승인 ↔ 철회처럼 대상이 다른 고리는 분류도 다르다 — 남겨 두면 0건), 대상 필터를 지우면 다른 필터는 그대로 첫 장으로
   const [params, setParams] = useSearchParams();
   const entity = entityFilterFrom(params);
   const entityKey = entity ? `${entity.entityType}:${entity.entityId}` : '';
-  useEffect(() => setFilter((prev) => ({ ...prev, page: 1 })), [entityKey]);
+  useEffect(() => setFilter((prev) => (entityKey ? { page: 1, limit: PAGE_SIZE } : { ...prev, page: 1 })), [entityKey]);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['audit-logs', filter, entityKey],

@@ -111,6 +111,7 @@ import {
 import { formatVersionDates, versionDates } from '../lib/versionDates';
 import { VersionDatesLine } from '../components/VersionDatesLine';
 import { SpeechControls } from '../components/SpeechControls';
+import { useI18n } from '../i18n/useI18n';
 import { buildPolicySpeech } from '../lib/speech';
 import {
   articleHash,
@@ -574,6 +575,7 @@ function FullViewSearchToolbar({
 export default function PolicyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
+  const { t } = useI18n();
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
   const [selectedArticle, setSelectedArticle] = useState<any>(null);
   const [newChapter, setNewChapter] = useState({ number: 1, title: '' });
@@ -1421,11 +1423,16 @@ export default function PolicyDetailPage() {
       qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
       qc.invalidateQueries({ queryKey: ['policy', id] });
       qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
+      // 개정 후보로 승인한 버전이면 후보가 작성 상태로 돌아간다(T-178) — 후보 화면·목록도 새로 받는다
+      if (res.candidateId) {
+        qc.invalidateQueries({ queryKey: ['amendment', res.candidateId] });
+        qc.invalidateQueries({ queryKey: ['amendments'] });
+      }
       setWithdrawTarget(null);
       setWithdrawReason('');
       setVersionActionMsg(
         `시행 예정(${res.withdrawnEffectiveDate})을 철회했습니다 — 그 버전은 초안으로 돌아갔고, 지금 본문이 그대로 시행됩니다.` +
-          (res.candidateId ? ' 이 버전을 승인했던 개정 후보는 반려로 돌렸습니다.' : ''),
+          (res.candidateId ? ` ${t('versionWithdraw.candidateReopened')}` : ''),
       );
     },
   });
@@ -5661,7 +5668,7 @@ export default function PolicyDetailPage() {
               </p>
               <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
                 <p>이 버전은 <strong>초안으로 돌아가고</strong> 지금 본문이 그대로 시행됩니다. 초안을 고쳐 다시 검토·승인할 수 있습니다.</p>
-                <p>개정 알림을 받는 사람에게 철회를 알립니다. 개정 후보로 승인한 버전이면 그 후보는 반려로 돌아갑니다.</p>
+                <p>{t('versionWithdraw.dialogNotify')}</p>
               </div>
               <label className="block">
                 <span className="text-xs font-medium text-gray-600">철회 사유</span>

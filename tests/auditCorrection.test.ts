@@ -104,7 +104,6 @@ describe('원 기록 찾기 (T-178)', () => {
         { action: 'version.approve', entityType: 'ArticleVersion', entityId: 'v-1' },
         { action: 'amendment.approve', entityType: 'amendment_candidate', entityId: 'c-1', details: { path: ['version', 'id'], equals: 'v-1' } },
       ],
-      correctedBy: { none: { action: 'version.withdraw' } },
     });
     expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
 

@@ -43,7 +43,8 @@ export function RejectionCorrectionPanel({ data, canCorrect }: { data: Amendment
       toast(t('amendmentCorrection.done'), 'success');
     },
     onError: (err: unknown) => {
-      if ((err as { response?: { status?: number } } | null)?.response?.status === 409) refresh();
+      // 409(잠금·발행본)든 400(그 사이 다른 관리자가 먼저 정정)이든 화면이 낡았다 — 새로 받는다
+      refresh();
       toast(apiErrorMessage(err, t('amendmentCorrection.failed')), 'error');
     },
   });
@@ -100,7 +101,8 @@ export function CorrectionNotice({ data }: { data: AmendmentDetail }) {
           {t('amendmentCorrection.notice.originalReject', { reason: data.decision.reason })}
         </span>
       )}
-      {data.reviewState === 'draft' && <span className="block text-xs mt-0.5">{t('amendmentCorrection.notice.next')}</span>}
+      {/* 기준 본문이 그 사이 바뀐(낡은) 후보는 다시 만들어야 승인된다 — 아래 경고가 그 길을 안내한다 */}
+      {data.reviewState === 'draft' && data.isCurrentBase && <span className="block text-xs mt-0.5">{t('amendmentCorrection.notice.next')}</span>}
     </div>
   );
 }
