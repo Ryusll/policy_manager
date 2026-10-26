@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { hasBrowserSession, markBrowserSession } from '../lib/browserSession';
+import { authIdentity, closeAuthScopeForReload, needsReloadOnIdentityChange } from '../lib/authScope';
 
 interface User {
   id: string;
@@ -102,10 +103,49 @@ export const useAuthStore = create<AuthState>()(
   ),
 );
 
-// 다른 탭에서 로그인·갱신·로그아웃하면 이 탭도 따라간다. 갱신 토큰은 한 번 쓰면 바뀌므로(회전)
-// 탭마다 옛 값을 들고 있으면 늦게 갱신하는 탭이 거절당해 튕긴다.
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === 'auth-storage') void useAuthStore.persist.rehydrate();
+/** 저장소의 최신 로그인 정보 — 다른 탭이 방금 갱신했거나 로그아웃했거나 다른 사람으로 바꿨을 수 있다 */
+export function readStoredAuth(): {
+  accessToken: string | null;
+  refreshToken: string | null;
+  identity: string | null;
+} | null {
+  try {
+    const raw = localStorage.getItem('auth-storage');
+    if (!raw) return null;
+    const state = JSON.parse(raw)?.state;
+    return {
+      accessToken: state?.accessToken ?? null,
+      refreshToken: state?.refreshToken ?? null,
+      identity: authIdentity({ isAuthenticated: state?.isAuthenticated === true, user: state?.user ?? null }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 다른 탭의 로그인 정보를 따라간다. 로그아웃·로그인·토큰 갱신은 저장소를 다시 읽고, 앞 사람의
+ * 캐시·요청은 주체가 바뀌면 `sessionReset` 이 버린다(T-181).
+ * 로그아웃을 거치지 않고 바로 다른 사람이 됐으면 이 탭의 화면은 언마운트되지 않아 앞 사람의 화면
+ * 상태를 들고 있다. 다시 읽으면 그 화면이 새 사람의 토큰으로 한 번 더 그려지며 앞 사람의 주소로
+ * 요청을 보내므로, 다시 읽지 않고 진행 중 요청만 끊은 뒤 첫 화면부터 새로 연다.
+ */
+export async function followOtherTab(): Promise<void> {
+  const before = authIdentity(useAuthStore.getState());
+  if (needsReloadOnIdentityChange(before, readStoredAuth()?.identity ?? null)) {
+    closeAuthScopeForReload();
+    window.location.replace('/');
+    return;
+  }
+  await useAuthStore.persist.rehydrate();
+}
+
+/** 다른 탭에서 로그인·갱신·로그아웃하면 이 탭도 따라간다 */
+export function listenOtherTabs(target: Pick<Window, 'addEventListener'>): void {
+  target.addEventListener('storage', (e) => {
+    if (e.key === 'auth-storage') void followOtherTab();
   });
 }
+
+// 갱신 토큰은 한 번 쓰면 바뀌므로(회전) 탭마다 옛 값을 들고 있으면 늦게 갱신하는 탭이 거절당해 튕긴다
+if (typeof window !== 'undefined') listenOtherTabs(window);
