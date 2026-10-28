@@ -43,6 +43,7 @@
 |---|---|---|---|
 | GET | (root) | admin, editor | 규정 목록(검색·필터) |
 | GET | scheduled-changes | JWT | **시행 예정 개정**(대시보드 "제·개정 예고", T-132 ⑤) — 승인됐지만 시행일 전인 조문 버전을 규정·시행일별로 묶어 가까운 순으로: `policyId`·`code`·`title`·`isActive`·`effectiveDate`(YYYY-MM-DD)·`articleCount`·`firstArticle`("제3조 수당")·`repealCount`(그날 폐지 예정인 조문 수, T-132 ③ — 폐지 예정도 같은 규정·날짜 묶음에 들고, 개정 조문 수 `articleCount` 와 따로 센다). Query: `limit`(기본 10, 최대 50). 승인된 문구라 열람자도 본다 |
+| GET | slots | admin, editor | **규정 자리**(T-198) — `{plan, used, max, remaining}`. `used` 는 저장 때 상한 검사와 같이 회사의 모든 규정(비활성 포함)을 센다. 등록 창·PDF 가져오기가 저장 전에 상한을 알리는 데 쓰는 안내용이고, 막는 것은 저장 때의 검사다. 상한에 걸린 저장(새 규정·텍스트 가져오기·PDF/법제처 확정)은 403 `{code: 'POLICY_LIMIT_REACHED', plan, max, used, message}` — 문구에 요금제 이름(Starter 등)과 "아스트룸에 문의"가 들어간다(예전 `현재 플랜(starter)에서 …최대 5건입니다.`) |
 | GET | import-logs | admin, editor | 가져오기 이력 |
 | POST | import | admin, editor | **텍스트 가져오기 — 한 번에 저장**(T-135). 규정 목록의 "기존 규정 가져오기"(TXT·DOCX·붙여넣기)가 화면에서 나눈 장·조문을 한 요청으로 보낸다. 규정·장·조문·첫 버전·가져오기 이력·감사 기록을 트랜잭션 하나로 — 중간에 실패하면 아무것도 남지 않는다(예전에는 화면이 규정·장·조문·한꺼번에 시행·시행일·이력 API 를 차례로 불러 반쪽 규정이 남을 수 있었다). **편집자**는 초안으로만(보낸 시행일은 쓰지 않는다 — 관리자가 상세 화면에서 한꺼번에 시행), **관리자**는 `effectiveDate`(YYYY-MM-DD, 필수 — 없으면 400)로 바로 시행: 승인자·승인/발행 시각·시행 사유 `기존 규정 가져오기 자동 게시`·규정 시행일, 본문에 변수 표식이 남았으면 400(한꺼번에 시행과 같다), 감사 `version.bulk_publish`. 본문이 빈 조 제목 행은 버전을 만들지 않는다. 플랜 상한 403·코드 중복 409 는 회사 행을 잠근 뒤 센다. 긴 원문은 JSON 기본 한도(100kb)를 넘으므로 `Content-Type: application/vnd.policy-import+json` 으로 보내면 20MB 까지 받는다(이 경로만 — `application/json` 은 그대로 100kb). 응답: 만든 규정 + `articleCount`(만든 조문 행)·`published`(바로 시행한 버전 수) |
 | POST | import-logs | admin, editor | 가져오기 이력 기록 |
@@ -207,7 +208,7 @@
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| POST | import/policies/validate | admin | **사전 검사**(200). 넣지 않고 문제를 전부 모아 돌려준다. 응답 `{issues[], canImport, summary}` (T-13) |
+| POST | import/policies/validate | admin | **사전 검사**(200). 넣지 않고 문제를 전부 모아 돌려준다. 응답 `{issues[], canImport, summary}` (T-13). 규정 상한을 넘으면 `limit: {code: 'POLICY_LIMIT_REACHED', plan, max, used}` 도 싣는다(T-198 — 저장의 400 본문에도 같은 값, 다른 생성 경로의 403 과 같은 코드) |
 | POST | import/policies | admin | 일괄 등록. 한 트랜잭션 — 하나라도 걸리면 전부 무산된다. 검사에 걸리면 400 + `issues`. 규정마다 `effectiveDate`(YYYY-MM-DD) — `publish: true` 조문이 하나라도 있으면 **필수**이고 그 시행본과 규정 단위 시행일에 들어간다(T-123, "오늘"로 채우지 않는다) 바로 시행(`publish: true`)하는 조문에 변수 표식이 남아 있으면 400 — 초안으로 가져와 검토를 요청한다(T-109). 저장할 때 회사 행을 잠근 뒤 상한·코드 중복을 다시 본다(T-135 — 사전 검사 뒤 다른 요청이 자리·코드를 가져갔으면 403·409). 감사 기록(`admin.import_policies`)도 같은 트랜잭션 |
 
 > **사전 검사가 보는 것**: 코드 중복(기존/파일 안), 빈 코드·제목, 길이 초과, 장·조 번호 형식 → 오류. 장 없음, 빈 본문, 조 번호 겹침·건너뜀 → 경고. **플랜 규정 상한**도 여기서 본다 — 예전에는 일괄 가져오기가 상한을 통과해 Starter(5건)가 한 번에 100건을 넣을 수 있었다.
