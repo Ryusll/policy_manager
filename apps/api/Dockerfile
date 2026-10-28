@@ -5,7 +5,7 @@
 # 베이스가 Debian(slim)인 이유: PDF 추출에 쓰는 PyMuPDF는 musllinux(Alpine) wheel을
 # 제공하지 않아 Alpine에서는 소스 빌드로 넘어가다 실패한다(C 툴체인 부재, `cc` 127).
 # 빌더·런너 모두 같은 베이스를 써야 builder에서 만든 Prisma 엔진을 런너가 그대로 쓸 수 있다.
-FROM node:20-slim AS builder
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 # Prisma 엔진은 generate/실행 시 OpenSSL이 필요하다 (Debian bookworm = OpenSSL 3.x)
 RUN apt-get update \
@@ -24,7 +24,7 @@ RUN npm run build
 RUN npx tsc -p tsconfig.seed.json
 RUN test -f dist-seed/seed.js && ls -la dist-seed/
 
-FROM node:20-slim AS runner
+FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 # 파이썬 PDF 추출 의존성은 requirements.txt를 단일 소스로 사용한다.
 # `--only-binary=:all:` : wheel이 없으면 소스 빌드로 새지 않고 즉시 실패시켜 원인을 드러낸다.

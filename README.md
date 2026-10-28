@@ -32,7 +32,7 @@ npm run docker:up
 
 - web: http://localhost (nginx, 80번 포트)
 - api: http://localhost:3001 (`/api` 프리픽스, Swagger는 `/api/docs`)
-- 컨테이너 기동 시 API가 자동으로 `prisma migrate deploy` → 실패 시 `prisma db push` → 데모 시드(`admin@demo.com` / `password123`)를 실행합니다.
+- 컨테이너 기동 시 API가 `prisma migrate deploy` 후 설정에 따라 데모 시드를 실행합니다. `db push` 폴백은 사용하지 않습니다. 공개 배포에는 아래 Oracle 전용 구성을 사용하세요.
 
 ### 2) 로컬에서 직접 실행 (Docker 없이 API/웹만)
 
@@ -45,6 +45,20 @@ npm run dev   # apps/api + apps/web 동시 실행 (concurrently)
 - api: 별도 실행 시 `apps/api`에서 `npm run dev`
 
 로컬 실행 시 PostgreSQL/Redis/MinIO는 별도로 띄우거나 `docker compose up -d postgres redis minio`로 의존 서비스만 올려서 사용합니다.
+
+## Oracle Cloud 배포
+
+Oracle Ubuntu 24.04 / A1 서버에 Docker Compose와 Tailscale Funnel로 배포합니다.
+서버 준비부터 HTTPS·관리자 생성·백업까지는 [Oracle 신규 구축 절차서](docs/Deliverables/16_Runbook_배포롤백/OracleCloud_신규구축_절차서_macOS.md)를 따르세요.
+
+```bash
+# 서버 설치와 Tailscale 로그인 후, 실제 할당된 HTTPS 주소로 환경 파일 생성
+python3 scripts/oracle/init-env.py https://<실제주소>.ts.net
+bash scripts/oracle/deploy.sh
+bash scripts/oracle/compose.sh ps
+```
+
+운영은 `.env.oracle`과 `docker-compose.oracle.yml`을 사용합니다. 데모 계정은 만들지 않으며, 웹만 서버 내부 `127.0.0.1:8080`에 연결합니다. 개발 `.env`와 로컬 Docker override는 운영에 반영하지 않습니다.
 
 ## 주요 npm 스크립트 (루트)
 

@@ -22,6 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Oracle deployment configuration
+        run: |
+          python3 -m unittest discover -s scripts/oracle -p 'test_*.py' -v
+          for script in scripts/oracle/*.sh; do bash -n "$script"; done
+          sh -n apps/api/docker-entrypoint.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

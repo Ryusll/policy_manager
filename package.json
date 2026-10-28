@@ -20,7 +20,8 @@
     "docker:logs": "docker compose logs -f",
     "docker:build": "docker compose build",
     "test:int": "vitest run --config vitest.integration.config.ts",
-    "test:int:clean": "sh scripts/clean-test-tenants.sh"
+    "test:int:clean": "sh scripts/clean-test-tenants.sh",
+    "dev:local": "bash scripts/dev-local.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

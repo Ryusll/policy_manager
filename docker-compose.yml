@@ -105,8 +105,8 @@ services:
 
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
       args:
         VITE_PUBLIC_COMPANY_LEGAL_NAME: ${VITE_PUBLIC_COMPANY_LEGAL_NAME:-}
         VITE_PUBLIC_COMPANY_REG_NO: ${VITE_PUBLIC_COMPANY_REG_NO:-}

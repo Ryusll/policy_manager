@@ -24,10 +24,9 @@ async function bootstrap() {
   app.use(cookieParser());
   app.setGlobalPrefix('api');
 
-  // Reflect request Origin so login works when users open the app via localhost, 127.0.0.1, or LAN IP
-  // (PUBLIC_URL alone cannot list every browser URL). JWT is sent in Authorization, not cookies.
+  // 운영은 CORS_ORIGIN으로 브라우저 주소를 고정하고, 로컬은 여러 접속 주소를 허용한다.
   app.enableCors({
-    origin: true,
+    origin: process.env.CORS_ORIGIN || true,
     credentials: true,
   });
 
@@ -40,14 +39,16 @@ async function bootstrap() {
     }),
   );
 
-  const config = new DocumentBuilder()
-    .setTitle('Policy Manager API')
-    .setDescription('Policy management system API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  if (process.env.ENABLE_SWAGGER !== 'false') {
+    const config = new DocumentBuilder()
+      .setTitle('Policy Manager API')
+      .setDescription('Policy management system API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port);

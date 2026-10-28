@@ -10,6 +10,11 @@ echo "[startup] Running Prisma migrate deploy..."
 if npx prisma migrate deploy; then
   echo "[startup] migrate deploy completed."
 else
+  if [ "${ALLOW_LEGACY_BASELINE:-true}" != "true" ]; then
+    echo "[startup] FATAL: migration failed; automatic legacy baseline is disabled."
+    echo "[startup] Inspect the migration error and restore a backup if needed."
+    exit 1
+  fi
   # 마이그레이션 이력보다 먼저 만들어진 DB(과거 db push 로 생성된 스키마 등)는
   # baseline 을 '적용됨'으로 표시한 뒤 나머지만 이어서 적용한다.
   # 예전처럼 `db push --accept-data-loss` 로 넘어가지 않는다(운영 데이터 손실 위험).
