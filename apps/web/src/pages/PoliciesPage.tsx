@@ -12,6 +12,9 @@ import { INDEX_KEYS, compareKo, countByIndexKey, indexKeyOf } from '../lib/hangu
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
 import { apiErrorMessage } from '../lib/apiError';
+import { limitFeedback, policyLimitFromError, policySlotsFull } from '../lib/policyLimit';
+import { PolicyLimitNotice, PolicySaveError } from '../components/PolicyLimitNotice';
+import { usePolicySlots } from '../hooks/usePolicySlots';
 import { useI18n } from '../i18n/useI18n';
 import { type ParseProfile, type ParsedPolicyDraft } from '../lib/policyImportParser';
 import { parsePolicyTextWithSplitMode, type ImportSplitMode } from '../lib/policyImportSplitModes';
@@ -45,6 +48,8 @@ export default function PoliciesPage() {
   /** 가나다 색인 (T-77). null 이면 전체 */
   const [indexKey, setIndexKey] = useState<string | null>(null);
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
+  // 규정 자리(T-198) — 다 찼으면 등록 창이 처음부터 알리고 등록 버튼을 막는다. 끝까지 입력한 뒤에야 막혀 "등록이 안 된다"로 보였다
+  const slotsFull = policySlotsFull(usePolicySlots(canEdit && showCreate).data);
   const [showImportAdvanced, setShowImportAdvanced] = useState(false);
   const [createMode, setCreateMode] = useState<'manual' | 'import'>('manual');
   const [form, setForm] = useState({
@@ -206,7 +211,18 @@ export default function PoliciesPage() {
       setImportDelimiter('');
       setImportRefineOptions(defaultImportRefineOptions());
     },
+    // 그사이 다른 사람이 마지막 자리를 가져갔다 — 자리를 다시 세어 버튼을 막는다(안내는 버튼 곁에 남는다)
+    onError: (err) => {
+      if (policyLimitFromError(err)) qc.invalidateQueries({ queryKey: ['policies', 'slots'] });
+    },
   });
+  const createFeedback = limitFeedback(createMutation.error, slotsFull);
+  // 창을 열 때 앞서 실패한 저장의 오류를 비운다 — 그사이 자리가 났는데 지난 상한 안내가 남지 않게.
+  // 이미 열려 있거나 저장 중이면 그대로 둔다(저장 중에 비우면 제출 버튼이 다시 열려 두 번 보낼 수 있다)
+  const openCreate = () => {
+    if (!showCreate && !createMutation.isPending) createMutation.reset();
+    setShowCreate(true);
+  };
 
   const deleteMutation = useMutation({
     mutationFn: policiesApi.delete,
@@ -534,7 +550,7 @@ export default function PoliciesPage() {
             <Link to="/policies/import" className="btn-secondary text-sm">
               <FileUp size={15} /> PDF 가져오기
             </Link>
-            <button type="button" onClick={() => setShowCreate(true)} className="btn-primary text-sm">
+            <button type="button" onClick={openCreate} className="btn-primary text-sm">
               <Plus size={15} /> {t('policies.register')}
             </button>
           </div>
@@ -567,6 +583,11 @@ export default function PoliciesPage() {
         <div className="card overflow-hidden">
           <div className="section-card__head">{t('policies.createTitle')}</div>
           <div className="p-5">
+            {createFeedback.before && (
+              <div className="mb-3">
+                <PolicyLimitNotice limit={createFeedback.before} />
+              </div>
+            )}
             <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border border-navy-200 bg-navy-50/60 px-3 py-2 text-xs text-navy-900">
               <p className="flex-1 leading-relaxed">{t('policies.importPdfHint')}</p>
               <Link to="/policies/import" className="btn-secondary text-xs py-1.5 shrink-0 inline-flex items-center gap-1">
@@ -1006,11 +1027,12 @@ export default function PoliciesPage() {
                 </div>
               )}
             </div>
-            {createMutation.error && (
-              <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 p-2 rounded">
-                {(createMutation.error as any)?.response?.data?.message || t('policies.error')}
+            {createFeedback.atButton && (
+              <div className="mt-3">
+                <PolicyLimitNotice limit={createFeedback.atButton} />
               </div>
             )}
+            {createFeedback.otherError && <PolicySaveError error={createFeedback.otherError} fallback={t('policies.error')} />}
             <div className="flex gap-2 mt-4">
               <button
                 type="button"
@@ -1025,6 +1047,7 @@ export default function PoliciesPage() {
                   })
                 }
                 disabled={
+                  !!slotsFull ||
                   !form.code ||
                   !form.title ||
                   createMutation.isPending ||
@@ -1169,7 +1192,7 @@ export default function PoliciesPage() {
                     icon={FileText}
                     title={t('policies.emptyList')}
                     action={
-                      <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>
+                      <button type="button" className="btn-primary text-sm" onClick={openCreate}>
                         <Plus size={14} /> {t('policies.register')}
                       </button>
                     }

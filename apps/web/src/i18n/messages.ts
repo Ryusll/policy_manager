@@ -221,6 +221,11 @@ export const messages: Record<Locale, Msg> = {
     'plan.inquiry.title': '{plan} 요금제는 아스트룸에 문의해 주세요.',
     'plan.inquiry.body':
       '요금제 변경은 아스트룸 담당자가 처리합니다. 이 화면에서는 결제나 요금제 변경이 이루어지지 않습니다.',
+    // 규정 상한(T-198) — 상한 값은 서버(plan-limits.ts)가 준다
+    'policyLimit.title': '규정 등록 한도에 도달했습니다',
+    'policyLimit.body':
+      '지금 요금제({plan})에서는 규정을 최대 {max}건까지 등록할 수 있는데, 이미 {used}건이 등록되어 있습니다(비활성 규정 포함). 새 규정을 더 등록하려면 아스트룸에 요금제 변경을 문의하세요.',
+    'policyLimit.reparseHint': '기존 규정에 PDF를 다시 가져와 고치는 것은 그대로 할 수 있습니다.',
     // 상한은 서버(plan-limits.ts)와 같아야 한다 — Starter 10명 / Pro 50명
     'plan.f1': '규정 5개 이하',
     'plan.f1u': '규정 무제한',
@@ -734,6 +739,10 @@ export const messages: Record<Locale, Msg> = {
     'plan.inquiry.title': 'Please contact Astrum about the {plan} plan.',
     'plan.inquiry.body':
       'Plan changes are handled by your Astrum representative. Nothing is charged or changed from this screen.',
+    'policyLimit.title': 'Policy limit reached',
+    'policyLimit.body':
+      'Your plan ({plan}) allows up to {max} policies, and {used} are already registered (including inactive ones). To add more, contact Astrum about changing your plan.',
+    'policyLimit.reparseHint': 'You can still re-import a PDF into an existing policy.',
     'plan.f1': 'Up to 5 policies',
     'plan.f1u': 'Unlimited policies',
     'plan.f2': 'Up to 10 users',

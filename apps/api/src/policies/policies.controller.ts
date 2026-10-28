@@ -86,6 +86,17 @@ export class PoliciesController {
     return this.policiesService.findScheduledChanges(req.user.tenantId, Number(limit) || 10);
   }
 
+  // :id 보다 먼저 — 뒤에 두면 "slots" 가 규정 id 로 잡힌다
+  @Get('slots')
+  @Roles('admin', 'editor')
+  @ApiOperation({
+    summary: '규정 자리 — 요금제·등록한 규정 수·상한 (T-198)',
+    description: '등록 창·PDF 가져오기가 상한을 먼저 알리는 데 쓴다. 저장 때의 상한 검사(403 POLICY_LIMIT_REACHED)를 대신하지 않는다.',
+  })
+  policySlots(@Request() req: { user: { tenantId: string } }) {
+    return this.policiesService.policySlots(req.user.tenantId);
+  }
+
   @Get('import-logs')
   @Roles('admin', 'editor')
   @ApiOperation({ summary: '규정 가져오기 이력 조회' })

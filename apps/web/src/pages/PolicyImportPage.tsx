@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload, FileText, Trash2, ChevronRight, RotateCcw, Check, Scale, ExternalLink, FileJson, GitCompare } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
@@ -38,8 +38,12 @@ import type { LawGoKrSessionMeta } from '../api/lawgokr';
 import { policiesApi } from '../api/policies';
 import { reparseApi } from '../api/reparse';
 import { apiErrorMessage } from '../lib/apiError';
+import { limitFeedback, policyLimitFromError, policySlotsFull } from '../lib/policyLimit';
+import { PolicyLimitNotice, PolicySaveError } from '../components/PolicyLimitNotice';
+import { usePolicySlots } from '../hooks/usePolicySlots';
 
 const MAX_PDF_BYTES = 30 * 1024 * 1024; // 서버 FileInterceptor 제한과 동일
+const COMMIT_FAILED = '규정 생성에 실패했습니다.';
 
 type Step = 'upload' | 'review' | 'done';
 type Source = 'pdf' | 'lawgokr' | 'json';
@@ -49,6 +53,10 @@ type Mode = 'create' | 'reparse';
 export default function PolicyImportPage() {
   const navigate = useNavigate();
   const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
+  const canCreate = useAuthStore((s) => s.user?.role === 'admin' || s.user?.role === 'editor');
+  const qc = useQueryClient();
+  // 규정 자리(T-198) — 다 찼으면 원문을 올리기 전에 알리고 새 규정 만들기를 막는다. 기존 규정에 다시 가져오기는 자리를 쓰지 않아 그대로다
+  const slotsFull = policySlotsFull(usePolicySlots(canCreate).data);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [source, setSource] = useState<Source>('pdf');
@@ -133,12 +141,21 @@ export default function PolicyImportPage() {
     onSuccess: (result) => {
       setDirty(false);
       setCreatedPolicyId(result.policyId);
+      qc.invalidateQueries({ queryKey: ['policies'] });
       toast(`규정을 만들었습니다. 조문 ${result.articleCount}건.`, 'success');
     },
     onError: (err: any) => {
-      toast(err?.response?.data?.message?.toString() || '규정 생성에 실패했습니다.', 'error');
+      // 그사이 다른 사람이 마지막 자리를 가져갔다 — 자리를 다시 세어 버튼을 막는다. 안내는 버튼 곁에 남으므로 토스트를 겹치지 않는다
+      if (policyLimitFromError(err)) {
+        qc.invalidateQueries({ queryKey: ['policies', 'slots'] });
+        return;
+      }
+      toast(err?.response?.data?.message?.toString() || COMMIT_FAILED, 'error');
     },
   });
+  const commitFeedback = limitFeedback(commitMutation.error, slotsFull);
+  // 3단계에는 입력 전 안내 자리가 따로 없어 버튼 곁 하나로 모은다
+  const commitLimit = commitFeedback.atButton ?? commitFeedback.before;
 
   // 기존 규정과 비교 — 고친 트리가 있으면 먼저 저장한다(서버는 저장된 트리로 비교한다)
   const compareMutation = useMutation({
@@ -202,6 +219,8 @@ export default function PolicyImportPage() {
     setEditingId(null);
     setCreatedPolicyId(null);
     setForm({ code: '', title: '', description: '', effectiveDate: '' });
+    // 버튼 곁에 남긴 확정 실패가 다음 원문의 미리보기에 따라오지 않게(T-198)
+    commitMutation.reset();
   };
 
   return (
@@ -244,6 +263,8 @@ export default function PolicyImportPage() {
 
       {step === 'upload' && (
         <section className="bg-white border border-gray-300 shadow-sm p-5 space-y-4">
+          {/* 다시 가져오기(?target=)는 자리를 쓰지 않는다 — 그때는 막힐 일이 없어 안내하지 않는다 */}
+          {slotsFull && mode === 'create' && <PolicyLimitNotice limit={slotsFull} reparseHint />}
           <div className="flex gap-1 border-b border-gray-200 -mx-1 px-1">
             {(
               [
@@ -549,7 +570,7 @@ export default function PolicyImportPage() {
               <button
                 type="button"
                 className="btn-primary text-sm"
-                disabled={!canCommit || commitMutation.isPending}
+                disabled={!canCommit || !!slotsFull || commitMutation.isPending}
                 onClick={() => commitMutation.mutate()}
               >
                 <Check size={15} />
@@ -559,6 +580,9 @@ export default function PolicyImportPage() {
                 <span className="text-[11px] text-gray-500">코드·제목·시행일을 입력하세요.</span>
               )}
             </div>
+            {/* 확정 실패는 버튼 아래에 남긴다 — 토스트만으로는 몇 초 뒤 사라져 "눌러도 아무 일이 없다"로 보였다(T-198) */}
+            {commitLimit && <PolicyLimitNotice limit={commitLimit} reparseHint />}
+            {commitFeedback.otherError && <PolicySaveError error={commitFeedback.otherError} fallback={COMMIT_FAILED} />}
             </>
             )}
           </section>

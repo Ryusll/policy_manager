@@ -73,6 +73,8 @@ export type ValidateInput = {
   currentCount: number;
   /** 플랜 상한 */
   maxPolicies: number;
+  /** 요금제 이름(문구용, T-198) */
+  planName?: string;
 };
 
 export type ValidateResult = {
@@ -80,6 +82,8 @@ export type ValidateResult = {
   /** error 가 하나도 없어야 넣을 수 있다 */
   canImport: boolean;
   summary: { policies: number; chapters: number; articles: number };
+  /** 플랜 상한 issue(issues 안의 그것) — 상한 판정은 여기 한 곳이고, 저장이 같은 코드·문구로 답하는 데 쓴다(T-198) */
+  limitIssue: ImportIssue | null;
 };
 
 const MAX_CODE = 80;
@@ -232,18 +236,23 @@ export function validateImport(input: ValidateInput): ValidateResult {
    * Starter(5건) 테넌트가 한 번에 100건을 넣을 수 있었다.
    */
   const newCount = input.currentCount + policies.length;
+  let limitIssue: ImportIssue | null = null;
   if (newCount > input.maxPolicies) {
-    issues.push({
+    limitIssue = {
       level: 'error',
       policyIndex: null,
       code: null,
-      message: `현재 요금제의 규정 상한(${input.maxPolicies}건)을 넘습니다. 지금 ${input.currentCount}건 + 가져올 ${policies.length}건.`,
-    });
+      message:
+        `현재 요금제${input.planName ? `(${input.planName})` : ''}의 규정 상한(${input.maxPolicies}건)을 넘습니다. ` +
+        `지금 ${input.currentCount}건(비활성 규정 포함) + 가져올 ${policies.length}건. 요금제 변경은 아스트룸에 문의하세요.`,
+    };
+    issues.push(limitIssue);
   }
 
   return {
     issues,
     canImport: !issues.some((i) => i.level === 'error'),
     summary: { policies: policies.length, chapters, articles },
+    limitIssue,
   };
 }

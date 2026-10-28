@@ -3,8 +3,8 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ImportPoliciesDto } from './admin.dto';
 import { VariablesService } from '../variables/variables.service';
-import { maxPoliciesForPlan } from '../common/plan-limits';
-import { claimPolicySlots } from '../policies/policy-slots';
+import { maxPoliciesForPlan, planLabel } from '../common/plan-limits';
+import { claimPolicySlots, policyLimitFields } from '../policies/policy-slots';
 import { validateImport, normalizeImportChapters, type ValidateResult } from './import-validate';
 import { newChapterHeader } from '../policies/chapter-header';
 import { formatJo } from '../common/article-label';
@@ -24,7 +24,19 @@ export class AdminService {
    * 예전에는 첫 충돌에서 트랜잭션째 멈춰, 규정 20건 중 17번째가 겹치면 오류 한 줄만
    * 돌아왔다. 무엇을 고쳐야 하는지 알려면 고치고 다시 올리기를 반복해야 했다.
    */
-  async validateImportPolicies(tenantId: string, dto: ImportPoliciesDto): Promise<ValidateResult> {
+  async validateImportPolicies(tenantId: string, dto: ImportPoliciesDto) {
+    const { limitIssue: _limitIssue, ...result } = await this.checkImport(tenantId, dto);
+    return result;
+  }
+
+  /**
+   * 사전 검사와 저장 직전 검사가 함께 쓴다. 상한이면 다른 생성 경로의 403 과 같은 코드·값(`limit`)을 싣는다(T-198) —
+   * 화면이 문구가 아니라 코드로 가른다. 상한 판정은 `validateImport` 한 곳이다
+   */
+  private async checkImport(
+    tenantId: string,
+    dto: ImportPoliciesDto,
+  ): Promise<ValidateResult & { limit?: ReturnType<typeof policyLimitFields> }> {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { plan: true },
@@ -36,23 +48,28 @@ export class AdminService {
       this.prisma.policy.count({ where: { tenantId } }),
     ]);
 
-    return validateImport({
+    const maxPolicies = maxPoliciesForPlan(tenant.plan);
+    const result = validateImport({
       policies: dto.policies ?? [],
       existingCodes: existing.map((p) => p.code),
       currentCount,
-      maxPolicies: maxPoliciesForPlan(tenant.plan),
+      maxPolicies,
+      planName: planLabel(tenant.plan),
     });
+    return result.limitIssue ? { ...result, limit: policyLimitFields(tenant.plan, maxPolicies, currentCount) } : result;
   }
 
   async importPolicies(tenantId: string, userId: string, dto: ImportPoliciesDto) {
     // 화면이 사전 검사를 건너뛰거나 그 사이에 다른 사람이 규정을 만들었을 수 있다.
     // 넣기 직전에 한 번 더 본다 — 특히 플랜 상한은 여기서 막지 않으면 뚫린다.
-    const check = await this.validateImportPolicies(tenantId, dto);
+    const check = await this.checkImport(tenantId, dto);
     if (!check.canImport) {
-      const first = check.issues.find((i) => i.level === 'error');
+      // 상한 코드를 실으면 문구도 상한 issue 의 것 — 코드와 문구가 서로 다른 실패를 가리키지 않게
+      const first = check.limitIssue ?? check.issues.find((i) => i.level === 'error');
       throw new BadRequestException({
         message: first?.message ?? '가져올 수 없는 데이터입니다.',
         issues: check.issues,
+        ...check.limit,
       });
     }
 

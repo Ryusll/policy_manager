@@ -1,5 +1,8 @@
 import client from './client';
 
+/** 규정 자리(T-198) — 요금제·등록한 규정 수·상한. 저장 때 서버가 다시 센다 */
+export type PolicySlots = { plan: 'starter' | 'pro' | 'enterprise'; used: number; max: number; remaining: number };
+
 /** 규정 체계도 노드 (T-71). 규정 > 세칙 > 지침을 자기참조 트리로 표현한다. */
 /** 텍스트 가져오기 한 번에 저장(T-135) — 화면에서 나눈 장·조문 */
 export type PolicyImportDocument = {
@@ -82,6 +85,8 @@ export const policiesApi = {
   /** 규정 체계도 — 상위·하위 트리 (T-71) */
   hierarchy: (): Promise<{ roots: PolicyTreeNode[]; total: number }> =>
     client.get('/policies/hierarchy').then((r) => r.data),
+  /** 규정 자리 — 등록 전에 상한을 알린다(T-198) */
+  slots: (): Promise<PolicySlots> => client.get('/policies/slots').then((r) => r.data),
   create: (data: any) => client.post('/policies', data).then((r) => r.data),
   update: (id: string, data: any) => client.put('/policies/' + id, data).then((r) => r.data),
   delete: (id: string) => client.delete('/policies/' + id),

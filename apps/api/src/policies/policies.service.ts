@@ -18,7 +18,7 @@ import {
 } from '../common/as-of';
 import { buildCurrentChapters, currentStateOf, type CurrentState } from './current-view';
 import { AuditService } from '../audit/audit.service';
-import { claimPolicySlots } from './policy-slots';
+import { claimPolicySlots, readPolicySlots } from './policy-slots';
 import { buildPolicyForest } from './policy-hierarchy';
 import {
   applyChapterHeaderPatch,
@@ -1581,6 +1581,11 @@ export class PoliciesService {
     });
     if (!policy) throw new NotFoundException('Policy not found');
     return policy;
+  }
+
+  /** 규정 자리(요금제·등록 수·상한) — 등록 전 안내용(T-198) */
+  policySlots(tenantId: string) {
+    return readPolicySlots(this.prisma, tenantId);
   }
 
   async listImportLogs(tenantId: string, take = 30) {
