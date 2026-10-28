@@ -125,11 +125,16 @@ function setup(existing: Existing[], opts: { claim?: number; priorRules?: number
     lawSource: { upsert: () => ok({ id: 'src-1', isActive: true }) },
     $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
   };
+  let lastMst = '';
   const lawGoKr = {
     getLaw: (mst: string) => {
       calls.getLaw += 1;
+      lastMst = mst;
       return ok(mapLawDetail(detail(), mst));
     },
+    // 판 목록 — 요청한 판이 현행이다(현행이 아닌 판의 등록은 tests/lawRegisterVersion.test.ts, T-150)
+    searchVersions: (lawId: string) =>
+      ok({ page: 1, display: 100, total: 1, items: [{ mst: lastMst, lawId, status: '현행', promulgationDate: '2026-01-01' }] }),
   };
   const collect = (effectiveNotesVersion: number | null) =>
     collectEffectiveNotes(prisma as any, lawGoKr, { id: 'law-1', externalId: '900143', effectiveNotesVersion });
@@ -276,13 +281,14 @@ describe('collectEffectiveNotes — 이미 등록된 법령의 표기 맞추기 
     await service.register('900143');
     const created = calls.lawWrites.find((w) => w.op === 'create');
     expect(created.data.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
-    // 등록은 확인 시각을 찍는다(판 반영은 찍지 않는다 — T-151)
-    expect(created.data.lastCheckedAt).toBeInstanceOf(Date);
-    // 같은 판을 다시 등록하면 그 행을 고친다 — 옛 읽기 판이었어도 지금 판으로
+    // 새 등록은 확인 시각을 비워 다음 동기화의 맨 앞에 선다(T-150 ③ — T-151 때는 찍어서 맨 뒤로 갔다). 판 반영은 찍지 않는다(T-151)
+    expect(created.data.lastCheckedAt).toBeNull();
+    // 같은 판을 다시 등록하면 그 행을 고친다 — 옛 읽기 판이었어도 지금 판으로, 확인 시각은 찍는다(지금 확인했다)
     const again = setup([{ id: 'e5', nodeKey: '5//', content: 'x', versionKey: 'k', effectiveNotes: null }], { priorRules: null });
     await again.service.register('900143');
     expect(again.calls.lawWrites.map((w) => w.op)).toEqual(['update']);
     expect(again.calls.lawWrites[0].data.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
+    expect(again.calls.lawWrites[0].data.lastCheckedAt).toBeInstanceOf(Date);
   });
 
   it('등록은 그 판을 기준판으로 판 기록에 남기고, 등록에서 생긴 이벤트는 판을 가리키지 않는다 (T-151)', async () => {

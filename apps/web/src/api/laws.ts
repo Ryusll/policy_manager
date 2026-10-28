@@ -41,12 +41,54 @@ export type LawArticle = {
   sortOrder: number;
 };
 
+/** 법령 판 하나(T-150) — 판 기록이 없는 옛 변경은 id·mst 가 null 이고 시행일만 있다 */
+export type LawVersionSummary = {
+  id: string | null;
+  mst: string | null;
+  lawType: string | null;
+  promulgationNo: string | null;
+  promulgatedDate: string | null;
+  revisionType: string | null;
+  effectiveDate: string | null;
+  stageEffectiveDates: string[];
+};
+
+/** 조항에 가장 먼저 시행될 예정 변경(T-150) */
+export type LawScheduledChange = {
+  eventId: string;
+  changeType: 'created' | 'modified' | 'deleted';
+  /** 시행일부터의 문구 — 삭제면 null */
+  content: string | null;
+  effectiveDate: string;
+  versionId: string | null;
+  /** 이어서 시행될 예정 변경이 더 있다 */
+  laterCount: number;
+};
+
+/** 오늘 시행 중인 문구로 본 법령조항 — 시행일에 신설될 조항은 content 가 null */
+export type LawInForceArticle = Omit<LawArticle, 'content' | 'lawId' | 'versionKey' | 'effectiveDate'> & {
+  content: string | null;
+  scheduled: LawScheduledChange | null;
+};
+
+export type LawInForce = {
+  today: string;
+  current: LawVersionSummary | null;
+  scheduled: Array<LawVersionSummary & { changeCount: number }>;
+  articles: LawInForceArticle[];
+};
+
 export const lawsApi = {
   list: (): Promise<Law[]> => client.get('/laws').then((r) => r.data),
   get: (id: string): Promise<Law> => client.get(`/laws/${id}`).then((r) => r.data),
   articles: (id: string): Promise<LawArticle[]> => client.get(`/laws/${id}/articles`).then((r) => r.data),
-  /** alreadyTracked — 같은 법령을 이미 다른 판으로 추적 중이라 새로 만들지 않고 그 법령을 돌려줬다(T-151) */
-  register: (mst: string, sourceCode?: string): Promise<Law & { alreadyTracked?: boolean }> =>
+  /** 현행 본문과 시행 예정 변경(T-150) — 조항 본문(articles)은 마지막 반영 판의 것이라 시행 전 문구일 수 있다 */
+  inForce: (id: string): Promise<LawInForce> => client.get(`/laws/${id}/in-force`).then((r) => r.data),
+  /**
+   * alreadyTracked — 같은 법령을 이미 다른 판으로 추적 중이라 새로 만들지 않고 그 법령을 돌려줬다(T-151).
+   * requestedMst — 요청한 판이 현행이 아니라 현행 판으로 등록했다(T-150). 시행 예정 판은 다음 동기화가 변경으로 받는다
+   */
+  register: (mst: string, sourceCode?: string): Promise<Law & { alreadyTracked?: boolean; requestedMst?: string }> =>
     client.post('/laws', { mst, ...(sourceCode ? { sourceCode } : {}) }).then((r) => r.data),
   remove: (id: string): Promise<{ ok: true }> => client.delete(`/laws/${id}`).then((r) => r.data),
 };

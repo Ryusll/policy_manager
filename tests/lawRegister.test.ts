@@ -59,7 +59,16 @@ function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; crea
     lawVersion: { upsert: () => write('lawVersion.upsert', { id: 'v' }) },
   };
   const prisma: any = { ...tx, lawSource: { upsert: () => ok({ id: 'src-1', isActive: true }) }, $transaction: (fn: any) => fn(tx) };
-  const lawGoKr: any = { getLaw: (mst: string) => ok(body(mst, o.lawId === undefined ? LID : o.lawId)) };
+  // 판 목록 — 요청한 판이 현행이다(현행이 아닌 판의 등록은 tests/lawRegisterVersion.test.ts, T-150)
+  let requested = '';
+  const lawGoKr: any = {
+    getLaw: (mst: string) => {
+      requested ||= mst;
+      return ok(body(mst, o.lawId === undefined ? LID : o.lawId));
+    },
+    searchVersions: (lawId: string) =>
+      ok({ page: 1, display: 100, total: 1, items: [{ mst: requested, lawId, status: '현행', promulgationDate: '2026-01-01' }] }),
+  };
   return { service: new LawsService(prisma, lawGoKr), calls };
 }
 
@@ -79,6 +88,7 @@ describe('LawsService.register — 법령 행 고르기 (T-151)', () => {
     expect(r).toMatchObject({ id: 'law-same', alreadyTracked: false });
     expect(calls.writes).toContain('law.update');
     expect(calls.writes).not.toContain('law.create');
+    expect(calls.updates[0].lastCheckedAt).toBeInstanceOf(Date); // 같은 판 다시 등록은 지금 확인한 것이다
   });
 
   it('MST·법령ID 로 찾은 행이 둘 이상이면(같은 법령의 옛 중복) 어느 행인지 짐작하지 않고 409 — 쓰지 않고, 정리할 중복을 로그에 남긴다', async () => {
@@ -102,6 +112,8 @@ describe('LawsService.register — 법령 행 고르기 (T-151)', () => {
     const { service, calls } = setup();
     const r = await service.register('900200');
     expect(r).toMatchObject({ id: 'law-new', alreadyTracked: false });
+    // 확인 시각을 비워 다음 동기화의 맨 앞에 선다 — 공포됐지만 시행 전인 판을 곧바로 변경으로 받게(T-150 ③)
+    expect(r).toMatchObject({ lastCheckedAt: null });
     expect(calls.writes.slice(0, 2)).toEqual(['law.create', 'lawVersion.upsert']);
     const [sql, ...values] = calls.locks[0] as [string, ...unknown[]];
     expect(sql).toMatch(/FOR NO KEY UPDATE/);

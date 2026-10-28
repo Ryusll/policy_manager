@@ -42,6 +42,17 @@ export class LawsController {
     return this.lawsService.findOne(id);
   }
 
+  @Get(':id/in-force')
+  @ApiOperation({
+    summary: '현행 본문과 시행 예정 개정 (T-150)',
+    description:
+      '조항 본문은 마지막으로 반영한 판(시행 전일 수 있다)의 것이다. 시행일이 오늘 뒤인 변경으로 조항마다 지금 시행 중인 문구와 ' +
+      '가장 먼저 시행될 변경(신설·변경·삭제, 시행일)을 가르고, 현행 판과 시행 예정 판을 함께 준다.',
+  })
+  inForce(@Param('id') id: string) {
+    return this.lawsService.inForce(id);
+  }
+
   @Get(':id/articles')
   @ApiOperation({ summary: '법령조항 목록 (원문 순서)' })
   articles(@Param('id') id: string) {

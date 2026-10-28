@@ -12,6 +12,7 @@ import {
 import LawImpactPanel from './LawImpactPanel';
 import { effectiveNotesDates } from '../lib/effectiveNotes';
 import { useI18n } from '../i18n/useI18n';
+import { lawVersionLabel } from '../lib/lawVersionLabel';
 
 const CHANGE_TYPE_STYLE: Record<string, string> = {
   created: 'bg-green-50 text-green-800 border-green-200',
@@ -115,6 +116,7 @@ function Row({
         {ev.label}
       </span>
       <span className="text-gray-500 truncate">
+        {lawVersionLabel(ev.version, t) && `${lawVersionLabel(ev.version, t)} · `}
         {ev.lawEffectiveDate ? `시행 ${ev.lawEffectiveDate}` : '시행일 미상'}
         {' · '}
         {RECEIVED_VIA_LABEL[ev.receivedVia] ?? ev.receivedVia} {new Date(ev.detectedAt).toLocaleDateString('ko-KR')}

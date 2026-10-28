@@ -7,6 +7,8 @@ import { lawBibliography, prepareVersion, saveArticles, toDate } from './law-art
 import { versionOrderKey } from './law-version-plan';
 import { TX_OPTIONS } from './law-tx';
 import { lockLawRowsForRegister } from '../common/row-locks';
+import { fetchRegisterVersion } from './law-register-version';
+import { readLawInForce } from './law-in-force.query';
 
 /** 같은 법령의 옛 중복 행이 있으면 등록하지 않는다(고객 화면에 보이는 문구) */
 const DUPLICATE_LAW_ROWS = '같은 법령이 여러 행으로 등록돼 있어(옛 중복) 정리될 때까지 등록할 수 없습니다 — 아스트룸에 문의하세요.';
@@ -75,14 +77,16 @@ export class LawsService {
    * 법령ID 로 줄 선다. 응답에 법령ID 가 없으면 같은 판 다시 등록만 받고 새 행은 만들지 않는다(502). 찾은 행이 둘 이상이면 같은 법령의
    * 옛 중복이라 어느 행인지 짐작하지 않고 409(정리는 T-154).
    */
-  async register(mst: string, sourceCode?: string, receivedVia: LawEventChannel = 'manual') {
+  async register(requestedMst: string, sourceCode?: string, receivedVia: LawEventChannel = 'manual') {
     const source = await this.ensureSource(sourceCode);
-    const { meta, tree } = await this.lawGoKr.getLaw(mst);
+    // 현행 판으로 등록한다 — 시행 예정 판이 기준판이 되면 그 개정이 이벤트 없이 묻힌다(T-150 ③)
+    const { mst, meta, tree } = await fetchRegisterVersion(this.lawGoKr, requestedMst);
     const version = prepareVersion(mst, meta, tree);
-    const fields = { ...lawBibliography(meta, version), lastCheckedAt: new Date(), lastCheckError: null };
+    const fields = { ...lawBibliography(meta, version), lastCheckError: null };
 
     try {
-      return await this.registerTx(source.id, mst, meta, version, fields, receivedVia);
+      const result = await this.registerTx(source.id, mst, meta, version, fields, receivedVia);
+      return mst === requestedMst ? result : { ...result, requestedMst };
     } catch (e) {
       // 잠근 뒤에 같은 판의 행이 생기는 일은 드물다(첫 등록끼리는 법령ID 열쇠로 줄 선다) — 그래도 (법령원, MST) 유일에 걸리면 500 이 아니라 409
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -97,7 +101,7 @@ export class LawsService {
     mst: string,
     meta: Awaited<ReturnType<LawGoKrService['getLaw']>>['meta'],
     version: ReturnType<typeof prepareVersion>,
-    fields: ReturnType<typeof lawBibliography> & { lastCheckedAt: Date; lastCheckError: null },
+    fields: ReturnType<typeof lawBibliography> & { lastCheckError: null },
     receivedVia: LawEventChannel,
   ) {
     const source = { id: sourceId };
@@ -124,9 +128,11 @@ export class LawsService {
           '법제처 응답에 법령ID가 없어 새로 등록하지 않았습니다 — 같은 법령을 이미 추적 중인지 확인할 수 없습니다. 잠시 뒤 다시 시도하고, 계속되면 아스트룸에 문의하세요.',
         );
       }
+      // 새 법령은 확인 시각을 비워 다음 동기화의 맨 앞에 세운다 — 공포됐지만 시행 전인 판을 곧바로 변경으로 받게(T-150 ③).
+      // 같은 판 다시 등록은 지금 확인한 것이라 시각을 찍는다
       const law = same
-        ? await tx.law.update({ where: { id: same.id }, data: fields })
-        : await tx.law.create({ data: { sourceId: source.id, externalId: mst, ...fields } });
+        ? await tx.law.update({ where: { id: same.id }, data: { ...fields, lastCheckedAt: new Date() } })
+        : await tx.law.create({ data: { sourceId: source.id, externalId: mst, ...fields, lastCheckedAt: null } });
       await tx.lawVersion.upsert({
         where: { lawId_mst: { lawId: law.id, mst } },
         update: {},
@@ -180,6 +186,12 @@ export class LawsService {
     if (!law) throw new NotFoundException('법령을 찾을 수 없습니다.');
     const { _count, ...rest } = law;
     return { ...rest, articleCount: _count.articles };
+  }
+
+  /** 현행 본문과 시행 예정 개정(T-150 ②) — 법령조항 본문은 마지막 반영 판(시행 전일 수 있다)의 것이라 이벤트로 가른다 */
+  async inForce(id: string) {
+    await this.findOne(id);
+    return readLawInForce(this.prisma, id);
   }
 
   /** 법령조항 목록 (원문 순서). 법령에서 사라진 조항(T-124)은 빠진다 — 걸어 둔 연결은 연결 쪽에서 보인다 */

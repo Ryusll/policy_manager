@@ -27,6 +27,8 @@ const EVENT_SELECT = {
   detectedAt: true,
   law: { select: { lawName: true } },
   lawArticle: { select: { label: true } },
+  // 어느 판의 개정인가(T-150 ②) — "법률 제21700호". T-151 전 이벤트는 판 기록이 없다(null)
+  lawVersion: { select: { lawType: true, promulgationNo: true } },
 } satisfies Prisma.LawChangeEventSelect;
 
 type EventRow = Prisma.LawChangeEventGetPayload<{ select: typeof EVENT_SELECT }>;
@@ -47,6 +49,7 @@ function presentEvent(e: EventRow) {
     afterContent: e.afterContent,
     promulgatedDate: dateOnly(e.promulgatedDate),
     lawEffectiveDate: dateOnly(e.lawEffectiveDate),
+    version: e.lawVersion ? { lawType: e.lawVersion.lawType, promulgationNo: e.lawVersion.promulgationNo } : null,
     // 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로이고, 알려 주기 위한 기록. 없으면 null
     effectiveNotes: presentEventEffective(e.effectiveInfo),
     receivedVia: e.receivedVia,

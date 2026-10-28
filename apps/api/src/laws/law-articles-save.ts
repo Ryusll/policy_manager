@@ -94,6 +94,8 @@ export interface SaveArticlesArgs {
   beforeRules: number | null;
   /** 이 저장을 만든 법령 판 기록(T-151). 등록(같은 판을 다시 읽음)은 null */
   lawVersionId: string | null;
+  /** false 면 변경 이벤트를 만들지 않는다 — 묻힌 법령의 기준을 앞 판으로 되돌릴 때(T-150 ④). 앞 판으로 가는 것은 개정이 아니다 */
+  recordEvents?: boolean;
 }
 
 /**
@@ -161,7 +163,7 @@ export async function saveArticles(tx: Prisma.TransactionClient, args: SaveArtic
   // (최초 등록은 비교 대상이 없어 빈 결과 — detectLawArticleChanges 주석 참고).
   // deleteMany(아래) 보다 반드시 먼저다 — 삭제될 조문의 lawArticleId 가 아직 살아
   // 있어야 이벤트에 담을 수 있다(그 뒤 deleteMany 가 SetNull 로 FK 만 끊는다).
-  const changes = detectLawArticleChanges(existingArticles, rows, articleIdByNodeKey);
+  const changes = args.recordEvents === false ? [] : detectLawArticleChanges(existingArticles, rows, articleIdByNodeKey);
   if (changes.length) {
     const rowByNodeKey = new Map(rows.map((r) => [r.nodeKey, r]));
     await tx.lawChangeEvent.createMany({

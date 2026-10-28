@@ -11,7 +11,8 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
-import { lawsApi, type LawArticle } from '../api/laws';
+import { lawsApi, type LawInForceArticle } from '../api/laws';
+import { InForceText, LawInForceHeader, ScheduledBadge } from '../components/LawInForce';
 import { lawLinksApi, RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { ConfirmBadge } from '../components/LawLinksPanel';
 import EvidenceSource from '../components/EvidenceSource';
@@ -31,13 +32,14 @@ export default function LawDetailPage() {
   const changeId = searchParams.get('change');
 
   const lawQuery = useQuery({ queryKey: ['laws', id], queryFn: () => lawsApi.get(id!), enabled: !!id });
+  // 조항 본문은 마지막 반영 판(시행 전일 수 있다)의 것이라, 지금 시행 중인 문구와 시행 예정 변경을 가른 것을 쓴다(T-150)
   const articlesQuery = useQuery({
-    queryKey: ['laws', id, 'articles'],
-    queryFn: () => lawsApi.articles(id!),
+    queryKey: ['laws', id, 'in-force'],
+    queryFn: () => lawsApi.inForce(id!),
     enabled: !!id,
   });
 
-  const articles = articlesQuery.data || [];
+  const articles = articlesQuery.data?.articles || [];
   const selected = articles.find((a) => a.id === selectedId) || null;
 
   if (!id) return null;
@@ -54,22 +56,23 @@ export default function LawDetailPage() {
         </button>
         <h1 className="text-base font-bold text-gray-800">{lawQuery.data?.lawName || '불러오는 중…'}</h1>
         {lawQuery.data && (
-          <p className="text-xs text-gray-500 mt-0.5">
-            {[lawQuery.data.lawType, lawQuery.data.lawNo].filter(Boolean).join(' · ')}
-            {/* 날짜 컬럼이 ISO 시각으로 직렬화돼 온다 — 날짜 부분만 보인다 */}
-            {lawQuery.data.effectiveDate && ` · 시행 ${lawQuery.data.effectiveDate.slice(0, 10)}`}
-            {' · '}조문 {lawQuery.data.articleCount}개
+          <div className="flex items-start gap-2 flex-wrap">
+            <LawInForceHeader
+              law={lawQuery.data}
+              inForce={articlesQuery.data}
+              articleCount={articlesQuery.data ? articles.filter((a) => a.content !== null).length : lawQuery.data.articleCount}
+            />
             {lawQuery.data.sourceUrl && (
               <a
                 href={lawQuery.data.sourceUrl}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="ml-2 text-navy-700 hover:underline inline-flex items-center gap-0.5"
+                className="mt-0.5 text-xs text-navy-700 hover:underline inline-flex items-center gap-0.5"
               >
                 원문 <ExternalLink size={11} />
               </a>
             )}
-          </p>
+          </div>
         )}
         {lawQuery.data?.lastCheckedAt && (
           <p className="text-[11px] text-gray-400 mt-1">
@@ -124,7 +127,7 @@ export default function LawDetailPage() {
   );
 }
 
-function ArticleRow({ article, selected, onClick }: { article: LawArticle; selected: boolean; onClick: () => void }) {
+function ArticleRow({ article, selected, onClick }: { article: LawInForceArticle; selected: boolean; onClick: () => void }) {
   // 항·호는 들여쓴다 — 조 본문(clauseNo·itemNo 모두 null) 기준
   const depth = article.itemNo != null ? 2 : article.clauseNo != null ? 1 : 0;
   return (
@@ -138,17 +141,18 @@ function ArticleRow({ article, selected, onClick }: { article: LawArticle; selec
         )}
         style={{ paddingLeft: `${0.75 + depth * 0.9}rem` }}
       >
-        <span className={clsx('font-medium shrink-0', selected ? 'text-navy-800' : 'text-gray-700')}>
+        <span className={clsx('font-medium shrink-0', selected ? 'text-navy-800' : article.content === null ? 'text-gray-400' : 'text-gray-700')}>
           {article.label}
         </span>
         {article.title && <span className="text-gray-500 truncate">{article.title}</span>}
         {depth === 0 && <EffectiveNotesMark notes={article.effectiveNotes} />}
+        <ScheduledBadge scheduled={article.scheduled} />
       </button>
     </li>
   );
 }
 
-function SelectedArticlePanel({ article, canEdit }: { article: LawArticle; canEdit: boolean }) {
+function SelectedArticlePanel({ article, canEdit }: { article: LawInForceArticle; canEdit: boolean }) {
   const queryClient = useQueryClient();
 
   const linksQuery = useQuery({
@@ -179,7 +183,7 @@ function SelectedArticlePanel({ article, canEdit }: { article: LawArticle; canEd
         {article.title && <p className="text-xs text-gray-500">{article.title}</p>}
       </div>
       <div className="p-4 border-b border-gray-200 bg-gray-50/60">
-        <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{article.content}</p>
+        <InForceText article={article} />
         <div className="mt-2 empty:hidden">
           <EffectiveNotesLine info={lawArticleEffectiveNotes(article)} />
         </div>
