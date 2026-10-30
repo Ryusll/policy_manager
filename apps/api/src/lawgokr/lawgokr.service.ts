@@ -177,6 +177,10 @@ export class LawGoKrService {
     const raw = await this.call<LawGoKrSearchResponse>('lawSearch.do', {
       target: 'eflaw',
       LID: id,
+      // 연혁·시행예정·현행을 모두 달라고 밝힌다 — 빼면 현행 한 건만 온다(2026-10-30 실호출: 근로기준법 001872 → 1건, nw=1,2,3 → 54건,
+      // 소득세법 225건·조세특례제한법 375건도 쪽마다 총건수가 같고 섞인 채 공포일 내림차순). 현행만 받으면 저장 판이 현행이 아닌 법령은
+      // '확인 실패'로 멈추고, 저장 판이 현행인 법령은 시행 예정 판을 조용히 놓친다(T-186 운영 반영 전 검증에서 찾음)
+      nw: '1,2,3',
       page: p,
       display: VERSION_LIST_PAGE_SIZE,
       sort: 'ddes',

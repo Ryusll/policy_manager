@@ -43,9 +43,10 @@ describe('LawGoKrService.searchVersions (T-151)', () => {
     const r = await svc.searchVersions(' 001872 ', 2);
     const q = urls[0].searchParams;
     expect(urls[0].pathname).toMatch(/lawSearch\.do$/);
-    expect({ target: q.get('target'), LID: q.get('LID'), sort: q.get('sort'), display: q.get('display'), page: q.get('page'), query: q.get('query') }).toEqual({
+    expect({ target: q.get('target'), LID: q.get('LID'), nw: q.get('nw'), sort: q.get('sort'), display: q.get('display'), page: q.get('page'), query: q.get('query') }).toEqual({
       target: 'eflaw',
       LID: '001872',
+      nw: '1,2,3', // 연혁·시행예정·현행 — 빼면 현행 한 건만 온다(2026-10-30 실호출, T-186 검증)
       sort: 'ddes',
       display: '100',
       page: '2',

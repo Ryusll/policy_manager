@@ -20,5 +20,6 @@ export const lawSearchCacheKey = (o: { scope: number; sort: string; display: num
  * 계산할 수 있다. 법령명이 아니라 법령ID 로 받으므로 제명이 바뀐 판도 빠지지 않는다(T-151 검토)
  */
 export const VERSION_LIST_PAGE_SIZE = 100;
+// v3 — nw=1,2,3 을 붙였다. v2 에 든 '현행만 준' 목록(최대 캐시 기간)을 배포 뒤에 읽어 판 반영이 실패하지 않게
 export const lawVersionListCacheKey = (lawId: string, page: number) =>
-  `lawgokr:eflaw:v2:lid:${lawId}:ddes:${VERSION_LIST_PAGE_SIZE}:${page}`;
+  `lawgokr:eflaw:v3:lid:${lawId}:ddes:${VERSION_LIST_PAGE_SIZE}:${page}`;
