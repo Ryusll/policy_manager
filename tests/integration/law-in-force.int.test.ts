@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
-import { api, createTenant, waitForApi } from './helpers';
+import { api, createPolicyWithArticle, createTenant, waitForApi } from './helpers';
 import { FakeLaw, requireRedis, type FakeVersion } from './lawgokr-seed';
 
 /**
@@ -152,6 +152,7 @@ describe('T-150 시행 예정 법령 (가짜 법제처)', () => {
     let lawId = '';
     const articleId = (no: string) => sql(`SELECT id FROM law_articles WHERE law_id='${lawId}' AND article_no=${no} AND clause_no IS NULL AND item_no IS NULL;`);
     let vacationId = '';
+    let companyArticleId = '';
 
     it('T-150 전처럼 시행 예정 판으로 등록된 법령을 만든다(그때 목록이 그 판을 현행으로 줬다고 흉내)', async () => {
       law.seedAll([A, B], B);
@@ -162,6 +163,15 @@ describe('T-150 시행 예정 법령 (가짜 법제처)', () => {
       expect(res.body.externalId).toBe(B.mst);
       law.seedVersionList([A, B], A); // 실제로는 A 가 현행이다
       vacationId = articleId('2');
+    });
+
+    it('회사 조문 하나에 휴가 조항을 확정 연결해 둔다 — 보정 뒤 개정 후보가 어느 쪽으로 생기는지 보려고', async () => {
+      const set = await createPolicyWithArticle(pf.token, `LF-${Date.now().toString(36)}`, '묻힘보정규정');
+      companyArticleId = set.article.id;
+      const pub = await api(`/policies/${set.policy.id}/publish-drafts`, { method: 'POST', token: pf.token, json: { changeNote: '제정', effectiveDate: '2020-01-01' } });
+      expect(pub.status, JSON.stringify(pub.body)).toBeLessThan(300);
+      const link = await api('/law-links', { method: 'POST', token: pf.token, json: { lawArticleId: vacationId, articleId: companyArticleId, relationType: 'delegation', evidenceText: '휴가' } });
+      expect(link.status, JSON.stringify(link.body)).toBe(201);
     });
 
     it('계획만 찍으면 DB 를 바꾸지 않는다', () => {
@@ -188,6 +198,13 @@ describe('T-150 시행 예정 법령 (가짜 법제처)', () => {
       expect(sql(`SELECT external_id FROM laws WHERE id='${lawId}';`)).toBe(B.mst);
       expect(sql(`SELECT string_agg(change_type::text, ',' ORDER BY node_key) FROM law_change_events WHERE law_id='${lawId}';`)).toBe('modified,created');
       expect(articleId('2')).toBe(vacationId);
+    });
+
+    it('개정 후보는 묻혔던 판의 정방향 변경(2일 → 4일) 하나뿐 — 되돌리기가 거꾸로 된 후보를 만들지 않는다 (T-186 검증)', () => {
+      const rows = sql(
+        `SELECT string_agg(e.change_type::text || ':' || (e.after_content LIKE '%4일%')::text, ',') FROM amendment_candidates c JOIN law_change_events e ON e.id = c.change_event_id WHERE c.article_id = '${companyArticleId}';`,
+      );
+      expect(rows).toBe('modified:true');
     });
 
     it('이미 이벤트가 있으면 되돌리지 않는다(같은 판이 두 번 들어가지 않게)', () => {

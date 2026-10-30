@@ -111,7 +111,8 @@ export async function applyRebaseline(
     });
     // 확인 시각을 비워 다음 동기화의 맨 앞에 — 묻힌 판부터 공포 순으로 반영해 변경 이벤트·개정 후보를 만든다
     await tx.law.update({ where: { id: plan.lawId }, data: { ...lawBibliography(meta, version), lastCheckedAt: null, lastCheckError: null } });
-    await saveArticles(tx, { lawId: plan.lawId, meta, version, receivedVia, beforeRules: null, lawVersionId: null });
+    // 앞 판 본문으로 되돌릴 뿐 변경이 아니다 — 이벤트를 남기면 다음 동기화가 묻힌 판을 다시 반영할 때 같은 변경이 두 번 들어간다
+    await saveArticles(tx, { lawId: plan.lawId, meta, version, receivedVia, beforeRules: null, lawVersionId: null, recordEvents: false });
     return { articles: version.rows.length };
   }, TX_OPTIONS);
 }

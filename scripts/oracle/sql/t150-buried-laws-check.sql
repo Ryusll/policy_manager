@@ -23,4 +23,7 @@ WHERE l.effective_date > (l.created_at AT TIME ZONE 'Asia/Seoul')::date
   AND NOT EXISTS (SELECT 1 FROM law_change_events e WHERE e.law_id = l.id AND e.law_effective_date = l.effective_date)
 ORDER BY l.law_name;
 
+-- 처리하지 않은 변경 이벤트 — 보정 뒤 `--law` 동기화의 끝은 이 이벤트 전부(그 법령 밖 포함)의 개정 후보·알림을 만든다. 0 이어야 한다(런북 7-5 의 2-1)
+SELECT count(*) AS "처리하지_않은_이벤트" FROM law_change_events WHERE amendments_processed_at IS NULL;
+
 ROLLBACK;
