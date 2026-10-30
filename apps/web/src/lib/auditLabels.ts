@@ -32,6 +32,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'amendment.approve': '개정 후보 승인(후속 버전 발행)',
   'amendment.reject': '개정 후보 반려',
   'amendment.reject_correct': '개정 후보 반려 정정',
+  'amendment.export.pdf': '개정안 문서 PDF 내보내기',
   'version.archive': '게시본 폐지',
   'version.repeal_cancel': '폐지 예정 취소',
   'version.withdraw': '시행 예정 철회',

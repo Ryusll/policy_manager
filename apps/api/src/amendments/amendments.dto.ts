@@ -1,5 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class GenerateAmendmentsDto {
   @ApiProperty({ description: '후보를 만들 법령 변경 이벤트' })
@@ -135,4 +149,14 @@ export class RegenerateAmendmentDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '예정 사내 시행일은 YYYY-MM-DD 형식이어야 합니다.' })
   plannedEffectiveDate?: string;
+}
+
+/** 개정안 문서(T-162) — 같은 규정의 후보 하나 또는 여럿 */
+export class AmendmentDocumentDto {
+  @ApiProperty({ type: [String], description: '문서에 넣을 개정 후보 id — 같은 규정, 반려되지 않은 것(1~50개). 조문 차례로 정렬된다' })
+  @IsArray()
+  @ArrayMinSize(1, { message: '개정 후보를 하나 이상 골라 주세요.' })
+  @ArrayMaxSize(50, { message: '한 문서에는 개정 후보를 50개까지 넣을 수 있습니다.' })
+  @IsUUID('4', { each: true, message: 'candidateIds 는 개정 후보 id 여야 합니다.' })
+  candidateIds: string[];
 }

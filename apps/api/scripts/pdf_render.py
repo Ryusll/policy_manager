@@ -41,6 +41,15 @@ p {{ margin: 0 0 4pt 0; }}
 .tmpl-row-item {{ margin-left: 28pt; }}
 .tmpl-empty {{ color: #6b7280; }}
 .doc-footer {{ font-size: 8pt; color: #6b7280; margin-top: 14pt; }}
+table.amend {{ width: 100%; border-collapse: collapse; margin: 3pt 0 8pt 0; }}
+table.amend th, table.amend td {{ border: 0.6pt solid #6b7280; padding: 3pt 4pt; vertical-align: top; font-size: 9pt; }}
+table.amend th {{ background-color: #f3f4f6; text-align: center; }}
+th.amend-text {{ width: 165pt; }}
+th.amend-note {{ width: 116pt; }}
+th.amend-half {{ width: 228pt; }}
+td.amend-note {{ font-size: 8pt; color: #374151; }}
+.amend-muted {{ color: #6b7280; }}
+ul.amend-reasons {{ margin: 0 0 6pt 14pt; }}
 """
 
 

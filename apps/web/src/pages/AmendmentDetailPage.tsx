@@ -19,6 +19,7 @@ import {
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
 import { CorrectionHistoryLabel, CorrectionNotice, IssuedSourceLink, RejectionCorrectionPanel } from '../components/AmendmentCorrection';
+import AmendmentDocumentButton from '../components/AmendmentDocumentButton';
 import EvidenceSource from '../components/EvidenceSource';
 import EffectiveNotesLine from '../components/EffectiveNotesLine';
 import { formatArticleAnchor } from '../lib/articleAnchor';
@@ -188,6 +189,11 @@ function Header({ data }: { data: AmendmentDetail }) {
         {new Date(data.createdAt).toLocaleString('ko-KR')}
       </p>
       <EffectiveNotesLine info={data.event.effectiveNotes} />
+      <AmendmentDocumentButton
+        candidateIds={[data.id]}
+        rejected={data.reviewState === 'rejected'}
+        stale={data.reviewState !== 'approved' && data.reviewState !== 'rejected' && Boolean(data.staleReason)}
+      />
     </div>
   );
 }

@@ -12,6 +12,10 @@ import {
 } from '../api/amendments';
 import { formatArticleAnchor } from '../lib/articleAnchor';
 import { useAuthStore } from '../stores/authStore';
+import { useI18n } from '../i18n/useI18n';
+import { toast } from '../stores/toastStore';
+import AmendmentDocumentButton, { AmendmentDocumentPick } from '../components/AmendmentDocumentButton';
+import { AMENDMENT_DOC_MAX } from '../api/amendmentDocument';
 
 /**
  * 개정 검토 — 개정 후보 목록 (T-107).
@@ -34,6 +38,7 @@ type Filter = { state: AmendmentListState; policyId: string; policyActive: '' | 
 
 export default function AmendmentsPage() {
   const user = useAuthStore((s) => s.user);
+  const { t } = useI18n();
   const canReview = user?.role === 'admin' || user?.role === 'editor';
   const [filter, setFilter] = useState<Filter>({ state: 'open', policyId: '', policyActive: '', page: 1 });
 
@@ -69,6 +74,18 @@ export default function AmendmentsPage() {
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  /**
+   * 개정안 문서(T-162)에 넣을 후보 — 고른 규정의 처리할 것(작성·검토) 전부(이 쪽만이 아니라). 승인된 후보는 상세 화면에서 낸다.
+   * 기준 본문이 지금과 달라진 후보는 빼고 뺐다고 알린다 — 다시 만들기를 하면 같은 조문에 옛 후보가 남아 있어서다.
+   * 한 문서 상한보다 많으면 막는다 — 일부만 넣은 문서가 전체처럼 읽히지 않게
+   */
+  const pickDocIds = async () => {
+    const all = await amendmentsApi.list({ state: 'open', policyId: filter.policyId, page: 1, limit: AMENDMENT_DOC_MAX });
+    if (all.total > AMENDMENT_DOC_MAX) throw new AmendmentDocumentPick('amendmentDoc.tooMany', { max: AMENDMENT_DOC_MAX, total: all.total });
+    const fresh = all.rows.filter((r) => !r.staleReason);
+    if (fresh.length < all.rows.length) toast(t('amendmentDoc.skippedStale', { count: all.rows.length - fresh.length }), 'info');
+    return fresh.map((r) => r.id);
+  };
 
   return (
     <div className="page-shell">
@@ -119,6 +136,7 @@ export default function AmendmentsPage() {
                 </option>
               ))}
             </select>
+            {!filter.policyId && <p className="mt-1 text-xs text-gray-500">{t('amendmentDoc.listHint')}</p>}
           </div>
           <div>
             <label className="block text-xs text-gray-600 mb-1" htmlFor="amend-active">
@@ -142,6 +160,12 @@ export default function AmendmentsPage() {
         <div className="px-4 py-2.5 border-b border-gray-200 bg-gray-50 text-xs text-gray-600" aria-live="polite">
           {isLoading ? '불러오는 중…' : `${total.toLocaleString('ko-KR')}건`}
         </div>
+        {filter.policyId && filter.state === 'open' && rows.length > 0 && (
+          <div className="px-4 py-2 border-b border-gray-200 flex flex-wrap items-center gap-2">
+            <AmendmentDocumentButton pickIds={pickDocIds} label={t('amendmentDoc.listButton')} />
+            <span className="text-xs text-gray-500">{t('amendmentDoc.listScope')}</span>
+          </div>
+        )}
         {isError && <p className="px-4 py-6 text-sm text-red-700">개정 후보를 불러오지 못했습니다.</p>}
         {!isLoading && !isError && rows.length === 0 && (
           <p className="px-4 py-10 text-sm text-gray-500 text-center">

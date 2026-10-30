@@ -1,9 +1,12 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Request } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Request, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/guards/decorators';
 import { AmendmentsService } from './amendments.service';
 import { AmendmentCorrectionService } from './amendment-correction';
+import { AmendmentDocumentService } from './amendment-document.service';
 import {
+  AmendmentDocumentDto,
   AmendmentListQueryDto,
   ApproveAmendmentDto,
   CorrectRejectionDto,
@@ -26,6 +29,7 @@ export class AmendmentsController {
   constructor(
     private readonly service: AmendmentsService,
     private readonly correction: AmendmentCorrectionService,
+    private readonly documents: AmendmentDocumentService,
   ) {}
 
   @Post('generate')
@@ -39,6 +43,23 @@ export class AmendmentsController {
       plannedEffectiveDate: dto.plannedEffectiveDate,
       userId: req.user.id,
     });
+  }
+
+  @Post('document/pdf')
+  @HttpCode(200) // 파일을 돌려주므로 201 이 아니다
+  @ApiOperation({
+    summary: '개정안 문서 PDF(T-162) — 같은 규정의 후보를 신구조문대비표(현행·개정안·비고)·개정 이유·법령 근거로. 반려·다른 규정이 섞이면 400',
+  })
+  async documentPdf(@Request() req: { user: { tenantId: string; id: string } }, @Body() dto: AmendmentDocumentDto, @Res() res: Response) {
+    const { pdf, policy } = await this.documents.renderPdf(req.user.tenantId, req.user.id, dto.candidateIds);
+    // 제목을 먼저 자르고 접미사를 붙인다 — 긴 제목에서 '_개정안'이 잘리지 않게
+    const base = `${`${policy.code || 'policy'}_${policy.title || ''}`.replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 72)}_개정안`;
+    res.setHeader('Content-Type', 'application/pdf');
+    // RFC 5987 — encodeURIComponent 가 남기는 ' ( ) * 도 인코딩한다
+    const encoded = encodeURIComponent(base).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader('Content-Disposition', `attachment; filename="amendment.pdf"; filename*=UTF-8''${encoded}.pdf`);
+    res.setHeader('Content-Length', String(pdf.length));
+    res.end(pdf);
   }
 
   @Get()

@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { formatJo } from '../common/article-label';
+import { formatArticleLabel, formatJo } from '../common/article-label';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notify.types';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
@@ -1004,7 +1004,7 @@ export class AmendmentsService {
     },
   ) {
     const policy = cand.article.chapter.policy;
-    const articleLabel = `${formatJo(cand.article.number, cand.article.branchNumber)}${cand.article.clauseNumber ? `제${cand.article.clauseNumber}항` : ''}${cand.article.itemNumber ? `제${cand.article.itemNumber}목` : ''}`;
+    const articleLabel = formatArticleLabel(cand.article);
     const lawLabel = `${cand.changeEvent.law.lawName} ${cand.changeEvent.lawArticle?.label ?? labelFromNodeKey(cand.changeEvent.nodeKey)}`;
     const inTenant = async (ids: string[]) =>
       ids.length
