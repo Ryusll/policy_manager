@@ -106,6 +106,18 @@ export default function NotificationBell() {
                         규정 보기
                       </Link>
                     )}
+                    {n.link && (
+                      <Link
+                        to={n.link}
+                        className="text-navy-700 hover:underline"
+                        onClick={() => {
+                          if (!n.readAt) markReadMutation.mutate(n.id);
+                          setOpen(false);
+                        }}
+                      >
+                        자세히 보기
+                      </Link>
+                    )}
                     {!n.readAt && (
                       <button
                         type="button"

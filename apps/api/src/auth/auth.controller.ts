@@ -1,23 +1,9 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Request,
-  HttpCode,
-  Req,
-  Res,
-  Query,
-} from '@nestjs/common';
+import { Controller, Post, Get, Body, Request, HttpCode, ForbiddenException, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import type { Request as ExpressRequest, Response } from 'express';
-import * as passport from 'passport';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshTokenDto, RegisterDto } from './auth.dto';
-import { Public } from '../common/guards/decorators';
-import type { GoogleOAuthProfile } from './google.strategy';
-import { parseGoogleOAuthState } from './oauth-state';
-import { getPublicUrl } from '../common/config/public-url';
+import { AllowDuringPasswordChange, Public } from '../common/guards/decorators';
+import { publicSignupEnabled, SIGNUP_CLOSED_MESSAGE } from './signup-policy';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -28,88 +14,31 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   @ApiOperation({ summary: 'Login' })
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Headers('user-agent') userAgent?: string) {
+    return this.authService.login(dto, { userAgent });
+  }
+
+  /** 로그인 화면이 회원가입 링크를 보일지 정한다 (T-122) */
+  @Public()
+  @Get('options')
+  @ApiOperation({ summary: '로그인 화면 설정 — 공개 회원가입 허용 여부' })
+  options() {
+    return { publicSignup: publicSignupEnabled() };
   }
 
   @Public()
   @Post('register')
-  @ApiOperation({ summary: 'Register new tenant' })
+  @ApiOperation({ summary: 'Register new tenant — 공개 회원가입이 닫혀 있으면 403 (T-122)' })
   register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
-  }
-
-  @Public()
-  @Get('google')
-  @ApiOperation({ summary: 'Start Google OAuth (redirect)' })
-  googleStart(
-    @Req() req: ExpressRequest,
-    @Res() res: Response,
-    @Query('mode') mode?: string,
-    @Query('tenantSlug') tenantSlug?: string,
-    @Query('tenantName') tenantName?: string,
-  ) {
-    if (
-      !process.env.GOOGLE_CLIENT_ID ||
-      !process.env.GOOGLE_CLIENT_SECRET
-    ) {
-      return res
-        .status(503)
-        .json({ message: 'Google OAuth is not configured' });
-    }
-    const resolvedMode = mode === 'register' ? 'register' : 'login';
-    const slug = (tenantSlug || 'demo').trim();
-    const name = (tenantName || '').trim();
-    if (resolvedMode === 'register' && (!slug || !name)) {
-      return res.status(400).json({
-        message:
-          'tenantSlug and tenantName are required when mode=register',
+    if (!publicSignupEnabled()) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'SIGNUP_CLOSED',
+        message: SIGNUP_CLOSED_MESSAGE,
       });
     }
-    const state = Buffer.from(
-      JSON.stringify({
-        mode: resolvedMode,
-        tenantSlug: slug,
-        tenantName: name,
-      }),
-    ).toString('base64url');
-    passport.authenticate('google', {
-      scope: ['email', 'profile'],
-      state,
-    })(req, res);
-  }
-
-  @Public()
-  @Get('google/callback')
-  @ApiOperation({ summary: 'Google OAuth callback' })
-  googleCallback(@Req() req: ExpressRequest, @Res() res: Response) {
-    const fe = getPublicUrl();
-    passport.authenticate(
-      'google',
-      { session: false },
-      async (err: Error | null, user: GoogleOAuthProfile | false) => {
-        if (err || !user) {
-          return res.redirect(`${fe}/login?error=oauth`);
-        }
-        const state = parseGoogleOAuthState(req.query.state as string);
-        if (!state) {
-          return res.redirect(`${fe}/login?error=oauth_state`);
-        }
-        try {
-          const result = await this.authService.completeGoogleOAuth(
-            user,
-            state,
-          );
-          const params = new URLSearchParams({
-            access_token: result.accessToken,
-            refresh_token: result.refreshToken,
-          });
-          return res.redirect(`${fe}/oauth/callback?${params.toString()}`);
-        } catch {
-          return res.redirect(`${fe}/login?error=oauth`);
-        }
-      },
-    )(req, res);
+    return this.authService.register(dto);
   }
 
   @Public()
@@ -117,19 +46,18 @@ export class AuthController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Refresh access token' })
   refresh(@Body() dto: RefreshTokenDto) {
-    const decoded: any = JSON.parse(
-      Buffer.from(dto.refreshToken.split('.')[1], 'base64').toString(),
-    );
-    return this.authService.refresh(decoded.sub, dto.refreshToken);
+    return this.authService.refresh(dto.refreshToken);
   }
 
+  @AllowDuringPasswordChange()
   @Post('logout')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Logout' })
+  @ApiOperation({ summary: 'Logout — 이 기기의 세션만 끝낸다 (T-137)' })
   logout(@Request() req: any) {
-    return this.authService.logout(req.user.id);
+    return this.authService.logout(req.user.id, req.user.sessionId);
   }
 
+  @AllowDuringPasswordChange()
   @Post('me')
   @HttpCode(200)
   @ApiOperation({ summary: 'Get current user' })

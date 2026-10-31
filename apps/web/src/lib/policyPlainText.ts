@@ -1,0 +1,73 @@
+import { articleShortLabel, isChapterHeaderHidden } from './legalArticleLabel';
+import { noCurrentTextMarker } from './versionState';
+
+/**
+ * 전문 텍스트(.txt) 내보내기 본문 만들기.
+ *
+ * 화면(TemplateRenderer)·인쇄 HTML(templateUtils)·읽어주기(speech)는 모두
+ * `isChapterHeaderHidden` 을 거치는데 **여기만 거치지 않아서**, 장이 없는 규정을
+ * 내보내면 `===== 제1장  =====` 라는 유령 장 제목이 찍혔다(T-84 감사에서 발견).
+ *
+ * `Article.chapterId` 가 필수라 "장 없는 규정"은 숨김 장(`suppressHeader`)이라는
+ * **관례**로 표현된다([ADR-0011](../../../docs/Deliverables/10_ADR_의사결정기록/ADR.md)).
+ * 관례를 모르는 코드가 하나만 있어도 이렇게 샌다 — 그래서 컴포넌트 안에 있던
+ * 문자열 조립을 여기로 꺼내 테스트로 묶었다.
+ */
+
+export type PlainTextAppendix = {
+  kind?: string;
+  title?: string | null;
+  body?: string | null;
+};
+
+export type PlainTextInput = {
+  policy: { code?: string | null; title?: string | null };
+  /** 어느 날의 본문인지(T-180) — 제목 아래 한 줄. 예: `기준일: 2021-06-01 시점 본문` */
+  basis?: string;
+  /** `buildFullViewGroups` 결과 — 장마다 `allGroups` 를 갖는다 */
+  chapters: any[];
+  appendices?: PlainTextAppendix[];
+  /** 부록 종류 코드 → 표시 이름 */
+  appendixKindLabel?: Record<string, string>;
+};
+
+export function buildPolicyPlainText(input: PlainTextInput): string {
+  const { policy, basis, chapters, appendices = [], appendixKindLabel = {} } = input;
+  const lines: string[] = [`${policy.code ?? ''} ${policy.title ?? ''}`.trim(), ...(basis ? [basis] : []), ''];
+
+  for (const chapter of chapters || []) {
+    lines.push('');
+    // 숨김 장은 제목 줄 자체를 쓰지 않는다. 조문은 그대로 이어 붙는다.
+    if (!isChapterHeaderHidden(chapter)) {
+      lines.push(`===== 제${chapter.number}장 ${String(chapter.title ?? '').trim()} =====`);
+    }
+    // 절 소속 조문도 빠짐없이 담는다(allGroups 는 절 소속 여부와 무관한 조 번호 순)
+    for (const group of chapter.allGroups || []) {
+      for (const article of group.items || []) {
+        lines.push('');
+        lines.push(`${articleShortLabel(article)} ${article.title || ''}`.trimEnd());
+        // 오늘 시행 중인 본문만(T-127). 없으면 "삭제 <날짜>"·"날짜 시행 예정" — 시행 예정 본문은 넣지 않는다
+        lines.push(String(article.versions?.[0]?.content || noCurrentTextMarker(article) || '').trim());
+      }
+    }
+  }
+
+  if (appendices.length) {
+    lines.push('');
+    lines.push('===== 부칙·별표·서식 =====');
+    for (const appendix of appendices) {
+      lines.push('');
+      const label = appendixKindLabel[String(appendix.kind)] || appendix.kind || '';
+      lines.push(`[${label}] ${appendix.title || ''}`.trimEnd());
+      lines.push(String(appendix.body || '').trim());
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/** 파일명은 규정 코드를 쓰되 경로·확장자로 오해될 문자를 지운다. 시점 본문이면 그 날짜를 붙인다(T-180 — PDF·한/글과 같게) */
+export function policyPlainTextFilename(code?: string | null, asOfDate?: string | null): string {
+  const date = asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? `-${asOfDate}` : '';
+  return `${String(code || 'policy').replace(/[^\w.-]+/g, '_')}${date}-full.txt`;
+}

@@ -1,10 +1,14 @@
 /** 조·항·목 추가/수정 폼 — 법령형 구조 */
 
-import { isArticleJoRoot, type ArticleLabelParts } from './legalArticleLabel';
+import { formatArticleJo, isArticleJoRoot, isSameJo, type ArticleLabelParts } from './legalArticleLabel';
 
 export type ArticleCreatePayload = {
   number: number;
+  /** "제3조의2"의 2. 가지 조문이 아니면 없다 */
+  branchNumber?: number;
   title: string;
+  /** 소속 절(선택 계층). 절에 속하지 않으면 undefined */
+  sectionId?: string;
   clauseNumber?: number;
   itemNumber?: number;
   content?: string;
@@ -20,14 +24,34 @@ export function isSubArticleRow(row: { clauseNumber?: number | null; itemNumber?
   return row.clauseNumber != null || row.itemNumber != null;
 }
 
-export function chapterHasJoRoot(chapterArticles: ArticleLabelParts[], jo: number): boolean {
-  return chapterArticles.some((a) => Number(a.number) === jo && isArticleJoRoot(a));
+export function chapterHasJoRoot(chapterArticles: ArticleLabelParts[], jo: number, branch?: number | null): boolean {
+  return chapterArticles.some((a) => isSameJo(a, jo, branch) && isArticleJoRoot(a));
 }
 
-export function nextClauseNumberForJo(chapterArticles: ArticleLabelParts[], jo: number): number {
+/**
+ * 다음 조 번호. 법령·규정 관례상 조 번호는 문서 전체에서 연속하므로
+ * 장 단위가 아니라 규정 전체의 최대 조 번호를 기준으로 계산한다.
+ */
+export function nextJoNumberForPolicy(
+  chapters: { articles?: ArticleLabelParts[] }[] | undefined | null,
+): number {
+  let max = 0;
+  for (const chapter of chapters || []) {
+    for (const article of chapter.articles || []) {
+      max = Math.max(max, Number(article.number) || 0);
+    }
+  }
+  return max + 1;
+}
+
+export function nextClauseNumberForJo(
+  chapterArticles: ArticleLabelParts[],
+  jo: number,
+  branch?: number | null,
+): number {
   let max = 0;
   for (const a of chapterArticles) {
-    if (Number(a.number) !== jo || a.clauseNumber == null) continue;
+    if (!isSameJo(a, jo, branch) || a.clauseNumber == null) continue;
     if (a.itemNumber != null) continue;
     max = Math.max(max, Number(a.clauseNumber));
   }
@@ -38,10 +62,11 @@ export function nextItemNumberForHang(
   chapterArticles: ArticleLabelParts[],
   jo: number,
   clauseNumber: number,
+  branch?: number | null,
 ): number {
   let max = 0;
   for (const a of chapterArticles) {
-    if (Number(a.number) !== jo || Number(a.clauseNumber) !== clauseNumber) continue;
+    if (!isSameJo(a, jo, branch) || Number(a.clauseNumber) !== clauseNumber) continue;
     if (a.itemNumber == null) continue;
     max = Math.max(max, Number(a.itemNumber));
   }
@@ -63,9 +88,11 @@ export function buildArticleCreateRequests(
 ): ArticleCreatePayload[] {
   const title = String(form.title ?? '').trim();
   const hasSub = isSubArticleRow(form);
-  const hasMain = chapterHasJoRoot(chapterArticles, form.number);
+  const hasMain = chapterHasJoRoot(chapterArticles, form.number, form.branchNumber);
+  const branch = form.branchNumber ? { branchNumber: form.branchNumber } : {};
 
   const tags = {
+    ...(form.sectionId ? { sectionId: form.sectionId } : {}),
     hasPrecedent: form.hasPrecedent,
     hasRelatedLaw: form.hasRelatedLaw,
     hasRelatedRule: form.hasRelatedRule,
@@ -76,9 +103,10 @@ export function buildArticleCreateRequests(
 
   if (hasSub && title && !hasMain) {
     return [
-      { number: form.number, title, content: undefined, ...tags },
+      { number: form.number, ...branch, title, content: undefined, ...tags },
       {
         number: form.number,
+        ...branch,
         title: '',
         clauseNumber: form.clauseNumber,
         itemNumber: form.itemNumber,
@@ -91,6 +119,7 @@ export function buildArticleCreateRequests(
   return [
     {
       number: form.number,
+      ...branch,
       title: hasSub ? title : title,
       clauseNumber: form.clauseNumber,
       itemNumber: form.itemNumber,
@@ -103,8 +132,9 @@ export function buildArticleCreateRequests(
 export function inferJoTitle(
   chapterArticles: (ArticleLabelParts & { title?: string })[],
   jo: number,
+  branch?: number | null,
 ): string {
-  const sameJo = chapterArticles.filter((a) => Number(a.number) === jo);
+  const sameJo = chapterArticles.filter((a) => isSameJo(a, jo, branch));
   const main = sameJo.find((a) => isArticleJoRoot(a));
   const fromMain = String(main?.title ?? '').trim();
   if (fromMain) return fromMain;
@@ -125,11 +155,13 @@ export function segmentArticleHeading(
   chapterArticles: ArticleLabelParts[],
 ): { joLine: string; subLine: string | null } {
   const jo = Number(article.number);
-  const joTitle = inferJoTitle(chapterArticles, jo);
+  const branch = Number(article.branchNumber) || null;
+  const joTitle = inferJoTitle(chapterArticles, jo, branch);
+  const joLabel = formatArticleJo(jo, branch);
 
   if (isArticleJoRoot(article)) {
     return {
-      joLine: joTitle ? `제${jo}조 (${joTitle})` : `제${jo}조`,
+      joLine: joTitle ? `${joLabel} (${joTitle})` : joLabel,
       subLine: null,
     };
   }
@@ -139,7 +171,7 @@ export function segmentArticleHeading(
   if (article.itemNumber != null) parts.push(`목 ${article.itemNumber}`);
 
   return {
-    joLine: joTitle ? `제${jo}조 (${joTitle})` : `제${jo}조`,
+    joLine: joTitle ? `${joLabel} (${joTitle})` : joLabel,
     subLine: parts.length ? parts.join(' · ') : null,
   };
 }

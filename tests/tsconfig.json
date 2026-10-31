@@ -1,0 +1,18 @@
+{
+  "//": "테스트 전용. vitest 는 tsconfig 없이도 돌지만, ESLint 의 타입 인식 룰(T-32)이 어느 tsconfig 에 속하는지로 파일을 찾기 때문에 경계를 명시해 둔다.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "strictNullChecks": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["**/*.ts"]
+}

@@ -5,9 +5,11 @@ const CIRCLED_DIGITS = [
   '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
 ] as const;
 
-export function formatArticleJo(n: number): string {
+/** "제3조", 가지 조문이면 "제3조의2" */
+export function formatArticleJo(n: number, branch?: number | null): string {
   const num = Math.max(1, Math.floor(Number(n) || 1));
-  return `제${num}조`;
+  const b = Math.floor(Number(branch) || 0);
+  return b > 0 ? `제${num}조의${b}` : `제${num}조`;
 }
 
 export function formatClauseHang(n: number): string {
@@ -23,9 +25,22 @@ export function formatItemMok(n: number): string {
 
 export type ArticleLabelParts = {
   number: number;
+  /** "제3조의2"의 2. 조 하나 = (조 번호, 가지 번호) */
+  branchNumber?: number | null;
   clauseNumber?: number | null;
   itemNumber?: number | null;
 };
+
+/** 같은 조인지 — 제3조와 제3조의2는 다른 조다 */
+export function isSameJo(a: ArticleLabelParts, jo: number, branch?: number | null): boolean {
+  return Number(a.number) === Number(jo) && (Number(a.branchNumber) || 0) === (Number(branch) || 0);
+}
+
+/** 조 단위 키. 지도(Map)·React key 용 */
+export function joKeyOf(jo: number, branch?: number | null): string {
+  const b = Number(branch) || 0;
+  return b > 0 ? `${jo}-${b}` : `${jo}`;
+}
 
 /** 조 본문 행(항·목이 아닌 루트) */
 export function isArticleJoRoot(article: ArticleLabelParts): boolean {
@@ -37,6 +52,9 @@ export function sortArticlesForToc<T extends ArticleLabelParts>(a: T, b: T): num
   const an = Number(a.number ?? 0);
   const bn = Number(b.number ?? 0);
   if (an !== bn) return an - bn;
+  const ab = Number(a.branchNumber) || 0;
+  const bb = Number(b.branchNumber) || 0;
+  if (ab !== bb) return ab - bb;
   const ac = a.clauseNumber == null ? -1 : Number(a.clauseNumber);
   const bc = b.clauseNumber == null ? -1 : Number(b.clauseNumber);
   if (ac !== bc) return ac - bc;
@@ -53,6 +71,8 @@ export type ArticleHangGroup<T extends ArticleLabelParts = ArticleLabelParts> = 
 
 export type ArticleJoGroup<T extends ArticleLabelParts = ArticleLabelParts> = {
   jo: number;
+  /** 가지 번호(제3조의2의 2). 가지 조문이 아니면 null */
+  branch: number | null;
   main: T | null;
   hangs: ArticleHangGroup<T>[];
   /** 항 없이 조에만 달린 목 */
@@ -95,26 +115,29 @@ export function nestJoSubRows<T extends ArticleLabelParts>(children: T[]): {
 /** 장 아래 목차: 제N조 → ① 항 → 1. 목 */
 export function groupArticlesByJo<T extends ArticleLabelParts>(articles: T[]): ArticleJoGroup<T>[] {
   const sorted = [...articles].sort(sortArticlesForToc);
-  const map = new Map<number, ArticleJoGroup<T>>();
-  const subs = new Map<number, T[]>();
+  // 제3조와 제3조의2는 다른 조다 — 번호만으로 묶으면 가지 조문의 항이 제3조에 섞인다
+  const map = new Map<string, ArticleJoGroup<T>>();
+  const subs = new Map<string, T[]>();
 
   for (const a of sorted) {
     const n = Number(a.number ?? 0);
-    if (!map.has(n)) {
-      map.set(n, { jo: n, main: null, hangs: [], orphanItems: [] });
-      subs.set(n, []);
+    const b = Number(a.branchNumber) || 0;
+    const key = joKeyOf(n, b);
+    if (!map.has(key)) {
+      map.set(key, { jo: n, branch: b || null, main: null, hangs: [], orphanItems: [] });
+      subs.set(key, []);
     }
-    if (isArticleJoRoot(a)) map.get(n)!.main = a;
-    else subs.get(n)!.push(a);
+    if (isArticleJoRoot(a)) map.get(key)!.main = a;
+    else subs.get(key)!.push(a);
   }
 
-  for (const g of map.values()) {
-    const nested = nestJoSubRows(subs.get(g.jo) || []);
+  for (const [key, g] of map) {
+    const nested = nestJoSubRows(subs.get(key) || []);
     g.hangs = nested.hangs;
     g.orphanItems = nested.orphanItems;
   }
 
-  return Array.from(map.values()).sort((a, b) => a.jo - b.jo);
+  return Array.from(map.values()).sort((a, b) => a.jo - b.jo || (a.branch ?? 0) - (b.branch ?? 0));
 }
 
 /** 조 그룹의 모든 행(평탄) */
@@ -131,14 +154,14 @@ export function flattenJoGroup<T extends ArticleLabelParts>(g: ArticleJoGroup<T>
 
 export function countDistinctJo(articles: ArticleLabelParts[]): number {
   if (!articles.length) return 0;
-  return new Set(articles.map((a) => Number(a.number ?? 0))).size;
+  return new Set(articles.map((a) => joKeyOf(Number(a.number ?? 0), a.branchNumber))).size;
 }
 
 /** 목차·편집 화면용 짧은 라벨 */
 export function articleShortLabel(article: ArticleLabelParts): string {
   if (article.itemNumber != null) return formatItemMok(article.itemNumber);
   if (article.clauseNumber != null) return formatClauseHang(article.clauseNumber);
-  return formatArticleJo(article.number);
+  return formatArticleJo(article.number, article.branchNumber);
 }
 
 /** 조 제목과 함께 쓸 때 (예: 제1조 목적) */
@@ -151,9 +174,22 @@ export function articleDisplayLabel(article: ArticleLabelParts & { title?: strin
   return t ? `${base} (${t})` : base;
 }
 
-export function isChapterHeaderHidden(chapter: { suppressHeader?: boolean; title?: string }): boolean {
+/**
+ * 장 머리글을 감출지 — **이 판단의 유일한 정의**(T-84).
+ *
+ * `Article.chapterId` 가 필수라 "장 없는 규정"은 숨김 장이라는 관례로 표현된다
+ * (ADR-0011). 관례를 아는 곳이 여럿이면 그중 하나는 반드시 어긋난다 —
+ * 실제로 읽어주기(`speech.ts`)는 제목이 빈 장도 감췄는데 화면·인쇄는 감추지
+ * 않았고, 텍스트 내보내기는 아예 확인하지 않아 `===== 제1장  =====` 를 찍었다.
+ *
+ * 제목이 빈 장까지 감추는 쪽을 택한 이유: 서버가 "보이는 장은 제목이 있어야
+ * 한다"를 강제하므로(`chapter-header.ts`) 제목 없는 보이는 장은 **있어서는 안
+ * 되는 상태**다. 그런 데이터가 남아 있다면 "제1장" 뒤에 아무것도 없는 줄을
+ * 그리는 것보다 감추는 편이 낫다.
+ */
+export function isChapterHeaderHidden(chapter: { suppressHeader?: boolean; title?: string | null }): boolean {
   if (chapter.suppressHeader) return true;
-  return false;
+  return !String(chapter.title ?? '').trim();
 }
 
 export function formatKoDate(iso?: string | null): string {

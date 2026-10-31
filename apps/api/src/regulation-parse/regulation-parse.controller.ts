@@ -12,13 +12,18 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import { extname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RegulationParseService } from './regulation-parse.service';
-import { CommitRegulationParseDto, UpdateRegulationParseTreeDto } from './regulation-parse.dto';
+import {
+  CommitRegulationParseDto,
+  CreateFromLawGoKrDto,
+  UpdateRegulationParseTreeDto,
+} from './regulation-parse.dto';
 import { Roles } from '../common/guards/decorators';
+import { regulationParseDir } from './regulation-parse-paths';
 
 @ApiTags('regulation-parse')
 @ApiBearerAuth()
@@ -35,8 +40,7 @@ export class RegulationParseController {
       limits: { fileSize: 30 * 1024 * 1024 },
       storage: diskStorage({
         destination: (req: any, _file, cb) => {
-          const tid = req.user?.tenantId || 'default';
-          const dir = join(process.cwd(), 'uploads', tid, 'regulation-parse');
+          const dir = regulationParseDir(req.user?.tenantId);
           if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
@@ -50,8 +54,23 @@ export class RegulationParseController {
     return this.regulationParseService.uploadAndParse(req.user.tenantId, req.user.id, file);
   }
 
+  @Post('from-lawgokr')
+  @Roles('admin', 'editor')
+  @ApiOperation({
+    summary: '법제처 법령으로 파싱 세션 생성 (업로드 대신 외부 조회)',
+    description:
+      '응답은 `POST upload`와 같은 세션 형태다. 이후 미리보기·수정·커밋 절차가 동일하다.',
+  })
+  async createFromLawGoKr(@Request() req: any, @Body() dto: CreateFromLawGoKrDto) {
+    return this.regulationParseService.createFromLawGoKr(req.user.tenantId, req.user.id, dto.mst);
+  }
+
+  /**
+   * 등록 전 원문(추출 본문·트리)은 가져오는 사람(관리자·편집자)만 본다(T-142) — 아직 승인되지 않은 문구다. 예전에는 열람자도
+   * 세션 id 만 알면 읽을 수 있었다(화면은 가져오기 화면뿐이라 열람자가 쓸 일은 없었다)
+   */
   @Get(':id')
-  @Roles('admin', 'editor', 'viewer')
+  @Roles('admin', 'editor')
   @ApiOperation({ summary: '파싱 세션 조회 (트리 미리보기 JSON)' })
   async getOne(@Request() req: any, @Param('id', ParseUUIDPipe) id: string) {
     return this.regulationParseService.findOne(req.user.tenantId, id);

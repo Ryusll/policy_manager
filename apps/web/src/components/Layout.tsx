@@ -1,12 +1,15 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
 import { policiesApi } from '../api/policies';
-import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield } from 'lucide-react';
+import { askApi } from '../api/ask';
+import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText, Scale, FileDiff, MessageCircleQuestion } from 'lucide-react';
 import UserMenu from './UserMenu';
 import { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import PlanModal from './PlanModal';
+import ProfileModal from './ProfileModal';
 import OnboardingTour, { STORAGE_KEY } from './OnboardingTour';
 import { useI18n } from '../i18n/useI18n';
 import { AppBrandLockup } from './AppBrandLockup';
@@ -18,10 +21,14 @@ import { useQuery } from '@tanstack/react-query';
 const navDefs = [
   { path: '/', labelKey: 'layout.nav.dashboard', icon: LayoutDashboard, id: 'nav-dashboard' },
   { path: '/policies', labelKey: 'layout.nav.policies', icon: FileText, id: 'nav-policies' },
+  { path: '/laws', labelKey: 'layout.nav.laws', icon: Scale, id: 'nav-laws' },
+  { path: '/amendments', labelKey: 'layout.nav.amendments', icon: FileDiff, id: 'nav-amendments' },
   { path: '/search', labelKey: 'layout.nav.search', icon: Search, id: 'nav-search' },
+  { path: '/ask', labelKey: 'layout.nav.ask', icon: MessageCircleQuestion, id: 'nav-ask' },
   { path: '/variables', labelKey: 'layout.nav.variables', icon: Variable, id: 'nav-variables' },
   { path: '/settings', labelKey: 'layout.nav.settings', icon: Settings, id: 'nav-settings' },
   { path: '/integrations', labelKey: 'layout.nav.integrations', icon: PlugZap, id: 'nav-integrations' },
+  { path: '/audit-logs', labelKey: 'layout.nav.auditLogs', icon: ScrollText, id: 'nav-audit-logs' },
   { path: '/admin', labelKey: 'layout.nav.admin', icon: Shield, id: 'nav-platform-admin' },
 ] as const;
 
@@ -34,24 +41,41 @@ function isPlanTier(value: string): value is PlanTier {
 export default function Layout() {
   const { t, locale } = useI18n();
   const { user, logout } = useAuthStore();
+  useTenantBrandingSync();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [showTour, setShowTour] = useState(false);
+
+  // 규정 질문(T-130) 메뉴는 서버에 AI 가 설정돼 있고 회사가 켜 둔 때만 — 꺼 두었으면 다시 켤 수 있는 관리자에게만
+  const { data: askStatus } = useQuery({
+    queryKey: ['ask-status'],
+    queryFn: askApi.status,
+    enabled: !!user,
+    staleTime: 5 * 60_000,
+  });
+  const askConfigured = !!askStatus?.configured;
+  const askEnabled = !!askStatus?.enabled;
 
   const navItems = useMemo(() => {
     const isEnterprise = canUseApiIntegration(user?.plan);
     const isViewer = user?.role === 'viewer';
+    const isAdmin = user?.role === 'admin';
     return navDefs
       .filter((item) => (item.path === '/integrations' ? isEnterprise : true))
       .filter((item) => (item.path === '/admin' ? user?.platformRole === 'global_admin' : true))
+      // 감사 로그에는 다른 구성원의 활동이 담긴다 — 회사 관리자만 본다
+      .filter((item) => (item.path === '/audit-logs' ? isAdmin : true))
+      .filter((item) => (item.path === '/ask' ? askConfigured && (askEnabled || isAdmin) : true))
       .filter((item) => {
         if (!isViewer) return true;
-        return item.path === '/search';
+        // 열람자(직원)는 찾아보기만 — 통합검색과 규정 질문
+        return item.path === '/search' || item.path === '/ask';
       })
       .map((item) => ({ ...item, label: t(item.labelKey) }));
-  }, [t, locale, user?.plan, user?.role]);
+  }, [t, locale, user?.plan, user?.role, user?.platformRole, askConfigured, askEnabled]);
 
   const planLabel = useMemo(
     () => ({
@@ -69,8 +93,45 @@ export default function Layout() {
     }
   }, []);
 
+  // 관리자가 이름·이메일·역할을 바꿨다면 저장소에 남은 값은 지난 로그인 때의 것이다.
+  // 화면을 열 때 한 번 서버 값으로 맞춘다. 권한 자체는 서버가 요청마다 DB 에서 다시 읽으므로
+  // 이미 최신이고, 여기서 맞추는 것은 화면에 보이는 이름과 메뉴 노출이다.
+  useEffect(() => {
+    let cancelled = false;
+    authApi
+      .me()
+      .then((fresh) => {
+        if (cancelled || !fresh) return;
+        const current = useAuthStore.getState().user;
+        if (!current || current.id !== fresh.id) return;
+        const mustChangePassword = fresh.mustChangePassword === true;
+        if (
+          current.name === fresh.name &&
+          current.email === fresh.email &&
+          current.role === fresh.role &&
+          (current.mustChangePassword === true) === mustChangePassword
+        ) {
+          return;
+        }
+        useAuthStore.getState().setUser({
+          ...current,
+          name: fresh.name,
+          email: fresh.email,
+          role: fresh.role,
+          mustChangePassword,
+        });
+      })
+      .catch(() => {
+        // 만료·오프라인은 다른 요청이 같은 경로(갱신 → 로그인 화면)로 처리한다
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleLogout = async () => {
-    try { await authApi.logout(); } catch {}
+    // 서버 로그아웃이 실패해도 로컬 세션은 지운다 — 못 나가는 것보다 낫다
+      try { await authApi.logout(); } catch { /* 무시 */ }
     logout();
     navigate('/login');
   };
@@ -92,6 +153,7 @@ export default function Layout() {
     () => ({
       policies: t('layout.nav.policies'),
       search: t('layout.nav.search'),
+      ask: t('layout.nav.ask'),
       variables: t('layout.nav.variables'),
       settings: t('layout.nav.settings'),
       integrations: t('layout.nav.integrations'),
@@ -119,6 +181,7 @@ export default function Layout() {
             <div className="flex items-center gap-2 sm:gap-3 text-sm flex-shrink-0" id="tour-user-info">
               <NotificationBell />
               <UserMenu
+                onOpenProfile={() => setShowProfileModal(true)}
                 onOpenPlan={() => setShowPlanModal(true)}
                 onOpenTour={() => setShowTour(true)}
                 onLogout={handleLogout}
@@ -234,6 +297,7 @@ export default function Layout() {
 
       {/* 모달들 */}
       {showPlanModal && <PlanModal onClose={() => setShowPlanModal(false)} />}
+      {showProfileModal && <ProfileModal onClose={() => setShowProfileModal(false)} />}
       {showTour && <OnboardingTour onFinish={() => setShowTour(false)} />}
     </div>
   );

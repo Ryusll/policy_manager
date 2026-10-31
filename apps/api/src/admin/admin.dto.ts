@@ -29,15 +29,22 @@ export class ImportChapterDto {
   @Min(1)
   number: number;
 
-  @ApiProperty()
+  @ApiProperty({ required: false, description: '장 제목 (suppressHeader 시 생략)' })
+  @IsOptional()
   @IsString()
-  title: string;
+  title?: string;
 
-  @ApiProperty({ type: [ImportArticleDto] })
+  @ApiProperty({ required: false, description: 'true면 장 머리글을 쓰지 않는다' })
+  @IsOptional()
+  @IsBoolean()
+  suppressHeader?: boolean;
+
+  @ApiProperty({ type: [ImportArticleDto], required: false })
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ImportArticleDto)
-  articles: ImportArticleDto[];
+  articles?: ImportArticleDto[];
 }
 
 export class ImportPolicyDto {
@@ -54,11 +61,33 @@ export class ImportPolicyDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ type: [ImportChapterDto] })
+  /** 형식 검사는 사전 검사(import-validate.ts)가 한다 — 여기서 400 을 내면 문제 목록이 한 줄로 줄어든다 */
+  @ApiProperty({
+    required: false,
+    description: '가져오는 본문이 시행된 날(YYYY-MM-DD). publish: true 조문이 있으면 필수',
+  })
+  @IsOptional()
+  @IsString()
+  effectiveDate?: string;
+
+  @ApiProperty({ type: [ImportChapterDto], required: false })
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ImportChapterDto)
-  chapters: ImportChapterDto[];
+  chapters?: ImportChapterDto[];
+
+  /**
+   * 장 없이 조문만 있는 규정(T-84). 예전에는 이 형태를 표현할 수 없어
+   * **없는 장 제목을 지어내야** 했다 — T-83 이 다른 가져오기 경로에서
+   * 없앤 바로 그 문제다. 서버가 숨김 장 한 건으로 눕혀 담는다.
+   */
+  @ApiProperty({ type: [ImportArticleDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ImportArticleDto)
+  articles?: ImportArticleDto[];
 }
 
 export class ImportPoliciesDto {

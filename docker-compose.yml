@@ -3,9 +3,9 @@ services:
     image: postgres:15-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: policy_manager
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-policy_manager}
     ports:
       - "5433:5432"
     volumes:
@@ -33,8 +33,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin123}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -43,16 +43,17 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      # 컨텍스트가 리포 루트여야 워크스페이스 락파일(package-lock.json)로 재현 설치가 가능하다
+      context: .
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     ports:
       - "3001:3000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/policy_manager
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-policy_manager}
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: your-super-secret-jwt-key-change-in-production
-      JWT_REFRESH_SECRET: your-super-secret-refresh-key-change-in-production
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your-super-secret-refresh-key-change-in-production}
       JWT_EXPIRES_IN: 15m
       JWT_REFRESH_EXPIRES_IN: 7d
       NODE_ENV: production
@@ -60,12 +61,28 @@ services:
       # Single browser-facing URL → CORS, OAuth redirect, Google callback path (${PUBLIC_URL}/api/auth/google/callback)
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
       TRUST_PROXY: "1"
+      # 데모 계정(admin@demo.com / password123) 생성 여부.
+      # 터널·상시 서버 등 외부에서 열리는 배포에서는 반드시 false 로 둔다.
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      # 개발·통합 테스트용 — 테스트가 회원가입으로 회사를 만든다. 운영(Oracle compose)은 넘기지 않아 닫혀 있다(T-122)
+      ALLOW_PUBLIC_SIGNUP: ${ALLOW_PUBLIC_SIGNUP:-true}
+      # 통합 테스트가 한 IP 에서 분당 100번 넘게 로그인한다. 운영은 넘기지 않아 기본 100(T-122)
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-1000}
       STORAGE_TYPE: minio
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin123
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
       MINIO_BUCKET: policy-files
+      # 법제처 국가법령정보 공동활용 OPEN API 인증값. 비우면 연동만 꺼진다(다른 기능 영향 없음).
+      # 법제처가 서버 IP·도메인을 이유로 거절하면 법제처에 등록된 서버 IP·도메인을 확인한다.
+      LAW_GO_KR_OC: ${LAW_GO_KR_OC:-}
+      # T-130 규정 질문(AI). 키가 없으면 그 기능만 "설정 안 됨"으로 꺼진다. 질문할 때 관련 조문이 Anthropic 으로 간다.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_QA_MODEL: ${AI_QA_MODEL:-}
+      AI_QA_MONTHLY_LIMIT: ${AI_QA_MONTHLY_LIMIT:-}
+      AI_QA_USER_MONTHLY_LIMIT: ${AI_QA_USER_MONTHLY_LIMIT:-}
+      AI_QA_PROVIDER: ${AI_QA_PROVIDER:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,8 +105,8 @@ services:
 
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
       args:
         VITE_PUBLIC_COMPANY_LEGAL_NAME: ${VITE_PUBLIC_COMPANY_LEGAL_NAME:-}
         VITE_PUBLIC_COMPANY_REG_NO: ${VITE_PUBLIC_COMPANY_REG_NO:-}

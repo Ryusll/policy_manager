@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
+import { mergeUpcoming, recentlyRevised } from '../lib/policyRevisionFeed';
 import { Link, useNavigate } from 'react-router-dom';
 import { policiesApi } from '../api/policies';
 import { useAuthStore } from '../stores/authStore';
-import { FileText, Search, Plus, ArrowRight } from 'lucide-react';
+import { FileText, FileUp, Search, Plus, ArrowRight } from 'lucide-react';
 import { useMemo } from 'react';
 import { useI18n } from '../i18n/useI18n';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -40,6 +41,12 @@ export default function DashboardPage() {
     queryFn: policiesApi.list,
   });
 
+  // 승인된 미래 시행 조문 개정 — 예고에 함께(T-132 ⑤). 못 받아도 규정 시행일 예고는 그대로
+  const { data: scheduledChanges = [] } = useQuery({
+    queryKey: ['policies', 'scheduled-changes'],
+    queryFn: () => policiesApi.scheduledChanges(20),
+  });
+
   const activeCount = policies.filter((p: any) => p.isActive).length;
 
   const recentPolicies = useMemo(() => {
@@ -51,6 +58,10 @@ export default function DashboardPage() {
       })
       .slice(0, 6);
   }, [policies]);
+
+  // 최근 개정 / 제·개정 예고 (T-78)
+  const revised = useMemo(() => recentlyRevised(policies as any[], 5), [policies]);
+  const upcoming = useMemo(() => mergeUpcoming(policies as any[], scheduledChanges, 5), [policies, scheduledChanges]);
 
   const stats = useMemo(
     () => [
@@ -97,6 +108,72 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      {(revised.length > 0 || upcoming.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <div className="section-card">
+            <div className="section-card__head">
+              <h2>최근 개정</h2>
+              <Link to="/policies" className="text-xs text-navy-200 hover:text-white inline-flex items-center gap-1">
+                전체 <ArrowRight size={12} />
+              </Link>
+            </div>
+            {revised.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-500">개정일이 기록된 규정이 없습니다.</p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {revised.map((policy) => (
+                  <li key={policy.id}>
+                    <Link
+                      to={'/policies/' + policy.id}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-navy-50/80"
+                    >
+                      <span className="text-xs text-gray-500 tabular-nums shrink-0">{policy.dateKey}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-gray-900">{policy.title}</span>
+                      <span className="text-[11px] text-gray-400 font-mono shrink-0">{policy.code}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="section-card">
+            <div className="section-card__head">
+              <h2>제·개정 예고</h2>
+            </div>
+            {upcoming.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-500">시행 예정인 규정이 없습니다.</p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {upcoming.map((item) => (
+                  <li key={item.key}>
+                    <Link
+                      to={'/policies/' + item.policyId}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-amber-50/60"
+                      title={item.firstArticle ? `${item.firstArticle}${item.articleCount > 1 ? ` 외 ${item.articleCount - 1}개 조문` : ''}` : undefined}
+                    >
+                      <span className="text-[11px] rounded px-1.5 py-0.5 border border-amber-200 bg-amber-50 text-amber-800 shrink-0 tabular-nums">
+                        {item.daysLeft}일 후 시행
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-gray-900">
+                        {item.title}
+                        {item.articleCount > 0 && (
+                          <span className="ml-1.5 text-xs text-gray-500">조문 {item.articleCount}개 개정</span>
+                        )}
+                        {item.repealCount > 0 && (
+                          <span className="ml-1.5 text-xs text-red-700">조문 {item.repealCount}개 폐지</span>
+                        )}
+                      </span>
+                      <span className="text-xs text-gray-500 tabular-nums shrink-0">{item.dateKey}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="section-card">
         <div className="section-card__head">
           <h2>{t('dashboard.continueWork')}</h2>
@@ -111,9 +188,16 @@ export default function DashboardPage() {
             description={t('policies.subtitle', { n: 0 })}
             action={
               canCreate ? (
-                <Link to="/policies" className="btn-primary text-sm">
-                  <Plus size={14} /> {t('dashboard.addPolicy')}
-                </Link>
+                // 이미 쓰고 있는 규정을 옮겨 오는 경우가 대부분이라 PDF 가져오기를 앞에 둔다.
+                // 손으로 옮겨 적으면 조·항을 하나씩 넣어야 한다(대표 피드백, 2026-10-07).
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Link to="/policies/import" className="btn-primary text-sm">
+                    <FileUp size={14} /> {t('dashboard.importPdf')}
+                  </Link>
+                  <Link to="/policies" className="btn-secondary text-sm">
+                    <Plus size={14} /> {t('dashboard.addPolicy')}
+                  </Link>
+                </div>
               ) : undefined
             }
           />

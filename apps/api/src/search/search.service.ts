@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { formatJo } from '../common/article-label';
+import { currentVersionsSql } from '../common/as-of';
+import { todayDateOnly } from '../common/date-only';
 
 type RelatedType = 'precedent' | 'law' | 'rule';
 type RelatedSort = 'relevance' | 'latest';
@@ -27,32 +30,38 @@ export class SearchService {
     if (external.length > 0) return { items: external.slice(0, limit), source: 'external' };
 
     if (type === 'rule') {
-      const rows = await this.prisma.articleVersion.findMany({
-        where: {
-          status: 'published',
-          ...(scope === 'title' ? {} : { content: { contains: q, mode: 'insensitive' } }),
-          article: {
-            chapter: { policy: { tenantId } },
-            ...(scope === 'title'
-              ? {
-                  OR: [
-                    { title: { contains: q, mode: 'insensitive' } },
-                    { chapter: { policy: { title: { contains: q, mode: 'insensitive' } } } },
-                  ],
-                }
-              : {}),
-          },
-        },
-        include: {
-          article: { include: { chapter: { include: { policy: true } } } },
-        },
-        orderBy: sort === 'latest' ? { createdAt: 'desc' } : undefined,
-        take: limit,
-      });
+      // 조문마다 오늘 시행 중인 본문 하나에서 찾는다(T-127 — 통합검색·규정 상세와 같은 규칙). 시행일 전인 개정 문구는
+      // 찾지 않고, 개정이 예정돼 이전 본문이 archived 로 내려가 있어도 그 본문은 지금 규정이라 찾는다.
+      const today = todayDateOnly();
+      const pattern = `%${q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+      const match =
+        scope === 'title'
+          ? Prisma.sql`(a.title ILIKE ${pattern} ESCAPE '\\' OR p.title ILIKE ${pattern} ESCAPE '\\')`
+          : Prisma.sql`cur.content ILIKE ${pattern} ESCAPE '\\'`;
+      const order = sort === 'latest' ? Prisma.sql`ORDER BY v.created_at DESC` : Prisma.sql`ORDER BY cur.version_id`;
+      const hitIds = await this.prisma.$queryRaw<{ version_id: string }[]>(Prisma.sql`
+        SELECT cur.version_id
+        FROM (${currentVersionsSql(tenantId, today)}) cur
+        JOIN article_versions v ON v.id = cur.version_id
+        JOIN articles a ON a.id = cur.article_id
+        JOIN chapters c ON c.id = a.chapter_id
+        JOIN policies p ON p.id = c.policy_id
+        WHERE (cur.repealed_on IS NULL OR cur.repealed_on > ${today}) AND ${match}
+        ${order}
+        LIMIT ${limit}`);
+      const ids = hitIds.map((r) => r.version_id);
+      const found = ids.length
+        ? await this.prisma.articleVersion.findMany({
+            where: { id: { in: ids } },
+            include: { article: { include: { chapter: { include: { policy: true } } } } },
+          })
+        : [];
+      const rank = new Map(ids.map((id, i) => [id, i]));
+      const rows = found.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
       return {
         source: 'internal',
         items: rows.map((row) => ({
-          title: `${row.article.chapter.policy.title} · 제${row.article.number}조`,
+          title: `${row.article.chapter.policy.title} · ${formatJo(row.article.number, row.article.branchNumber)}`,
           snippet: row.content.slice(0, 180),
           url: `/policies/${row.article.chapter.policyId}`,
         })),
@@ -120,6 +129,54 @@ export class SearchService {
     }
   }
 
+  /**
+   * 검색 자동완성 (T-79) — 규정명과 조 제목에서 앞부분이 맞는 것을 준다.
+   *
+   * 본문은 대상에 넣지 않는다. 본문까지 넣으면 한 글자만 쳐도 수백 건이 걸려
+   * 목록이 쓸모없어지고, 그건 이미 통합검색이 하는 일이다.
+   * 제목만 보므로 인덱스로 충분히 빠르고 결과가 예측 가능하다.
+   */
+  async suggest(tenantId: string, query: string, limit = 8) {
+    const q = (query || '').trim();
+    if (q.length < 1) return { policies: [], articles: [] };
+
+    const [policies, articles] = await Promise.all([
+      this.prisma.policy.findMany({
+        where: { tenantId, title: { contains: q, mode: 'insensitive' } },
+        select: { id: true, code: true, title: true },
+        orderBy: { title: 'asc' },
+        take: limit,
+      }),
+      this.prisma.article.findMany({
+        where: {
+          title: { contains: q, mode: 'insensitive' },
+          chapter: { policy: { tenantId } },
+        },
+        select: {
+          id: true,
+          number: true,
+          branchNumber: true,
+          title: true,
+          chapter: { select: { policy: { select: { id: true, title: true } } } },
+        },
+        orderBy: [{ number: 'asc' }, { branchNumber: { sort: 'asc', nulls: 'first' } }],
+        take: limit,
+      }),
+    ]);
+
+    return {
+      policies,
+      articles: articles.map((a) => ({
+        id: a.id,
+        number: a.number,
+        branchNumber: a.branchNumber,
+        title: a.title,
+        policyId: a.chapter.policy.id,
+        policyTitle: a.chapter.policy.title,
+      })),
+    };
+  }
+
   async search(tenantId: string, query: string, page = 1, limit = 20) {
     const q = query.trim();
     if (!q) {
@@ -132,50 +189,43 @@ export class SearchService {
     }
 
     try {
-      return await this.searchWithBigm(tenantId, q, page, limit);
+      return { ...(await this.searchCurrent(tenantId, q, page, limit, 'LIKE')), searchEngine: 'pg_bigm_ready' };
     } catch (e: any) {
       this.log.warn(`pg_bigm search fallback: ${e?.message || e}`);
-      return { ...(await this.searchFallback(tenantId, q, page, limit)), searchEngine: 'ilike' };
+      return { ...(await this.searchCurrent(tenantId, q, page, limit, 'ILIKE')), searchEngine: 'ilike' };
     }
   }
 
-  /** pg_bigm GIN 인덱스가 있으면 LIKE 검색이 가속됩니다. 확장/인덱스 없으면 예외 후 폴백. */
-  private async searchWithBigm(tenantId: string, query: string, page: number, limit: number) {
+  /**
+   * 검색 대상은 조문마다 **지금 시행 중인 본문 하나**다(T-127) — 규칙은 `common/as-of.ts` 의
+   * `currentVersionsSql`(규정 상세·규정 질문과 같다). 예전에는 `status = 'published'` 를 그대로 찾아,
+   * 미래 시행일로 승인한 개정이 시행일 전부터 검색에 걸리고 지금 시행 중인 이전 본문은 걸리지 않았다.
+   * 폐지된 조문(폐지일이 오늘 이하)도 빠진다.
+   *
+   * pg_bigm GIN 인덱스가 있으면 LIKE 가 가속된다. LIKE 경로가 실패하면 ILIKE 로 한 번 더 찾는다(SEARCH-2).
+   * (예전 LIKE 경로는 텍스트 열을 `::uuid` 와 비교해 늘 실패했고, 실제로는 폴백만 돌고 있었다.)
+   */
+  private async searchCurrent(tenantId: string, query: string, page: number, limit: number, op: 'LIKE' | 'ILIKE') {
     const skip = (page - 1) * limit;
+    const today = todayDateOnly();
     const pattern = `%${query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+    const like = Prisma.raw(op);
+    const hits = Prisma.sql`
+      SELECT cur.version_id
+      FROM (${currentVersionsSql(tenantId, today)}) cur
+      JOIN articles a ON a.id = cur.article_id
+      WHERE (cur.repealed_on IS NULL OR cur.repealed_on > ${today})
+        AND (cur.content ${like} ${pattern} ESCAPE '\\' OR a.title ${like} ${pattern} ESCAPE '\\')`;
 
-    const countRows = await this.prisma.$queryRaw<{ n: bigint }[]>(Prisma.sql`
-      SELECT COUNT(*)::bigint AS n
-      FROM article_versions av
-      INNER JOIN articles a ON a.id = av.article_id
-      INNER JOIN chapters c ON c.id = a.chapter_id
-      INNER JOIN policies p ON p.id = c.policy_id
-      WHERE p.tenant_id = ${tenantId}::uuid
-        AND av.status = 'published'
-        AND (
-          av.content LIKE ${pattern} ESCAPE '\\'
-          OR a.title LIKE ${pattern} ESCAPE '\\'
-        )
-    `);
+    const countRows = await this.prisma.$queryRaw<{ n: bigint }[]>(
+      Prisma.sql`SELECT COUNT(*)::bigint AS n FROM (${hits}) h`,
+    );
     const total = Number(countRows[0]?.n ?? 0);
+    const idRows = await this.prisma.$queryRaw<{ version_id: string }[]>(
+      Prisma.sql`SELECT h.version_id FROM (${hits}) h ORDER BY h.version_id LIMIT ${limit} OFFSET ${skip}`,
+    );
 
-    const idRows = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
-      SELECT av.id
-      FROM article_versions av
-      INNER JOIN articles a ON a.id = av.article_id
-      INNER JOIN chapters c ON c.id = a.chapter_id
-      INNER JOIN policies p ON p.id = c.policy_id
-      WHERE p.tenant_id = ${tenantId}::uuid
-        AND av.status = 'published'
-        AND (
-          av.content LIKE ${pattern} ESCAPE '\\'
-          OR a.title LIKE ${pattern} ESCAPE '\\'
-        )
-      ORDER BY av.id
-      LIMIT ${limit} OFFSET ${skip}
-    `);
-
-    const ids = idRows.map((r) => r.id);
+    const ids = idRows.map((r) => r.version_id);
     let versions =
       ids.length === 0
         ? []
@@ -208,64 +258,6 @@ export class SearchService {
       policies,
       versions,
       pagination: { total, page, limit, totalPages: Math.ceil(total / limit) || 0 },
-      searchEngine: 'pg_bigm_ready',
-    };
-  }
-
-  private async searchFallback(tenantId: string, query: string, page: number, limit: number) {
-    const skip = (page - 1) * limit;
-
-    const [policies, versions, total] = await Promise.all([
-      this.prisma.policy.findMany({
-        where: {
-          tenantId,
-          OR: [
-            { title: { contains: query, mode: 'insensitive' } },
-            { code: { contains: query, mode: 'insensitive' } },
-            { description: { contains: query, mode: 'insensitive' } },
-          ],
-        },
-        take: 5,
-      }),
-      this.prisma.articleVersion.findMany({
-        where: {
-          status: 'published',
-          article: {
-            chapter: { policy: { tenantId } },
-            OR: [
-              { title: { contains: query, mode: 'insensitive' } },
-              { versions: { some: { status: 'published', content: { contains: query, mode: 'insensitive' } } } },
-            ],
-          },
-        },
-        include: {
-          article: {
-            include: {
-              chapter: { include: { policy: true } },
-            },
-          },
-        },
-        skip,
-        take: limit,
-      }),
-      this.prisma.articleVersion.count({
-        where: {
-          status: 'published',
-          article: {
-            chapter: { policy: { tenantId } },
-            OR: [
-              { title: { contains: query, mode: 'insensitive' } },
-              { versions: { some: { status: 'published', content: { contains: query, mode: 'insensitive' } } } },
-            ],
-          },
-        },
-      }),
-    ]);
-
-    return {
-      policies,
-      versions,
-      pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 }

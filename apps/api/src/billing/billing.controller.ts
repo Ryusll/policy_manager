@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Request, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { BillingService } from './billing.service';
 import { BillingWebhookDto, CheckoutDto } from './billing.dto';
@@ -14,7 +14,11 @@ export class BillingController {
   @ApiBearerAuth()
   @UseGuards(RolesGuard)
   @Roles('admin')
-  @ApiOperation({ summary: 'Checkout session 생성 (admin only)' })
+  @ApiOperation({
+    summary: 'Checkout session 생성 (admin only)',
+    description:
+      '결제 미사용 서버(PAYMENT_PROVIDER 미설정 — 운영 기본)에서는 403 BILLING_CLOSED. 요금제 변경은 플랫폼 관리자만 한다 (T-125)',
+  })
   checkout(@Request() req: any, @Body() dto: CheckoutDto) {
     return this.billingService.startCheckout(
       req.user.tenantId,
@@ -24,9 +28,22 @@ export class BillingController {
     );
   }
 
+  @Get('history')
+  @ApiBearerAuth()
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({ summary: '결제·구독 이력 (admin only)' })
+  history(@Request() req: any) {
+    return this.billingService.history(req.user.tenantId);
+  }
+
   @Public()
   @Post('webhook')
-  @ApiOperation({ summary: '결제사 webhook 수신' })
+  @ApiOperation({
+    summary: '결제사 webhook 수신',
+    description:
+      '실결제(PAYMENT_PROVIDER=결제사)이고 PAYMENT_WEBHOOK_SECRET 이 설정된 서버에서만 받는다. 그 밖에는 403, 비밀키가 틀리면 401 (T-125)',
+  })
   webhook(
     @Headers('x-billing-secret') secret: string | undefined,
     @Body() body: BillingWebhookDto,

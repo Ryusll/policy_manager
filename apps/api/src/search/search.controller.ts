@@ -22,6 +22,15 @@ export class SearchController {
     return this.searchService.search(req.user.tenantId, q, +page, +limit);
   }
 
+  @Get('suggest')
+  @ApiOperation({
+    summary: '검색 자동완성 — 규정명·조 제목',
+    description: '본문은 대상이 아니다. 본문까지 넣으면 한 글자에 수백 건이 걸려 목록이 쓸모없어진다.',
+  })
+  suggest(@Request() req: any, @Query('q') q: string) {
+    return this.searchService.suggest(req.user.tenantId, q || '');
+  }
+
   @Get('related-preview')
   @ApiOperation({ summary: 'Related preview for 판/법/규' })
   @ApiQuery({ name: 'type', required: true, enum: ['precedent', 'law', 'rule'] })

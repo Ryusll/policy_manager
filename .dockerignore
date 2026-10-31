@@ -1,0 +1,17 @@
+.git
+.claude
+.codex
+**/node_modules
+**/dist
+**/dist-seed
+**/__pycache__
+**/.env
+**/.env.*
+**/*.log
+**/.DS_Store
+backups
+postgres_data
+minio_data
+docs
+__*.mjs
+docker-compose.override.yml
