@@ -63,6 +63,8 @@ export type LawScheduledChange = {
   versionId: string | null;
   /** 이어서 시행될 예정 변경이 더 있다 */
   laterCount: number;
+  /** 예정 변경 사이에 공포 순서와 시행 순서가 어긋난다 — 시행일별 문구는 원문으로 확인(T-150 검토) */
+  orderMismatch: boolean;
 };
 
 /** 오늘 시행 중인 문구로 본 법령조항 — 시행일에 신설될 조항은 content 가 null */
@@ -86,9 +88,10 @@ export const lawsApi = {
   inForce: (id: string): Promise<LawInForce> => client.get(`/laws/${id}/in-force`).then((r) => r.data),
   /**
    * alreadyTracked — 같은 법령을 이미 다른 판으로 추적 중이라 새로 만들지 않고 그 법령을 돌려줬다(T-151).
-   * requestedMst — 요청한 판이 현행이 아니라 현행 판으로 등록했다(T-150). 시행 예정 판은 다음 동기화가 변경으로 받는다
+   * requestedMst — 요청한 판이 아닌 판으로 등록했다(T-150). 보통은 요청한 판이 현행이 아니라 현행 판으로 — 시행 예정 판은 다음 동기화가 변경으로 받는다.
+   * beforePending — 현행보다 먼저 공포된 시행 전 판(이름)이 있어 그 앞 판으로 등록했다. 다음 동기화가 그 판부터 현행까지 차례로 반영한다
    */
-  register: (mst: string, sourceCode?: string): Promise<Law & { alreadyTracked?: boolean; requestedMst?: string }> =>
+  register: (mst: string, sourceCode?: string): Promise<Law & { alreadyTracked?: boolean; requestedMst?: string; beforePending?: string }> =>
     client.post('/laws', { mst, ...(sourceCode ? { sourceCode } : {}) }).then((r) => r.data),
   remove: (id: string): Promise<{ ok: true }> => client.delete(`/laws/${id}`).then((r) => r.data),
 };

@@ -172,9 +172,11 @@ function RegisterLawModal({ onClose }: { onClose: () => void }) {
         // T-150: 요청한 판이 현행이 아니면 현행 판으로 등록했다 — 시행 예정 개정은 다음 동기화가 변경으로 받는다
         law.alreadyTracked
           ? t('laws.alreadyTracked', { name: law.lawName })
-          : law.requestedMst
-            ? t('laws.registeredCurrent', { name: law.lawName, requested: law.requestedMst })
-            : t('laws.registered', { name: law.lawName, count: law.articleCount }),
+          : law.beforePending
+            ? t('laws.registeredBeforePending', { name: law.lawName, pending: law.beforePending })
+            : law.requestedMst
+              ? t('laws.registeredCurrent', { name: law.lawName, requested: law.requestedMst })
+              : t('laws.registered', { name: law.lawName, count: law.articleCount }),
         'success',
       );
     },

@@ -7,23 +7,41 @@
 import { clsx } from 'clsx';
 import type { Law, LawInForce, LawInForceArticle, LawScheduledChange } from '../api/laws';
 import { useI18n } from '../i18n/useI18n';
-import { lawVersionLabel } from '../lib/lawVersionLabel';
+import { currentStageDate, lawVersionLabel } from '../lib/lawVersionLabel';
 
-
-/** 머리말 — 현행 판과 시행 예정 판. 판 기록이 없으면 법령 행의 값으로 대신한다 */
-export function LawInForceHeader({ law, inForce, articleCount }: { law: Law; inForce?: LawInForce; articleCount: number }) {
+/**
+ * 머리말 — 현행 판과 시행 예정 판. 판 기록이 없으면 법령 행의 값으로 대신한다.
+ * 현행·예정을 가른 결과가 오기 전(불러오는 중·오류)에는 법령 행의 시행일을 '현행'으로 찍지 않는다 — 시행 예정 판의 날짜일 수 있다.
+ * 단계 시행 판은 오늘까지 시작된 단계일과 단계 목록을 보인다(본문 시행일은 뒤 단계일 수 있다, T-150 검토).
+ */
+export function LawInForceHeader({ law, inForce, failed, articleCount }: { law: Law; inForce?: LawInForce; failed?: boolean; articleCount: number }) {
   const { t } = useI18n();
-  const current = inForce?.current;
+  if (!inForce) {
+    return failed ? (
+      <p role="alert" className="mt-0.5 text-xs text-red-700">
+        {t('lawInForce.loadFailed')}
+      </p>
+    ) : (
+      <p className="mt-0.5 text-xs text-gray-500">{t('lawInForce.loading')}</p>
+    );
+  }
+  const current = inForce.current;
   const currentLabel = lawVersionLabel(current, t);
-  const currentDate = current ? current.effectiveDate : law.effectiveDate?.slice(0, 10);
+  // 판 기록이 모두 시행 예정이면(보정하지 않은 묻힌 법령) 법령 행의 시행일은 예정 판의 날짜라 '현행'으로 찍지 않는다
+  const unconfirmed = !current && inForce.scheduled.length > 0;
+  const currentDate = current ? currentStageDate(current, inForce.today) : unconfirmed ? null : law.effectiveDate?.slice(0, 10);
+  const fallback = t(unconfirmed ? 'lawInForce.currentUnknown' : 'lawInForce.currentFallback');
+  // 첫 개정 확인 전에는 '현행'이라 하지 않는다 — 현행보다 앞 판으로 등록했으면 현행 판까지 아직 반영되지 않았다(T-150 마지막 검토)
+  const currentKey = law.lastCheckedAt ? 'lawInForce.current' : 'lawInForce.registeredVersion';
   return (
     <div className="mt-0.5 space-y-1">
       <p className="text-xs text-gray-500">
-        {currentLabel ? t('lawInForce.current', { label: currentLabel }) : [law.lawType, t('lawInForce.currentFallback')].filter(Boolean).join(' · ')}
+        {currentLabel ? t(currentKey, { label: currentLabel }) : [law.lawType, fallback].filter(Boolean).join(' · ')}
         {currentDate && ` · ${t('lawInForce.effective', { date: currentDate })}`}
+        {current && current.stageEffectiveDates.length > 1 && ` · ${t('lawInForce.stages', { dates: current.stageEffectiveDates.join(', ') })}`}
         {` · ${t('lawInForce.articleCount', { count: articleCount })}`}
       </p>
-      {inForce?.scheduled.map((v) => (
+      {inForce.scheduled.map((v) => (
         <p
           key={v.id ?? `date-${v.effectiveDate}`}
           className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-flex flex-wrap gap-x-2"
@@ -57,8 +75,11 @@ export function ScheduledBadge({ scheduled }: { scheduled: LawScheduledChange | 
   );
 }
 
-/** 선택한 조항의 본문 — 지금 시행 중인 문구와, 있으면 시행 예정 문구 */
-export function InForceText({ article }: { article: LawInForceArticle }) {
+/**
+ * 선택한 조항의 본문 — 지금 시행 중인 문구와, 있으면 시행 예정 문구. 뒤 변경 건수의 '개정 내역에서 보세요'는 개정 내역을 볼 수 있는
+ * 관리자·편집자에게만 붙인다(직원 화면에는 그 칸이 없다, T-150 검토)
+ */
+export function InForceText({ article, canEdit }: { article: LawInForceArticle; canEdit: boolean }) {
   const { t } = useI18n();
   const s = article.scheduled;
   return (
@@ -81,7 +102,10 @@ export function InForceText({ article }: { article: LawInForceArticle }) {
           ) : (
             <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{s.content}</p>
           )}
-          {s.laterCount > 0 && <p className="text-[11px] text-gray-500 mt-1">{t('lawInForce.later', { count: s.laterCount })}</p>}
+          {s.laterCount > 0 && (
+            <p className="text-[11px] text-gray-500 mt-1">{t(canEdit ? 'lawInForce.later' : 'lawInForce.laterViewer', { count: s.laterCount })}</p>
+          )}
+          {s.orderMismatch && <p className="text-[11px] text-amber-800 mt-1">{t('lawInForce.orderMismatch')}</p>}
         </div>
       )}
     </div>

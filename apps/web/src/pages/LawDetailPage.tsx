@@ -20,8 +20,12 @@ import LawChangeList from '../components/LawChangeList';
 import EffectiveNotesLine, { EffectiveNotesMark } from '../components/EffectiveNotesLine';
 import { lawArticleEffectiveNotes } from '../lib/effectiveNotes';
 import { useAuthStore } from '../stores/authStore';
+import { useI18n } from '../i18n/useI18n';
+import { LoadingBlock } from '../components/ui/LoadingBlock';
+import { EmptyState } from '../components/ui/EmptyState';
 
 export default function LawDetailPage() {
+  const { t } = useI18n();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
@@ -60,6 +64,7 @@ export default function LawDetailPage() {
             <LawInForceHeader
               law={lawQuery.data}
               inForce={articlesQuery.data}
+              failed={articlesQuery.isError}
               articleCount={articlesQuery.data ? articles.filter((a) => a.content !== null).length : lawQuery.data.articleCount}
             />
             {lawQuery.data.sourceUrl && (
@@ -79,6 +84,8 @@ export default function LawDetailPage() {
             마지막 개정 확인 {new Date(lawQuery.data.lastCheckedAt).toLocaleString('ko-KR')}
           </p>
         )}
+        {/* 등록·보정 직후 — 현행보다 앞 판으로 등록했으면 현행 판까지 아직 반영되지 않았다(T-150 마지막 검토) */}
+        {lawQuery.data && !lawQuery.data.lastCheckedAt && <p className="text-[11px] text-amber-800 mt-1">{t('lawInForce.notChecked')}</p>}
         {lawQuery.data?.lastCheckError && (
           <p
             role="alert"
@@ -105,7 +112,8 @@ export default function LawDetailPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-5 bg-white border border-gray-300 shadow-sm max-h-[70vh] overflow-y-auto">
-          {articlesQuery.isLoading && <p className="text-sm text-gray-500 p-4">불러오는 중…</p>}
+          {articlesQuery.isLoading && <LoadingBlock />}
+          {articlesQuery.isError && <EmptyState compact title={t('lawInForce.loadFailedTitle')} description={t('lawInForce.loadFailedHint')} />}
           <ul className="divide-y divide-gray-100">
             {articles.map((a) => (
               <ArticleRow key={a.id} article={a} selected={a.id === selectedId} onClick={() => setSelectedId(a.id)} />
@@ -183,7 +191,7 @@ function SelectedArticlePanel({ article, canEdit }: { article: LawInForceArticle
         {article.title && <p className="text-xs text-gray-500">{article.title}</p>}
       </div>
       <div className="p-4 border-b border-gray-200 bg-gray-50/60">
-        <InForceText article={article} />
+        <InForceText article={article} canEdit={canEdit} />
         <div className="mt-2 empty:hidden">
           <EffectiveNotesLine info={lawArticleEffectiveNotes(article)} />
         </div>

@@ -62,7 +62,8 @@ describe('T-151 법령ID 가 없는 법령', () => {
     expect(String(refused.body.message)).toContain('법령ID가 없어 새로 등록하지 않았습니다');
     expect(sql(`SELECT count(*) FROM laws WHERE external_id='${A.mst}';`)).toBe('0');
 
-    law.seedBody(A);
+    // 정상 등록에는 판 목록도 심는다 — 법령ID 가 있으면 판 목록으로 현행 판을 고르고, 목록이 비면 등록하지 않는다(T-150 검토)
+    law.seedAll([A]);
     const lawId = await register(A.mst);
     law.seedBody(A, { noLawId: true });
     const again = await api('/laws', { method: 'POST', token: pf.token, json: { mst: A.mst } });

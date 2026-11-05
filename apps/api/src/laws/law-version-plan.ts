@@ -59,6 +59,23 @@ export function compareVersions(a: LawVersionEntry, b: LawVersionEntry): number 
   return compareDigits(a.promulgationNo, b.promulgationNo) || compareDigits(a.mst, b.mst);
 }
 
+/** 그날 이 판의 단계 중 하나라도 시작됐나 — 단계 시행일을 모르면(목록 행에 시행일이 없음) 시작된 것으로 본다(짐작으로 기준을 앞으로 옮기지 않는다) */
+export function startedOn(v: Pick<LawVersionEntry, 'stageEffectiveDates'>, day: string): boolean {
+  return v.stageEffectiveDates.length === 0 || v.stageEffectiveDates[0] <= day;
+}
+
+/**
+ * 기준판 고르기 (T-150 ③④·검토). 판 본문은 공포 순으로 쌓인다 — 어떤 판의 본문에는 그보다 먼저 공포된 판의 개정이 시행 전이라도
+ * 이미 들어 있다(2026-11 운영: 근로기준법 제21472호·자본시장법 제21647호·산업안전보건법 제21534호가 그 뒤 판으로 등록된 본문에 묻혔다).
+ * 그래서 `ref`(현행 판·등록한 판)까지의 판 가운데 그날 아직 시작되지 않은 판이 있으면 그 가운데 가장 먼저 공포된 판의 바로 앞 판을
+ * 기준으로 삼는다 — 그 판부터 동기화가 공포 순으로 반영해 변경 이벤트를 남긴다. 없으면 `ref`, 앞 판이 목록에 없으면 null.
+ * `versions` 는 공포 순(`groupVersions`)이어야 한다.
+ */
+export function baseVersionIndex(versions: Pick<LawVersionEntry, 'stageEffectiveDates'>[], ref: number, day: string): number | null {
+  for (let i = 0; i <= ref; i++) if (!startedOn(versions[i], day)) return i > 0 ? i - 1 : null;
+  return ref;
+}
+
 /**
  * 검색 행들에서 이 법령(법령ID)의 판 목록을 만든다. 다른 법령ID 의 행(이름이 겹치는 시행령 등)은 버린다.
  * 같은 MST 인데 공포일·공포번호가 서로 다르거나, 법령ID·MST 가 빈 행이 `since`(저장 판의 공포일) 뒤에 있으면 목록을 믿을 수 없어

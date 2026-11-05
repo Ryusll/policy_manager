@@ -109,7 +109,11 @@ export async function planLawVersions(deps: WalkDeps, law: WalkTarget): Promise<
   return { current: grouped.versions.find((v) => v.current) ?? null, stored: plan.stored, pending: plan.pending };
 }
 
-/** 저장 판의 기록을 보장한다 — 없으면 기준판으로 만들고, 있으면 빈 칸(순서 키·단계 시행일·제개정구분)을 목록 값으로 채운다. 이벤트 없음 */
+/**
+ * 저장 판의 기록을 보장한다 — 없으면 기준판으로 만들고, 있으면 빈 칸(순서 키·단계 시행일·제개정구분)을 목록 값으로 채운다. 이벤트 없음.
+ * 단계 시행일은 등록이 읽은 쪽에서만 남긴 일부일 수 있어, 저장한 날짜가 모두 목록에 있고 목록에 더 있으면 마저 채운다 — 목록에 없는
+ * 날짜가 섞인 행은 고치지 않는다(T-150 검토).
+ */
 export async function ensureStoredVersionRow(prisma: PrismaService, lawId: string, stored: LawVersionEntry, receivedVia: LawEventChannel) {
   const stages = stored.stageEffectiveDates.map((d) => toDate(d)).filter((d): d is Date => d !== null);
   const row = await prisma.lawVersion.upsert({
@@ -130,7 +134,9 @@ export async function ensureStoredVersionRow(prisma: PrismaService, lawId: strin
   });
   const fill: { orderKey?: string; stageEffectiveDates?: Date[]; revisionType?: string } = {};
   if (!row.orderKey) fill.orderKey = versionOrderKey(stored);
-  if (!row.stageEffectiveDates.length && stages.length) fill.stageEffectiveDates = stages;
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  const listed = new Set(stages.map(day));
+  if (stages.length > row.stageEffectiveDates.length && row.stageEffectiveDates.every((d) => listed.has(day(d)))) fill.stageEffectiveDates = stages;
   if (!row.revisionType && stored.revisionType) fill.revisionType = stored.revisionType;
   if (Object.keys(fill).length) await prisma.lawVersion.update({ where: { id: row.id }, data: fill });
 }

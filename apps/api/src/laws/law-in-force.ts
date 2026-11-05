@@ -4,10 +4,15 @@
  * T-151 부터 동기화는 공포된 판을 시행 전이라도 공포 순으로 반영한다. 그래서 법령조항의 본문(`LawArticle.content`)은
  * "마지막으로 반영한 판"의 문구이고, 시행 전 문구가 오늘 시행 중인 것처럼 보였다(D-18 ①). 시행일에 삭제될 조항은
  * 받자마자 삭제 표시(`deletedAt`)가 붙어 목록에서 사라졌다. 현행 본문은 **시행일이 오늘 뒤인 변경 이벤트**에서 되살린다 —
- * 조항마다 가장 먼저 시행될 예정 변경의 "바뀌기 전" 문구가 지금 시행 중인 문구다(뒤 판의 '전'은 앞 판의 '후'라 사슬이다).
+ * 조항마다 **공포 순으로** 첫 예정 변경의 "바뀌기 전" 문구가 지금 시행 중인 문구다(이벤트의 전·후는 동기화가 공포 순으로 판을
+ * 반영하며 남긴 사슬이라, 뒤 판의 '전'은 앞 판의 '후'다). 뒤에 공포된 판이 먼저 시행되더라도 그 판의 '전'은 앞 판의 '후'(아직 시행
+ * 전)라 현행 문구로 쓰면 안 된다(T-150 검토). 화면의 예정 표시는 가장 먼저 시행될 변경이다.
  *
- * - 현행·예정은 판의 시행일(본문 기본정보 시행일 = 이벤트의 `lawEffectiveDate`)로 가른다. 여러 날에 나눠 시행되는 판의
+ * - 조항의 현행·예정은 이벤트의 시행일(본문 기본정보 시행일 = `lawEffectiveDate`)로 가른다. 여러 날에 나눠 시행되는 판의
  *   계획용 날짜는 D-17 결정 전까지 이 날짜다(A안). 조마다 다른 시행일 표기는 화면이 `effectiveNotes` 로 함께 보인다.
+ * - 판의 현행·예정은 예정 이벤트가 남았는지, 없으면 판이 시행에 들어가는 날(단계 시행 판은 첫 단계일)로 가른다 — 법제처가 첫
+ *   단계부터 그 판을 '현행'으로 보고, 등록(T-150 ③)·보정(④)도 같은 기준이다. 본문 시행일만 보면 첫 단계가 지나 현행으로 등록한
+ *   기준판이 '시행 예정 · 바뀌는 조항 0개'로 보였다(T-150 검토).
  * - 시행일을 모르는 이벤트(null)는 이미 시행된 것으로 본다 — 예정이라고 짐작하지 않는다.
  * - 날짜는 한국 날짜(`todayDateOnly`)로 요청마다 다시 가른다 — 시행일이 지나면 같은 데이터가 현행이 된다(저장하지 않는다).
  */
@@ -72,6 +77,11 @@ export interface ScheduledChange {
   versionId: string | null;
   /** 이 조항에 이어서 시행될 예정 변경이 더 있다(뒤 판들) */
   laterCount: number;
+  /**
+   * 이 조항의 예정 변경 사이에 공포 순서와 시행 순서가 어긋난다 — 뒤에 공포된 판이 먼저 시행되면 그 판의 문구에는 앞 판의 시행 전
+   * 개정이 섞여 있어, 시행일별 문구를 정확히 가를 수 없다(화면이 원문 확인을 안내한다, T-150 검토)
+   */
+  orderMismatch: boolean;
 }
 
 export interface InForceArticle {
@@ -120,6 +130,13 @@ export function isScheduled(lawEffectiveDate: Date | null, today: string): boole
   return d !== null && d > today;
 }
 
+/** 판이 시행에 들어가는 날 — 단계 시행 판은 첫 단계일, 단계 기록이 없으면 본문 시행일 */
+export function versionStartsOn(v: Pick<LawVersionRow, 'effectiveDate' | 'stageEffectiveDates'>): Date | null {
+  return v.stageEffectiveDates.reduce<Date | null>((min, d) => (min === null || d < min ? d : min), null) ?? v.effectiveDate;
+}
+
+const byKey = <T>(key: (x: T) => string) => (a: T, b: T) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+
 export function splitLawInForce(input: {
   today: string;
   articles: InForceArticleRow[];
@@ -128,7 +145,6 @@ export function splitLawInForce(input: {
 }): LawInForce {
   const { today } = input;
   const orderOf = new Map(input.versions.map((v) => [v.id, v.orderKey ?? '']));
-  // 조항마다 예정 이벤트를 시행될 순서(시행일, 같으면 판의 공포 순, 판이 없으면 감지 순)로
   const byNode = new Map<string, ScheduledEventRow[]>();
   for (const e of input.events) {
     if (!isScheduled(e.lawEffectiveDate, today)) continue;
@@ -136,15 +152,20 @@ export function splitLawInForce(input: {
     list.push(e);
     byNode.set(e.nodeKey, list);
   }
-  const rank = (e: ScheduledEventRow) => `${iso(e.lawEffectiveDate)}|${e.lawVersionId ? orderOf.get(e.lawVersionId) ?? '' : ''}|${e.detectedAt.toISOString()}`;
-  for (const list of byNode.values()) list.sort((a, b) => (rank(a) < rank(b) ? -1 : rank(a) > rank(b) ? 1 : 0));
+  // 공포 순(판의 순서 키, 판이 없는 옛 이벤트는 앞에 — 감지 순) — 이벤트 전·후 사슬의 순서
+  const promulgated = (e: ScheduledEventRow) => `${e.lawVersionId ? orderOf.get(e.lawVersionId) ?? '' : ''}|${e.detectedAt.toISOString()}`;
+  // 시행될 순서(시행일, 같으면 공포 순)
+  const effective = (e: ScheduledEventRow) => `${iso(e.lawEffectiveDate)}|${promulgated(e)}`;
+  for (const list of byNode.values()) list.sort(byKey(effective));
 
   const articles: InForceArticle[] = [];
   for (const row of input.articles) {
     const chain = byNode.get(row.nodeKey);
     // 마지막 판에서 사라진 조항은 그 삭제가 아직 시행 전일 때만 현행이다
     if (row.deletedAt && !chain) continue;
-    const first = chain?.[0];
+    const earliest = chain ? [...chain].sort(byKey(promulgated))[0] : undefined;
+    // 보일 예정 변경 — 가장 먼저 시행될 변경. 단 아직 없는 조항(공포 순으로 첫 변경이 신설)은 생기는 날의 신설을 보인다
+    const first = earliest?.changeType === 'created' ? earliest : chain?.[0];
     articles.push({
       id: row.id,
       nodeKey: row.nodeKey,
@@ -153,7 +174,7 @@ export function splitLawInForce(input: {
       itemNo: row.itemNo,
       label: row.label,
       title: row.title,
-      content: first ? (first.changeType === 'created' ? null : first.beforeContent) : row.content,
+      content: earliest ? (earliest.changeType === 'created' ? null : earliest.beforeContent) : row.content,
       sortOrder: row.sortOrder,
       effectiveNotes: row.effectiveNotes,
       scheduled: first
@@ -164,6 +185,7 @@ export function splitLawInForce(input: {
             effectiveDate: iso(first.lawEffectiveDate)!,
             versionId: first.lawVersionId,
             laterCount: chain!.length - 1,
+            orderMismatch: earliest !== chain![0],
           }
         : null,
     });
@@ -183,8 +205,8 @@ export function splitLawInForce(input: {
       }
     }
   }
-  const byOrder = (a: LawVersionRow, b: LawVersionRow) => ((a.orderKey ?? '') < (b.orderKey ?? '') ? -1 : (a.orderKey ?? '') > (b.orderKey ?? '') ? 1 : 0);
-  const isFuture = (v: LawVersionRow) => scheduledIds.has(v.id) || isScheduled(v.effectiveDate, today);
+  const byOrder = byKey((v: LawVersionRow) => v.orderKey ?? '');
+  const isFuture = (v: LawVersionRow) => scheduledIds.has(v.id) || isScheduled(versionStartsOn(v), today);
   const inForce = input.versions.filter((v) => !isFuture(v)).sort(byOrder);
   const future = input.versions.filter(isFuture).sort(byOrder);
 

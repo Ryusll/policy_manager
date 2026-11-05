@@ -80,13 +80,14 @@ export class LawsService {
   async register(requestedMst: string, sourceCode?: string, receivedVia: LawEventChannel = 'manual') {
     const source = await this.ensureSource(sourceCode);
     // 현행 판으로 등록한다 — 시행 예정 판이 기준판이 되면 그 개정이 이벤트 없이 묻힌다(T-150 ③)
-    const { mst, meta, tree } = await fetchRegisterVersion(this.lawGoKr, requestedMst);
+    const { mst, meta, tree, stageEffectiveDates, beforePending } = await fetchRegisterVersion(this.lawGoKr, requestedMst);
     const version = prepareVersion(mst, meta, tree);
-    const fields = { ...lawBibliography(meta, version), lastCheckError: null };
+    const fields = lawBibliography(meta, version);
 
     try {
-      const result = await this.registerTx(source.id, mst, meta, version, fields, receivedVia);
-      return mst === requestedMst ? result : { ...result, requestedMst };
+      const result = await this.registerTx(source.id, mst, meta, version, fields, stageEffectiveDates, receivedVia);
+      // beforePending — 현행보다 먼저 공포된 시행 전 판이 있어 그 앞 판으로 등록했다(화면 알림이 '현행 판으로 등록'이라 하지 않게)
+      return mst === requestedMst ? result : { ...result, requestedMst, ...(beforePending ? { beforePending } : {}) };
     } catch (e) {
       // 잠근 뒤에 같은 판의 행이 생기는 일은 드물다(첫 등록끼리는 법령ID 열쇠로 줄 선다) — 그래도 (법령원, MST) 유일에 걸리면 500 이 아니라 409
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -101,7 +102,8 @@ export class LawsService {
     mst: string,
     meta: Awaited<ReturnType<LawGoKrService['getLaw']>>['meta'],
     version: ReturnType<typeof prepareVersion>,
-    fields: ReturnType<typeof lawBibliography> & { lastCheckError: null },
+    fields: ReturnType<typeof lawBibliography>,
+    stageEffectiveDates: string[],
     receivedVia: LawEventChannel,
   ) {
     const source = { id: sourceId };
@@ -129,10 +131,11 @@ export class LawsService {
         );
       }
       // 새 법령은 확인 시각을 비워 다음 동기화의 맨 앞에 세운다 — 공포됐지만 시행 전인 판을 곧바로 변경으로 받게(T-150 ③).
-      // 같은 판 다시 등록은 지금 확인한 것이라 시각을 찍는다
+      // 같은 판 다시 등록은 확인 시각·확인 오류를 건드리지 않는다 — 저장한 판의 본문만 다시 읽었지 그 뒤 판을 확인한 것이 아니라,
+      // 시각을 찍으면 동기화 차례가 맨 뒤로 밀리고 '최근 개정 확인에 실패' 표시가 확인 없이 사라진다(T-150 검토)
       const law = same
-        ? await tx.law.update({ where: { id: same.id }, data: { ...fields, lastCheckedAt: new Date() } })
-        : await tx.law.create({ data: { sourceId: source.id, externalId: mst, ...fields, lastCheckedAt: null } });
+        ? await tx.law.update({ where: { id: same.id }, data: fields })
+        : await tx.law.create({ data: { sourceId: source.id, externalId: mst, ...fields, lastCheckedAt: null, lastCheckError: null } });
       await tx.lawVersion.upsert({
         where: { lawId_mst: { lawId: law.id, mst } },
         update: {},
@@ -146,6 +149,8 @@ export class LawsService {
           promulgationNo: meta.promulgationNo,
           revisionType: meta.revisionType,
           effectiveDate: version.lawEffectiveDate,
+          // 단계 시행 판은 첫 단계부터 현행이다 — 이 날짜가 없으면 본문 시행일만 보고 시행 예정으로 보인다(T-150 검토)
+          stageEffectiveDates: stageEffectiveDates.map((d) => toDate(d)).filter((d): d is Date => d !== null),
           versionKey: version.versionKey,
           receivedVia,
         },

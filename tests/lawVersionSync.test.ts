@@ -232,6 +232,16 @@ describe('ensureStoredVersionRow — 저장 판의 기록 (T-151)', () => {
       },
     ]);
   });
+
+  it('등록이 읽은 쪽에서만 남긴 일부 단계는 목록의 나머지 단계로 마저 채운다 — 목록에 없는 날짜가 섞인 행은 고치지 않는다 (T-150 검토)', async () => {
+    const partial = prisma({ orderKey: 'k', stageEffectiveDates: [new Date('2026-01-01T00:00:00Z')], revisionType: 'x' });
+    await ensureStoredVersionRow(partial.p, 'law-1', stored, 'poll');
+    expect(partial.calls[1]).toEqual(['update', { where: { id: 'v' }, data: { stageEffectiveDates: [new Date('2026-01-01T00:00:00Z'), new Date('2026-07-01T00:00:00Z')] } }]);
+
+    const differs = prisma({ orderKey: 'k', stageEffectiveDates: [new Date('2026-03-01T00:00:00Z')], revisionType: 'x' });
+    await ensureStoredVersionRow(differs.p, 'law-1', stored, 'poll');
+    expect(differs.calls).toHaveLength(1);
+  });
 });
 
 describe('walkResult — 판 걷기 결과와 확인 시각 (T-151)', () => {

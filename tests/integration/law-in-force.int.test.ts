@@ -155,7 +155,9 @@ describe('T-150 시행 예정 법령 (가짜 법제처)', () => {
     let companyArticleId = '';
 
     it('T-150 전처럼 시행 예정 판으로 등록된 법령을 만든다(그때 목록이 그 판을 현행으로 줬다고 흉내)', async () => {
-      law.seedAll([A, B], B);
+      // 목록 행의 시행일도 지난 것처럼 준다 — 이제 등록은 '현행' 표시가 있어도 시행일이 오지 않은 판은 기준으로 삼지 않는다(T-150 검토)
+      const asCurrent: FakeVersion = { ...B, stages: ['20250301'] };
+      law.seedAll([A, asCurrent], asCurrent);
       const res = await api('/laws', { method: 'POST', token: pf.token, json: { mst: B.mst } });
       expect(res.status, JSON.stringify(res.body)).toBe(200);
       lawId = res.body.id;
@@ -207,11 +209,15 @@ describe('T-150 시행 예정 법령 (가짜 법제처)', () => {
       expect(rows).toBe('modified:true');
     });
 
-    it('이미 이벤트가 있으면 되돌리지 않는다(같은 판이 두 번 들어가지 않게)', () => {
+    it('보정하고 동기화가 다시 걸은 뒤에는 되돌리지 않는다(같은 판이 두 번 들어가지 않게)', () => {
+      // 기준판(A)이 등록 때 시행 중이라 더는 묻힌 판이 없다 — 묻혔는지부터 본다(T-150 검토). 묻혔는데 동기화가 걸었으면 --reset 없이는
+      // 막는 경우는 law-base-version.int.test.ts 가 본다
+      const events = sql(`SELECT count(*) FROM law_change_events WHERE law_id='${lawId}';`);
       const r = cli(`--rebaseline ${lawId} --apply`);
-      expect(r.code).toBe(1);
-      expect(r.out).toContain('보정하지 않습니다');
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain('보정할 것이 없습니다');
       expect(sql(`SELECT external_id FROM laws WHERE id='${lawId}';`)).toBe(B.mst);
+      expect(sql(`SELECT count(*) FROM law_change_events WHERE law_id='${lawId}';`)).toBe(events);
     });
   });
 });

@@ -283,12 +283,14 @@ describe('collectEffectiveNotes — 이미 등록된 법령의 표기 맞추기 
     expect(created.data.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
     // 새 등록은 확인 시각을 비워 다음 동기화의 맨 앞에 선다(T-150 ③ — T-151 때는 찍어서 맨 뒤로 갔다). 판 반영은 찍지 않는다(T-151)
     expect(created.data.lastCheckedAt).toBeNull();
-    // 같은 판을 다시 등록하면 그 행을 고친다 — 옛 읽기 판이었어도 지금 판으로, 확인 시각은 찍는다(지금 확인했다)
+    // 같은 판을 다시 등록하면 그 행을 고친다 — 옛 읽기 판이었어도 지금 판으로. 확인 시각·확인 오류는 건드리지 않는다
+    // (본문만 다시 읽었지 뒤 판을 확인한 것이 아니다 — T-150 ③·검토 H3, 예전 기대값은 시각을 찍었다)
     const again = setup([{ id: 'e5', nodeKey: '5//', content: 'x', versionKey: 'k', effectiveNotes: null }], { priorRules: null });
     await again.service.register('900143');
     expect(again.calls.lawWrites.map((w) => w.op)).toEqual(['update']);
     expect(again.calls.lawWrites[0].data.effectiveNotesVersion).toBe(EFFECTIVE_NOTES_VERSION);
-    expect(again.calls.lawWrites[0].data.lastCheckedAt).toBeInstanceOf(Date);
+    expect(again.calls.lawWrites[0].data).not.toHaveProperty('lastCheckedAt');
+    expect(again.calls.lawWrites[0].data).not.toHaveProperty('lastCheckError');
   });
 
   it('등록은 그 판을 기준판으로 판 기록에 남기고, 등록에서 생긴 이벤트는 판을 가리키지 않는다 (T-151)', async () => {

@@ -30,8 +30,8 @@ const body = (mst: string, lawId: string | null = LID) =>
 type Row = { id: string; external_id: string; effective_notes_version: number | null };
 const row = (id: string, external_id: string): Row => ({ id, external_id, effective_notes_version: 1 });
 
-function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; createError?: Error } = {}) {
-  const calls = { locks: [] as unknown[][], advisory: [] as unknown[][], writes: [] as string[], updates: [] as Record<string, unknown>[] };
+function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; createError?: Error; stages?: string[] } = {}) {
+  const calls = { locks: [] as unknown[][], advisory: [] as unknown[][], writes: [] as string[], updates: [] as Record<string, unknown>[], versions: [] as any[] };
   const ok = <T>(v: T) => Promise.resolve(v);
   const write = (name: string, v: unknown = {}) => (calls.writes.push(name), ok(v));
   const tx: any = {
@@ -56,7 +56,7 @@ function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; crea
       updateMany: () => write('lawArticle.updateMany', { count: 0 }),
     },
     lawChangeEvent: { createMany: () => write('lawChangeEvent.createMany', { count: 0 }) },
-    lawVersion: { upsert: () => write('lawVersion.upsert', { id: 'v' }) },
+    lawVersion: { upsert: (a: any) => (calls.versions.push(a), write('lawVersion.upsert', { id: 'v' })) },
   };
   const prisma: any = { ...tx, lawSource: { upsert: () => ok({ id: 'src-1', isActive: true }) }, $transaction: (fn: any) => fn(tx) };
   // 판 목록 — 요청한 판이 현행이다(현행이 아닌 판의 등록은 tests/lawRegisterVersion.test.ts, T-150)
@@ -67,7 +67,14 @@ function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; crea
       return ok(body(mst, o.lawId === undefined ? LID : o.lawId));
     },
     searchVersions: (lawId: string) =>
-      ok({ page: 1, display: 100, total: 1, items: [{ mst: requested, lawId, status: '현행', promulgationDate: '2026-01-01' }] }),
+      o.stages
+        ? ok({
+            page: 1,
+            display: 100,
+            total: o.stages.length,
+            items: o.stages.map((d, i) => ({ mst: requested, lawId, status: i === 0 ? '현행' : '시행예정', promulgationDate: '2026-01-01', effectiveDate: d })),
+          })
+        : ok({ page: 1, display: 100, total: 1, items: [{ mst: requested, lawId, status: '현행', promulgationDate: '2026-01-01' }] }),
   };
   return { service: new LawsService(prisma, lawGoKr), calls };
 }
@@ -88,7 +95,17 @@ describe('LawsService.register — 법령 행 고르기 (T-151)', () => {
     expect(r).toMatchObject({ id: 'law-same', alreadyTracked: false });
     expect(calls.writes).toContain('law.update');
     expect(calls.writes).not.toContain('law.create');
-    expect(calls.updates[0].lastCheckedAt).toBeInstanceOf(Date); // 같은 판 다시 등록은 지금 확인한 것이다
+    // 같은 판 다시 등록은 확인 시각·확인 오류를 건드리지 않는다 — 저장 판의 본문만 다시 읽었지 그 뒤 판을 확인한 것이 아니다.
+    // 시각을 찍으면 동기화 차례가 맨 뒤로 밀리고, 확인 실패 표시가 확인 없이 지워진다(T-150 ③·검토 H3 — 예전 기대값은 시각을 찍었다)
+    expect(calls.updates[0]).not.toHaveProperty('lastCheckedAt');
+    expect(calls.updates[0]).not.toHaveProperty('lastCheckError');
+  });
+
+  it('새 등록은 확인 시각·확인 오류를 비우고, 현행 판의 단계 시행일을 기준판 기록에 남긴다 (T-150 검토)', async () => {
+    const { service, calls } = setup({ stages: ['2026-10-27', '2027-04-28'] });
+    await service.register('900200');
+    expect(calls.writes).toContain('law.create');
+    expect(calls.versions[0].create.stageEffectiveDates).toEqual([new Date('2026-10-27T00:00:00Z'), new Date('2027-04-28T00:00:00Z')]);
   });
 
   it('MST·법령ID 로 찾은 행이 둘 이상이면(같은 법령의 옛 중복) 어느 행인지 짐작하지 않고 409 — 쓰지 않고, 정리할 중복을 로그에 남긴다', async () => {

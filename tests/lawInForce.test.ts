@@ -151,3 +151,72 @@ describe('현행 판과 시행 예정 판 (T-150)', () => {
     expect(out.scheduled.map((v) => [v.id, v.changeCount])).toEqual([['vNext', 0]]);
   });
 });
+
+describe('공포 순과 시행 순이 어긋날 때, 단계 시행 판 (T-150 검토)', () => {
+  it('먼저 공포된 판 B 가 뒤에 공포된 판 C 보다 늦게 시행되면, 현행 문구는 공포 순으로 첫 예정 변경의 "전" 문구다 — C 의 "전"(= B 의 "후")은 아직 시행 전', () => {
+    const out = splitLawInForce({
+      today: TODAY,
+      articles: [row('5//', 'X2')],
+      events: [ev('5//', 'modified', 'X1', 'X2', '2026-12-01', 'vC'), ev('5//', 'modified', 'X0', 'X1', '2027-06-01', 'vB')],
+      versions: [version('vB', '2', '2027-06-01', '102'), version('vC', '3', '2026-12-01', '103')],
+    });
+    expect(out.articles[0].content).toBe('X0');
+    // 화면의 예정 표시는 가장 먼저 시행될 변경 — 공포 순서와 어긋난다는 표시와 함께(그 날의 문구에 앞 판의 시행 전 개정이 섞여 있다)
+    expect(out.articles[0].scheduled).toMatchObject({ effectiveDate: '2026-12-01', versionId: 'vC', laterCount: 1, orderMismatch: true });
+  });
+
+  it('먼저 공포된 판이 그 조항을 신설하고 뒤 판이 먼저 시행되면, 아직 없는 조항이라 현행 문구가 없고 신설일(그 판의 시행일)을 보인다', () => {
+    const out = splitLawInForce({
+      today: TODAY,
+      articles: [row('9//', 'Y2')],
+      events: [ev('9//', 'created', null, 'Y1', '2027-06-01', 'vB'), ev('9//', 'modified', 'Y1', 'Y2', '2026-12-01', 'vC')],
+      versions: [version('vB', '2', '2027-06-01', '102'), version('vC', '3', '2026-12-01', '103')],
+    });
+    expect(out.articles[0].content).toBeNull();
+    expect(out.articles[0].scheduled).toMatchObject({ changeType: 'created', effectiveDate: '2027-06-01', content: 'Y1', versionId: 'vB', laterCount: 1, orderMismatch: true });
+  });
+
+  it('공포 순과 시행 순이 같으면 어긋남 표시가 없다', () => {
+    const out = splitLawInForce({
+      today: TODAY,
+      articles: [row('5//', 'v3')],
+      events: [ev('5//', 'modified', 'v1', 'v2', '2026-12-01', 'vB'), ev('5//', 'modified', 'v2', 'v3', '2027-06-01', 'vC')],
+      versions: [version('vB', '2', '2026-12-01', '102'), version('vC', '3', '2027-06-01', '103')],
+    });
+    expect(out.articles[0].scheduled).toMatchObject({ orderMismatch: false });
+  });
+
+  it('단계 시행 판은 첫 단계가 지나면 현행이다 — 본문 시행일이 오늘 뒤여도(법제처 현행연혁코드 "현행"과 같은 기준)', () => {
+    const out = splitLawInForce({
+      today: TODAY,
+      articles: [row('1//', 'a')],
+      events: [],
+      versions: [version('vStaged', '1', '2027-04-28', '291447', ['2026-10-27', '2027-01-28', '2027-04-28', '2027-10-28'])],
+    });
+    expect(out.current).toMatchObject({ id: 'vStaged', stageEffectiveDates: ['2026-10-27', '2027-01-28', '2027-04-28', '2027-10-28'] });
+    expect(out.scheduled).toEqual([]);
+  });
+
+  it('단계가 모두 오늘 뒤인 판은 시행 예정이다', () => {
+    const out = splitLawInForce({
+      today: TODAY,
+      articles: [row('1//', 'a')],
+      events: [],
+      versions: [version('vNow', '1', '2026-01-01', '1'), version('vLater', '2', '2027-07-01', '2', ['2027-01-01', '2027-07-01'])],
+    });
+    expect(out.current?.id).toBe('vNow');
+    expect(out.scheduled.map((v) => v.id)).toEqual(['vLater']);
+  });
+
+  it('시행 예정 변경(이벤트)이 남은 판은 첫 단계가 지났어도 예정으로 둔다 — 조항의 계획용 시행일은 본문 시행일(D-17 결정 전 A안)', () => {
+    const out = splitLawInForce({
+      today: TODAY,
+      articles: [row('3//', 'c2')],
+      events: [ev('3//', 'modified', 'c1', 'c2', '2027-04-28', 'vS')],
+      versions: [version('vNow', '1', '2026-01-01', '1'), version('vS', '2', '2027-04-28', '2', ['2026-10-01', '2027-04-28'])],
+    });
+    expect(out.current?.id).toBe('vNow');
+    expect(out.scheduled).toEqual([expect.objectContaining({ id: 'vS', changeCount: 1 })]);
+    expect(out.articles[0].content).toBe('c1');
+  });
+});
