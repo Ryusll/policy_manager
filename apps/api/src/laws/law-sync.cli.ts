@@ -19,7 +19,7 @@ import { AppModule } from '../app.module';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { LawSyncService } from './law-sync.service';
-import { applyRebaseline, planRebaseline, type RebaselineDeps } from './law-rebaseline';
+import { applyRebaseline, planRebaseline, surveyRebaselines, type RebaselineDeps } from './law-rebaseline';
 
 const versionText = (v: { mst: string; promulgationNo: string | null; promulgationDate: string | null; stageEffectiveDates: string[] }) =>
   `MST ${v.mst}(제${v.promulgationNo ?? '?'}호 · 공포 ${v.promulgationDate} · 시행 ${v.stageEffectiveDates.join(', ')})`;
@@ -38,7 +38,8 @@ async function rebaseline(deps: RebaselineDeps, lawId: string, o: { apply: boole
   console.log(
     `  기준 MST ${plan.stored.mst} → ${plan.target.mst}(등록 때 기준판 ${plan.baselineMst}). 다음 동기화가 다시 반영할 판: ${plan.replay.map(versionText).join(' → ')}`,
   );
-  if (plan.reset) console.log(`  다시 걸기 — 이 법령의 변경 이벤트 ${plan.reset.events}건과 판 기록 ${plan.reset.versions + 1}개를 지운다(연결·개정 후보 없음)`);
+  if (plan.reset) console.log(`  처음부터 다시 반영(--reset) — 이 법령의 변경 이벤트 ${plan.reset.events}건과 판 기록 ${plan.reset.versions + 1}개를 지운다(연결·개정 후보 없음)`);
+  if (plan.linked) console.log(`  주의 — 이 법령에 ${plan.linked}이(가) 걸려 있다. 되돌리면 다음 동기화가 등록 때 이미 시행 중이던 판의 개정까지 그 회사들의 후보로 만든다`);
   if (!o.apply) {
     console.log('[law-sync --rebaseline] 계획만 찍었습니다(DB 에는 쓰지 않았습니다) — 되돌리려면 --apply');
     return 0;
@@ -54,20 +55,17 @@ async function rebaseline(deps: RebaselineDeps, lawId: string, o: { apply: boole
   return 0;
 }
 
-/** 모든 법령의 보정 계획만 — 묻힌 법령이 있으면 1(점검 스크립트가 알 수 있게) */
+/** 모든 법령의 보정 계획만 — 보정이 필요하거나 확인할 법령(계획 실패 포함)이 하나라도 있으면 1(점검 스크립트가 알 수 있게) */
 async function rebaselineAll(deps: RebaselineDeps): Promise<number> {
-  const laws = await deps.prisma.law.findMany({ select: { id: true }, orderBy: { lawName: 'asc' } });
-  let found = 0;
-  for (const { id } of laws) {
-    const plan = await planRebaseline(deps, id).catch((e: Error) => ({ kind: 'error' as const, message: e.message }));
-    if (plan.kind === 'error') console.log(`  [${id}] 계획 실패 — ${plan.message}`);
-    else if (plan.kind === 'not_buried') console.log(`  ${plan.lawName} [${id}]: 묻힌 판 없음`);
-    else if (plan.kind === 'blocked') console.log(`  ${plan.lawName} [${id}]: 확인 필요 — ${plan.reason}`);
-    else console.log(`  ${plan.lawName} [${id}]: 묻힌 판 ${plan.buried.map(versionText).join(', ')} → 기준을 MST ${plan.target.mst} 로`);
-    if (plan.kind !== 'not_buried') found++;
+  const { items, needsAttention } = await surveyRebaselines(deps);
+  for (const item of items) {
+    if ('error' in item) console.log(`  [${item.lawId}] 계획 실패 — ${item.error}`);
+    else if (item.plan.kind === 'not_buried') console.log(`  ${item.plan.lawName} [${item.lawId}]: 묻힌 판 없음`);
+    else if (item.plan.kind === 'blocked') console.log(`  ${item.plan.lawName} [${item.lawId}]: 확인 필요 — ${item.plan.reason}`);
+    else console.log(`  ${item.plan.lawName} [${item.lawId}]: 묻힌 판 ${item.plan.buried.map(versionText).join(', ')} → 기준을 MST ${item.plan.target.mst} 로`);
   }
-  console.log(`[law-sync --rebaseline all] 법령 ${laws.length}개 · 보정이 필요하거나 확인할 법령 ${found}개 (DB 에는 쓰지 않았습니다)`);
-  return found ? 1 : 0;
+  console.log(`[law-sync --rebaseline all] 법령 ${items.length}개 · 보정이 필요하거나 확인할 법령 ${needsAttention}개 (DB 에는 쓰지 않았습니다)`);
+  return needsAttention ? 1 : 0;
 }
 
 function parseLimit(argv: string[]): number | undefined {

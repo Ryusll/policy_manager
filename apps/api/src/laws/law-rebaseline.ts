@@ -46,6 +46,11 @@ export type RebaselinePlan =
       replay: LawVersionEntry[];
       /** 다시 걸기 — 지울 판 기록(기준판 밖)·이벤트 수. 동기화가 아직 걷지 않았으면 null */
       reset: { versions: number; events: number } | null;
+      /**
+       * 되돌리기(`--apply`, 동기화가 아직 반영하지 않은 법령)에도 걸려 있는 연결 — 막지는 않는다(연결한 회사에 바른 방향의 후보가
+       * 생기는 것이 보정의 목적이다). 다만 등록 때 이미 시행 중이던 판의 개정까지 그 회사의 후보가 되니 계획에 드러낸다(T-150 기록 검증)
+       */
+      linked: string | null;
     };
 
 const MAX_PAGES = 10;
@@ -109,7 +114,7 @@ export async function planRebaseline(deps: RebaselineDeps, lawId: string, o: { r
     target: versions[base],
     replay: versions.slice(base + 1, storedAt + 1),
   };
-  if (!changeVersions && !events) return { ...plan, reset: null };
+  if (!changeVersions && !events) return { ...plan, reset: null, linked: await heldBy(deps.prisma, lawId) };
   const walked = `동기화가 이미 판 ${changeVersions}개·이벤트 ${events}건을 반영했습니다`;
   if (!o.reset) {
     return {
@@ -120,7 +125,23 @@ export async function planRebaseline(deps: RebaselineDeps, lawId: string, o: { r
   }
   const holds = await heldBy(deps.prisma, lawId);
   if (holds) return { kind: 'blocked', ...head, reason: `${walked} — 이 법령에 걸린 ${holds}이(가) 있어 다시 걸지 않습니다(사람이 봐야 합니다).` };
-  return { ...plan, reset: { versions: changeVersions, events } };
+  return { ...plan, reset: { versions: changeVersions, events }, linked: null };
+}
+
+/** 모든 법령의 보정 계획(쓰지 않는다) — 법령마다 계획 또는 계획 실패. `--rebaseline all` 점검 */
+export type RebaselineSurveyItem = { lawId: string; plan: RebaselinePlan } | { lawId: string; error: string };
+export async function surveyRebaselines(deps: RebaselineDeps): Promise<{ items: RebaselineSurveyItem[]; needsAttention: number }> {
+  const laws = await deps.prisma.law.findMany({ select: { id: true }, orderBy: { lawName: 'asc' } });
+  const items: RebaselineSurveyItem[] = [];
+  for (const { id } of laws) {
+    try {
+      items.push({ lawId: id, plan: await planRebaseline(deps, id) });
+    } catch (e) {
+      items.push({ lawId: id, error: (e as Error).message });
+    }
+  }
+  // 묻힌 법령(계획)만이 아니라 확인이 필요한 법령(blocked — 동기화가 이미 반영해 --reset 이 필요한 것 포함)과 계획 실패도 센다
+  return { items, needsAttention: items.filter((i) => 'error' in i || i.plan.kind !== 'not_buried').length };
 }
 
 /**

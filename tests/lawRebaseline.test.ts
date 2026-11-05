@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyRebaseline, planRebaseline } from '../apps/api/src/laws/law-rebaseline';
+import { applyRebaseline, planRebaseline, surveyRebaselines } from '../apps/api/src/laws/law-rebaseline';
 import { mapLawDetail } from '../apps/api/src/lawgokr/lawgokr.mapper';
 
 /**
@@ -188,7 +188,10 @@ describe('먼저 공포된 판이 등록 때 시행 전이었던 법령 — 묻�
   it('등록한 판이 그때 시행 중이었어도 먼저 공포된 판이 시행 전이었으면 묻혔다 — 그 판의 바로 앞 판으로 되돌릴 계획', async () => {
     const { p } = prisma({ storedMst: '285279' });
     const plan = await planRebaseline({ prisma: p, lawGoKr: lawGoKr(rows) }, 'law-1');
-    expect(plan).toMatchObject({ kind: 'plan', baselineMst: '285279', target: { mst: '283457' }, reset: null });
+    expect(plan).toMatchObject({ kind: 'plan', baselineMst: '285279', target: { mst: '283457' }, reset: null, linked: null });
+    // 되돌리기(--apply)는 연결이 있어도 막지 않지만 계획에 드러낸다 — 등록 때 시행 중이던 판의 개정까지 그 회사의 후보가 된다 (T-150 기록 검증)
+    const withLink = await planRebaseline({ prisma: prisma({ storedMst: '285279', holds: { links: 2 } }).p, lawGoKr: lawGoKr(rows) }, 'law-1');
+    expect(withLink).toMatchObject({ kind: 'plan', reset: null, linked: '연결 2건' });
     const ok = plan as Extract<typeof plan, { kind: 'plan' }>;
     expect(ok.buried.map((v) => v.mst)).toEqual(['284443']);
     expect(ok.replay.map((v) => v.mst)).toEqual(['284443', '285279']);
@@ -240,5 +243,40 @@ describe('먼저 공포된 판이 등록 때 시행 전이었던 법령 — 묻�
     const linked = await plan({ holdsAfterClaim: { links: 1 } });
     await expect(applyRebaseline({ prisma: linked.p, lawGoKr: lg }, linked.out)).rejects.toThrow('연결 1건');
     expect(linked.writes).toEqual(['law.updateMany']);
+  });
+});
+
+describe('모든 법령 점검(--rebaseline all) — 묻힌 법령·확인 필요·계획 실패를 모두 센다 (T-150 기록 검증)', () => {
+  it('묻히지 않은 법령만 빼고 센다 — 동기화가 이미 반영해 --reset 이 필요한 법령과 계획 실패도 확인할 법령이다', async () => {
+    const rows = [item('285279', '2026-04-07', '2026-04-07', '현행'), item('284443', '2026-03-17', '2027-01-01', '시행예정'), item('283457', '2026-02-10', '2026-02-10')];
+    const laws: Record<string, { storedMst: string; baselineMst?: string; changeVersions?: number; events?: number }> = {
+      fine: { storedMst: '283457' },
+      buried: { storedMst: '285279' },
+      walked: { storedMst: '285279', changeVersions: 1, events: 3 },
+    };
+    const lg = lawGoKr(rows);
+    const p: any = {
+      law: {
+        findMany: () => Promise.resolve(['fine', 'buried', 'walked', 'gone'].map((id) => ({ id }))),
+        findUnique: (a: any) => {
+          const o = laws[a.where.id];
+          if (!o) return Promise.reject(new Error('DB 오류'));
+          return Promise.resolve({ id: a.where.id, lawName: a.where.id, externalId: o.storedMst, externalLawId: LID, createdAt: new Date('2026-10-28T01:00:00Z') });
+        },
+      },
+      lawVersion: {
+        count: (a: any) => Promise.resolve(laws[a.where.lawId]?.changeVersions ?? 0),
+        findFirst: (a: any) => Promise.resolve({ mst: laws[a.where.lawId]?.baselineMst ?? laws[a.where.lawId]?.storedMst }),
+      },
+      lawChangeEvent: { count: (a: any) => Promise.resolve(laws[a.where.lawId]?.events ?? 0) },
+      // 되돌릴 계획에는 걸린 연결을 함께 센다(linked)
+      lawLink: { count: () => Promise.resolve(0) },
+      amendmentCandidate: { count: () => Promise.resolve(0) },
+      articleVersion: { count: () => Promise.resolve(0) },
+    };
+    const out = await surveyRebaselines({ prisma: p, lawGoKr: lg });
+    const kinds = out.items.map((i) => ('error' in i ? `${i.lawId}:error` : `${i.lawId}:${i.plan.kind}`));
+    expect(kinds).toEqual(['fine:not_buried', 'buried:plan', 'walked:blocked', 'gone:error']);
+    expect(out.needsAttention).toBe(3);
   });
 });

@@ -273,13 +273,16 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | (root) | 로그인 | 등록된 법령 목록. `lastCheckedAt`·`lastCheckError`·`articleCount` 포함 — **언제 확인한 것인지, 확인에 실패했는지 화면에서 보여야 한다**(`lastCheckError` 가 있으면 "개정 없음"이 아니라 "확인 못 함") |
-| POST | (root) | admin·editor | 법제처 MST로 법령 등록(추적 시작). 조·항·호를 `LawArticle` 로 저장. **200** 조마다 다른 시행일 표기(T-144)도 읽어 조항에 저장한다 — 최초 등록은 이벤트를 만들지 않는다 |
+| POST | (root) | admin·editor | 법제처 MST로 법령 등록(추적 시작). 조·항·호를 `LawArticle` 로 저장. **200** 조마다 다른 시행일 표기(T-144)도 읽어 조항에 저장한다 — 최초 등록은 이벤트를 만들지 않는다. 요청한 판이 아니라 **현행 판**으로 등록한다(T-150 ③ — 아래) |
 | GET | :id | 로그인 | 법령 1건 |
+| GET | :id/in-force | 로그인 | 현행 본문과 시행 예정 개정(T-150 ②) — `today`, `current`(오늘 시행 중인 판 — 단계 시행 판은 첫 단계부터, 판 기록이 없으면 null), `scheduled`(시행 예정 판, 시행일 순·`changeCount`), `articles`(조항마다 `content` = 지금 시행 중인 문구 — 공포 순으로 첫 예정 변경의 '전' 문구, 시행일에 신설될 조항이면 null — 와 `scheduled` = 보일 예정 변경 `{ changeType, content, effectiveDate, versionId, laterCount, orderMismatch }`). 세 읽기를 REPEATABLE READ 한 트랜잭션에서 한다 |
 | GET | :id/articles | 로그인 | 법령조항 목록 (원문 순서). 법령에서 사라진 조항(`deletedAt`, T-124)은 빠진다 — 목록·`articleCount` 모두 각 행에 조별 시행일 표기 `effectiveNotes`(T-144 — `[{date, scope, scopeText, source, raw}]`, null = 아직 읽지 않음, [] = 없음, 항·호 행은 상위 조의 것). `effectiveDate` 는 판 시행일 그대로 |
 | DELETE | :id | admin·editor | 추적 해제 |
 
 `POST /api/laws` 본문: `{ "mst": "283457", "sourceCode": "law.go.kr" }` (`sourceCode` 생략 가능).
 응답에 `articleCount`·`skipped`(조 번호를 못 읽어 건너뛴 행 수)·`versionKey` 가 실린다.
+
+**등록할 판(T-150 ③)** — 요청한 판이 현행이 아니면 같은 법령의 현행 판으로 등록하고 응답에 `requestedMst` 를 싣는다. 현행 판보다 먼저 공포된 판이 아직 시행 전이면 그 판의 바로 앞 판으로 등록하고 `beforePending`(그 판의 이름, 예 '제21534호(2026-04-07 공포)')을 함께 싣는다 — 판 본문은 공포 순으로 쌓여 현행 판 본문에 그 개정이 이미 들어 있다. 새로 등록한 법령은 확인 시각을 비워 다음 동기화의 맨 앞에 서고, 같은 판 다시 등록은 확인 시각·확인 오류를 건드리지 않는다. 시행된 판이 없는 법령은 **422** `LAW_NOT_IN_FORCE`, 판 목록이 비었거나·믿을 수 없거나·쪽 상한까지 현행이 없거나·기준으로 삼을 앞 판이 없으면 **502** `LAW_VERSION_LIST_UNAVAILABLE`.
 
 **같은 법령ID 를 이미 다른 판으로 추적 중이면 새 행을 만들지 않고 그 법령을 그대로 돌려준다**(T-151 — 응답 `alreadyTracked: true`,
 본문·조항·판 기록은 쓰지 않는다, 화면은 "이미 추적 중" 안내). 동기화가 법령을 시행 예정 판으로 옮긴 뒤 현행 판(검색 결과)을 등록하면
@@ -335,7 +338,7 @@
 | GET | runs | global_admin | 실행 이력(최근 순, `limit` 기본 20). `status`: succeeded / partial / failed / running, 법령별 `results[]`(`outcome`: unchanged·updated·failed, `fromMst`·`toMst`·`events`·`error`·`note`, T-151 부터 `versions[]`(이번에 반영한 판 — `mst`·`label`('제21533호(2026-04-07 공포)')·`promulgationDate`·`revisionType`·`stageEffectiveDates`·`events`)·`remaining`(남은 판 수)). `changedCount` 는 판을 하나라도 반영한 법령 수(뒤 판에서 실패한 법령 포함) |
 
 > **동기화가 끝나면 개정 후보를 자동으로 만든다**(T-106). 아직 처리하지 않은 변경 이벤트(`amendmentsProcessedAt` 이 비어 있음)마다 확정 연결이 있는 회사별로 `POST /amendments/generate` 와 같은 생성을 하고, 새로 만든 후보가 있으면 그 회사의 관리자·편집자에게 알림(`kind=law_amendment`) 한 건. 한 회사가 실패해도 다른 회사는 진행하고, 실패가 있었던 이벤트는 표시를 남기지 않아 다음 실행에서 다시 처리한다(이미 만든 후보는 건너뛰므로 알림도 다시 가지 않는다). 수동 등록(`POST /laws`)으로 생긴 이벤트는 다음 동기화 때 처리된다.
-> **예약 실행은 이 API 가 아니다.** 서버 cron 이 `scripts/oracle/law-sync.sh`(→ 컨테이너 안 `node dist/laws/law-sync.cli.js [--limit N] [--law <id>] [--plan]`)를 부르고, 하나라도 실패하면 **종료 코드 1**. `--plan`(T-151)은 DB 에 쓰지 않고(법제처 응답 캐시만 쓴다) 법령마다 반영할 판(공포 순)만 찍는다. `--law` 에 없는 법령을 주면 종료 코드 1(API 는 404). global_admin 토큰은 15분이면 만료돼 cron 이 쥘 수 없다. 경로가 `/admin` 이 아닌 것은 그쪽이 회사 관리자 전용이라서다.
+> **예약 실행은 이 API 가 아니다.** 서버 cron 이 `scripts/oracle/law-sync.sh`(→ 컨테이너 안 `node dist/laws/law-sync.cli.js [--limit N] [--law <id>] [--plan]`, 보정은 `--rebaseline <법령 id 또는 all> [--reset] [--apply]` — 런북 7-5 2-1)를 부르고, 하나라도 실패하면 **종료 코드 1**. `--plan`(T-151)은 DB 에 쓰지 않고(법제처 응답 캐시만 쓴다) 법령마다 반영할 판(공포 순)만 찍는다. `--law` 에 없는 법령을 주면 종료 코드 1(API 는 404). global_admin 토큰은 15분이면 만료돼 cron 이 쥘 수 없다. 경로가 `/admin` 이 아닌 것은 그쪽이 회사 관리자 전용이라서다.
 > **실패를 "개정 없음"과 구별한다** — 법제처는 인증·IP 오류도 HTTP 200 으로 준다. 실패한 법령은 `Law.lastCheckError` 에 사유가 남고 다음 확인이 성공하면 지워진다.
 
 ### amendments (`/api/amendments`) — 개정 후보, ⚠️ **테넌트별** ✅ 생성·조회(T-106)·목록·손질·검토 요청(T-107)·승인·반려(T-108) 구현됨
