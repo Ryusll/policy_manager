@@ -22,6 +22,8 @@ import {
 import { labelFromNodeKey } from '../laws/law-rows';
 import { VERSION_LABEL_SELECT, presentVersion } from '../laws/law-version-present';
 import { reasonLawOf } from './amendment-reason';
+import { candidateListWhere } from './amendment-list-where';
+import { amendmentSummary } from './amendment-summary';
 import { applicationsOf, changesOf, draftRecord, reasonDraft } from './amendment-reason-draft';
 import {
   LawChangesService,
@@ -377,6 +379,11 @@ export class AmendmentsService {
     return summary;
   }
 
+  /** 대시보드 법령 개정 배너(T-158) — 읽기만 한다 */
+  summary(tenantId: string) {
+    return amendmentSummary(this.prisma, tenantId);
+  }
+
   /**
    * 후보 목록 (T-107). 기본은 처리할 것(작성·검토). 조문의 실제 소속으로도 회사 경계를 건다.
    * 행마다 `isCurrentBase` — 지금 다시 만들면 고를 기준 본문이 이 후보의 제1 조문과 같은지.
@@ -385,25 +392,7 @@ export class AmendmentsService {
   async list(tenantId: string, q: AmendmentListQueryDto) {
     const page = q.page ?? 1;
     const limit = q.limit ?? 30;
-    const state = q.state ?? 'open';
-    const where: Prisma.AmendmentCandidateWhereInput = {
-      tenantId,
-      article: {
-        chapter: {
-          policy: {
-            tenantId,
-            ...(q.policyId ? { id: q.policyId } : {}),
-            ...(q.policyActive ? { isActive: q.policyActive === 'active' } : {}),
-          },
-        },
-      },
-      ...(q.changeEventId ? { changeEventId: q.changeEventId } : {}),
-      ...(state === 'open'
-        ? { reviewState: { in: ['draft', 'review'] } }
-        : state === 'all'
-          ? {}
-          : { reviewState: state }),
-    };
+    const where = candidateListWhere(tenantId, q);
     const [rows, total] = await Promise.all([
       this.prisma.amendmentCandidate.findMany({
         where,

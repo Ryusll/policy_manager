@@ -14,6 +14,10 @@ import { ourLinks } from '../law-links/our-links';
  * `ourLinks`(연결의 회사 + 조문의 실제 소속)로 건다 — 연결의 회사만 보고 조문의 소속을 안 본 것이 T-41 의 사고다.
  */
 
+/** 트랜잭션 안에서도 부를 수 있게 필요한 테이블만 받는다(대시보드 요약은 한 스냅숏으로 읽는다 — T-158) */
+type LinkReader = Pick<PrismaService, 'lawLink'>;
+type ArticleReader = Pick<PrismaService, 'lawArticle'>;
+
 /** 바뀐 조항 하나 — 그 조항과 같은 법령의 상위 조항 id(자신 포함) */
 export async function reachOf(prisma: PrismaService, lawArticleId: string): Promise<string[]> {
   const self = await prisma.lawArticle.findUnique({ where: { id: lawArticleId }, select: { lawId: true, nodeKey: true } });
@@ -51,7 +55,7 @@ export async function tenantsReached(prisma: PrismaService, lawArticleId: string
 
 /** 변경 이벤트 여럿 — 이벤트 id → 닿는 법령조항 id. 조항 행이 없는 이벤트(예전에 지운 조항)는 빈 목록 */
 export async function reachOfEvents(
-  prisma: PrismaService,
+  prisma: ArticleReader,
   events: Array<{ id: string; lawId: string; lawArticleId: string | null; nodeKey: string }>,
 ): Promise<Map<string, string[]>> {
   const linked = events.filter((e) => e.lawArticleId);
@@ -99,7 +103,7 @@ export function linkReachesEvent(link: { lawId: string; nodeKey: string }, event
  * "우리 조문에 걸린 변경만" — 우리 회사의 확정 연결이 걸린 조항이나 그 **아래** 조항의 변경.
  * 조항 행이 없는 이벤트(예전에 지운 조항)는 연결을 따라갈 수 없어 넣지 않는다(T-105 와 같다)
  */
-export async function affectedEventsWhere(prisma: PrismaService, tenantId: string): Promise<Prisma.LawChangeEventWhereInput> {
+export async function affectedEventsWhere(prisma: LinkReader, tenantId: string): Promise<Prisma.LawChangeEventWhereInput> {
   const linked = await prisma.lawLink.findMany({
     where: ourLinks(tenantId, { confirmState: 'confirmed' }),
     select: { lawArticle: { select: { lawId: true, nodeKey: true } } },
@@ -113,14 +117,14 @@ export async function affectedEventsWhere(prisma: PrismaService, tenantId: strin
 }
 
 /**
- * 이벤트마다 우리 회사 조문 수 — 확정 연결이 걸린 조문, 추천 연결이 걸린 조문("확인 필요").
- * 같은 조문이 조·항에 둘 다 걸려도 한 번 센다
+ * 이벤트 묶음마다 우리 회사 조문 — 묶음(예: 한 법령의 같은 날 시행 변경들, T-158 대시보드 배너)의 닿는 조항을 합쳐 조문 id 를 한 번씩.
+ * 이벤트마다 센 수를 더하면 같은 조문(조 머리 연결이 여러 항 개정을 받는 경우)을 두 번 센다
  */
-export async function impactCounts(
-  prisma: PrismaService,
+export async function groupImpactArticles(
+  prisma: LinkReader,
   tenantId: string,
   reach: Map<string, string[]>,
-): Promise<(eventId: string) => { confirmed: number; suggested: number }> {
+): Promise<(eventIds: string[]) => { confirmed: Set<string>; suggested: Set<string> }> {
   const ids = [...new Set([...reach.values()].flat())];
   const links = ids.length
     ? await prisma.lawLink.findMany({
@@ -128,7 +132,33 @@ export async function impactCounts(
         select: { lawArticleId: true, articleId: true, confirmState: true },
       })
     : [];
-  return (eventId) => countArticles(links, new Set(reach.get(eventId) ?? []));
+  return (eventIds) => articleSets(links, new Set(eventIds.flatMap((id) => reach.get(id) ?? [])));
+}
+
+/** 같은 묶음의 조문 수 */
+export async function groupImpactCounts(
+  prisma: LinkReader,
+  tenantId: string,
+  reach: Map<string, string[]>,
+): Promise<(eventIds: string[]) => { confirmed: number; suggested: number }> {
+  const sets = await groupImpactArticles(prisma, tenantId, reach);
+  return (eventIds) => {
+    const s = sets(eventIds);
+    return { confirmed: s.confirmed.size, suggested: s.suggested.size };
+  };
+}
+
+/**
+ * 이벤트마다 우리 회사 조문 수 — 확정 연결이 걸린 조문, 추천 연결이 걸린 조문("확인 필요").
+ * 같은 조문이 조·항에 둘 다 걸려도 한 번 센다
+ */
+export async function impactCounts(
+  prisma: LinkReader,
+  tenantId: string,
+  reach: Map<string, string[]>,
+): Promise<(eventId: string) => { confirmed: number; suggested: number }> {
+  const count = await groupImpactCounts(prisma, tenantId, reach);
+  return (eventId) => count([eventId]);
 }
 
 /**
@@ -139,6 +169,15 @@ export function countArticles(
   links: Array<{ lawArticleId: string; articleId: string; confirmState: string }>,
   reach: Set<string>,
 ): { confirmed: number; suggested: number } {
+  const s = articleSets(links, reach);
+  return { confirmed: s.confirmed.size, suggested: s.suggested.size };
+}
+
+/** 같은 규칙으로 조문 id 를 — 확정 연결이 걸린 조문, 추천 연결이 걸린 조문 */
+export function articleSets(
+  links: Array<{ lawArticleId: string; articleId: string; confirmState: string }>,
+  reach: Set<string>,
+): { confirmed: Set<string>; suggested: Set<string> } {
   const confirmed = new Set<string>();
   const suggested = new Set<string>();
   for (const l of links) {
@@ -146,5 +185,5 @@ export function countArticles(
     if (l.confirmState === 'confirmed') confirmed.add(l.articleId);
     else if (l.confirmState === 'suggested') suggested.add(l.articleId);
   }
-  return { confirmed: confirmed.size, suggested: suggested.size };
+  return { confirmed, suggested };
 }

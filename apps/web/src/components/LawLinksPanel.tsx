@@ -16,6 +16,7 @@ import { Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { lawLinksApi, RELATION_TYPE_LABEL, type LawRelationType } from '../api/lawLinks';
 import { lawsApi } from '../api/laws';
 import EvidenceSource from './EvidenceSource';
+import { invalidateAmendmentCounts } from '../api/amendmentSummary';
 
 /** `LawDetailPage`(법령 상세, "영향받는 우리 조문")에서도 같은 배지를 쓴다 */
 export function ConfirmBadge({ state }: { state: 'suggested' | 'confirmed' | 'rejected' }) {
@@ -52,7 +53,8 @@ export function LawLinksPanel({
     enabled: canEdit,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: linksKey });
+  // 연결을 확정하면 창 안 변경으로 후보가 생기고(T-149) 지우거나 내리면 영향 수가 바뀐다 — 개정 후보 숫자도 다시 읽는다(T-158)
+  const invalidate = () => Promise.all([queryClient.invalidateQueries({ queryKey: linksKey }), invalidateAmendmentCounts(queryClient)]);
 
   const updateMutation = useMutation({
     mutationFn: ({ id, confirmState }: { id: string; confirmState: 'confirmed' | 'rejected' }) =>

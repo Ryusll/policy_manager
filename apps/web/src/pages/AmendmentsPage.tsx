@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { syncPendingBadge } from '../api/amendmentSummary';
 import { clsx } from 'clsx';
 import { policiesApi } from '../api/policies';
 import {
@@ -42,7 +43,7 @@ export default function AmendmentsPage() {
   const canReview = user?.role === 'admin' || user?.role === 'editor';
   const [filter, setFilter] = useState<Filter>({ state: 'open', policyId: '', policyActive: '', page: 1 });
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, dataUpdatedAt, isLoading, isError } = useQuery({
     queryKey: ['amendments', filter],
     queryFn: () =>
       amendmentsApi.list({
@@ -54,6 +55,12 @@ export default function AmendmentsPage() {
       }),
     enabled: canReview,
   });
+  // 기본 조건(처리할 것·규정 필터 없음)의 건수는 메뉴 배지와 같은 숫자다 — 목록을 새로 받으면 배지도 맞춘다(T-158)
+  const qc = useQueryClient();
+  const isDefaultList = filter.state === 'open' && !filter.policyId && !filter.policyActive;
+  useEffect(() => {
+    if (data && isDefaultList) syncPendingBadge(qc, data.total, dataUpdatedAt);
+  }, [qc, data, dataUpdatedAt, isDefaultList]);
   const { data: policies = [] } = useQuery<{ id: string; code: string; title: string }[]>({
     queryKey: ['policies'],
     queryFn: policiesApi.list,

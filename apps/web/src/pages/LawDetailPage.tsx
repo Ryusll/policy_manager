@@ -23,6 +23,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useI18n } from '../i18n/useI18n';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
+import { invalidateAmendmentCounts } from '../api/amendmentSummary';
 
 export default function LawDetailPage() {
   const { t } = useI18n();
@@ -169,8 +170,9 @@ function SelectedArticlePanel({ article, canEdit }: { article: LawInForceArticle
     enabled: canEdit,
   });
 
+  // 확정하면 창 안 변경으로 후보가 생긴다(T-149) — 개정 후보 숫자(메뉴 배지·대시보드 배너)도 다시 읽는다(T-158)
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ['law-links', 'by-law-article', article.id] });
+    Promise.all([queryClient.invalidateQueries({ queryKey: ['law-links', 'by-law-article', article.id] }), invalidateAmendmentCounts(queryClient)]);
 
   const updateMutation = useMutation({
     mutationFn: ({ linkId, confirmState }: { linkId: string; confirmState: 'confirmed' | 'rejected' }) =>

@@ -68,6 +68,15 @@ export class AmendmentsController {
     return this.service.list(req.user.tenantId, query);
   }
 
+  // ':id' 보다 먼저 — 그래야 'summary' 가 후보 id 로 잡히지 않는다
+  @Get('summary')
+  @ApiOperation({
+    summary: '대시보드 법령 개정 배너(T-158) — 처리 대기 총수, 시행 예정 개정별 우리 조문·처리 대기 후보, 이미 시행된 개정의 미처리. 메뉴 배지는 목록 건수를 쓴다',
+  })
+  summary(@Request() req: { user: { tenantId: string } }) {
+    return this.service.summary(req.user.tenantId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '개정 후보 — 제1 조문·후보 본문·변경 근거·비교 정보' })
   get(@Request() req: any, @Param('id') id: string) {

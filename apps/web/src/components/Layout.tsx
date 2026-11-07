@@ -17,6 +17,7 @@ import AppFooterBranding from './AppFooterBranding';
 import NotificationBell from './NotificationBell';
 import { canUseApiIntegration } from '../lib/planFeatures';
 import { useQuery } from '@tanstack/react-query';
+import AmendmentsNavBadge from './AmendmentsNavBadge';
 
 const navDefs = [
   { path: '/', labelKey: 'layout.nav.dashboard', icon: LayoutDashboard, id: 'nav-dashboard' },
@@ -208,6 +209,7 @@ export default function Layout() {
               >
                 <Icon size={15} />
                 {label}
+                {path === '/amendments' && <AmendmentsNavBadge />}
               </Link>
             );
           })}
@@ -242,6 +244,7 @@ export default function Layout() {
                 >
                   <Icon size={16} />
                   {label}
+                  {path === '/amendments' && <AmendmentsNavBadge />}
                 </Link>
               );
             })}

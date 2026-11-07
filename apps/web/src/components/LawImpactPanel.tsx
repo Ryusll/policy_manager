@@ -9,6 +9,7 @@ import { useI18n } from '../i18n/useI18n';
 import AmendmentCandidatePreview from './AmendmentCandidatePreview';
 import EffectiveNotesLine from './EffectiveNotesLine';
 import LawRevisionReason from './LawRevisionReason';
+import { invalidateAmendmentCounts } from '../api/amendmentSummary';
 
 /**
  * 법령 변경 하나가 우리 회사의 어느 조문에 걸리는지 (T-105).
@@ -30,6 +31,7 @@ export default function LawImpactPanel({ eventId }: { eventId: string }) {
     mutationFn: () => amendmentsApi.generate(eventId),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['law-changes', 'impact', eventId] });
+      void invalidateAmendmentCounts(qc); // 새 후보 — 메뉴 배지·대시보드 배너(T-158)
       if (res.noSubstantiveChange) {
         toast('개정 연혁 표기만 바뀐 변경이라 고칠 내용이 없습니다.', 'info');
         return;
