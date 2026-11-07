@@ -20,6 +20,7 @@ import {
   type VariableEntry,
 } from './amendment-variables';
 import { labelFromNodeKey } from '../laws/law-rows';
+import { VERSION_LABEL_SELECT, presentVersion } from '../laws/law-version-present';
 import {
   LawChangesService,
   UNRESOLVABLE_REMOVED,
@@ -1295,6 +1296,8 @@ export class AmendmentsService {
             promulgatedDate: true,
             law: { select: { lawName: true } },
             lawArticle: { select: { label: true } },
+            // 이 변경을 만든 판 — 표기·제개정구분과 법제처 개정 이유(T-152). 상세 한 건이라 이유까지 싣는다
+            lawVersion: { select: { ...VERSION_LABEL_SELECT.select, revisionReason: true } },
           },
         },
       },
@@ -1416,6 +1419,8 @@ export class AmendmentsService {
         // 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로이고, 알려 주기 위한 기록
         effectiveNotes: presentEventEffective(e.effectiveInfo),
         promulgatedDate: dateOnly(e.promulgatedDate),
+        version: presentVersion(e.lawVersion),
+        revisionReason: e.lawVersion?.revisionReason ?? null,
       },
     };
   }

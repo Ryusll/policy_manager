@@ -256,6 +256,21 @@ describe('메타·값 변환', () => {
     expect(meta.sourceUrl).toContain('MST=286989');
   });
 
+  it('본문 기본정보의 법령명약칭을 약칭으로, 개정문을 평문으로 읽는다 — 없으면 null(빈 문자열 아님) (T-152)', () => {
+    const { meta } = mapLawDetail(
+      {
+        기본정보: { 법령명_한글: '남녀고용평등과 일ㆍ가정 양립 지원에 관한 법률', 법령명약칭: '남녀고용평등법', 법령ID: '001234', 공포일자: '20251001', 공포번호: '21076', 시행일자: '20251001' },
+        개정문: { 개정문내용: [['국회에서 의결된 법률을 공포한다.', '2025년 10월 1일']] },
+        조문: { 조문단위: [조1_항없음] },
+      },
+      '284457',
+    );
+    expect(meta.shortTitle).toBe('남녀고용평등법');
+    expect(meta.amendmentText).toBe('국회에서 의결된 법률을 공포한다.\n2025년 10월 1일');
+    expect(meta.revisionReason).toBeNull();
+    expect(mapLawDetail({ 기본정보: { 법령명_한글: '시험법' }, 조문: { 조문단위: [조1_항없음] } }, '1').meta.shortTitle).toBeNull();
+  });
+
   it('검색 결과를 정규화한다', () => {
     const item = mapSearchItem({
       현행연혁코드: '현행',

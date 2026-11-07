@@ -65,6 +65,8 @@ function setup(o: { cas?: number; failBody?: string; markFails?: boolean | 'notf
       upsert: () => ok({ id: 'v', orderKey: 'k', stageEffectiveDates: [new Date()], revisionType: 'x' }),
       create: () => ok({ id: 'ver' }),
       update: () => ok({}),
+      // 개정 정보 채우기(T-152) — 아직 읽지 않은 판 없음(이 파일은 판 걷기를 본다. 채우기는 tests/lawRevisionInfo.test.ts)
+      findMany: () => ok([]),
     },
     lawArticle: { findMany: () => ok([]), upsert: () => ok({ id: 'a1' }), updateMany: () => ok({ count: 0 }) },
     lawChangeEvent: { createMany: (a: any) => ok({ count: a.data.length }) },

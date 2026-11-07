@@ -4,6 +4,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { labelFromNodeKey } from '../laws/law-rows';
+import { VERSION_LABEL_SELECT, presentVersion, withRevisionReason } from '../laws/law-version-present';
 import { presentEventEffective } from '../laws/law-effective-info';
 import { closestPerArticle } from '../laws/law-node-key';
 import { impactReferenceDate } from './law-impact';
@@ -27,8 +28,7 @@ const EVENT_SELECT = {
   detectedAt: true,
   law: { select: { lawName: true } },
   lawArticle: { select: { label: true } },
-  // 어느 판의 개정인가(T-150 ②) — "법률 제21700호". T-151 전 이벤트는 판 기록이 없다(null)
-  lawVersion: { select: { lawType: true, promulgationNo: true } },
+  lawVersion: VERSION_LABEL_SELECT, // 어느 판의 개정인가 — 판 표기(T-150 ②)·제개정구분(T-152). T-151 전 이벤트는 null
 } satisfies Prisma.LawChangeEventSelect;
 
 type EventRow = Prisma.LawChangeEventGetPayload<{ select: typeof EVENT_SELECT }>;
@@ -49,7 +49,7 @@ function presentEvent(e: EventRow) {
     afterContent: e.afterContent,
     promulgatedDate: dateOnly(e.promulgatedDate),
     lawEffectiveDate: dateOnly(e.lawEffectiveDate),
-    version: e.lawVersion ? { lawType: e.lawVersion.lawType, promulgationNo: e.lawVersion.promulgationNo } : null,
+    version: presentVersion(e.lawVersion),
     // 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로이고, 알려 주기 위한 기록. 없으면 null
     effectiveNotes: presentEventEffective(e.effectiveInfo),
     receivedVia: e.receivedVia,
@@ -124,7 +124,7 @@ export class LawChangesService {
 
     const asOfDate = this.referenceDate(event.lawEffectiveDate, asOf);
     const base = {
-      event: presentEvent(event),
+      event: await withRevisionReason(this.prisma, presentEvent(event), event.lawVersion?.id),
       asOf: toDateOnlyString(asOfDate),
     };
 

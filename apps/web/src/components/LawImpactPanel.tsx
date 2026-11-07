@@ -8,6 +8,7 @@ import { toast } from '../stores/toastStore';
 import { useI18n } from '../i18n/useI18n';
 import AmendmentCandidatePreview from './AmendmentCandidatePreview';
 import EffectiveNotesLine from './EffectiveNotesLine';
+import LawRevisionReason from './LawRevisionReason';
 
 /**
  * 법령 변경 하나가 우리 회사의 어느 조문에 걸리는지 (T-105).
@@ -72,6 +73,7 @@ export default function LawImpactPanel({ eventId }: { eventId: string }) {
       </div>
 
       <EffectiveNotesLine info={event.effectiveNotes} />
+      <LawRevisionReason version={event.version} reason={event.revisionReason} />
 
       {data.impacted.some((i) => i.baseVersion) && (
         <div className="flex flex-wrap items-center gap-2">

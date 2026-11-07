@@ -33,8 +33,10 @@ export type LawChangeEvent = {
   afterContent: string | null;
   promulgatedDate: string | null;
   lawEffectiveDate: string | null;
-  /** 이 변경을 만든 판(T-150) — "법률 제21700호". 판 기록 전(T-151 전) 변경은 null */
-  version?: { lawType: string | null; promulgationNo: string | null } | null;
+  /** 이 변경을 만든 판(T-150) — "법률 제21700호"와 제개정구분(T-152). 판 기록 전(T-151 전) 변경은 null */
+  version?: { lawType: string | null; promulgationNo: string | null; revisionType?: string | null } | null;
+  /** 그 판의 법제처 개정 이유(T-152) — 영향(펼친 한 건) 응답에만 온다. 판 기록이 없거나 법제처가 주지 않았으면 null */
+  revisionReason?: string | null;
   /** 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로. 없으면 null */
   effectiveNotes?: EventEffectiveNotes | null;
   receivedVia: string;

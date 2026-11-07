@@ -5,6 +5,7 @@ import type { LawDetailMeta } from '../lawgokr/lawgokr.types';
 import { lawBibliography, saveArticles, toDate, type PreparedVersion } from './law-articles-save';
 import { versionOrderKey, type LawVersionEntry } from './law-version-plan';
 import { TX_OPTIONS } from './law-tx';
+import { revisionInfoFields } from './law-revision-info';
 
 /**
  * 법령 판 하나를 반영한다(T-151, PAT-07 — 특허 도 7 S770). **판 하나 = 트랜잭션 하나.**
@@ -76,6 +77,8 @@ export async function applyLawVersion(prisma: PrismaService, a: ApplyLawVersionA
           effectiveDate: a.version.lawEffectiveDate,
           stageEffectiveDates: a.entry.stageEffectiveDates.map((d) => toDate(d)).filter((d): d is Date => d !== null),
           versionKey: a.version.versionKey,
+          // 법제처 제개정이유·개정문(T-152) — 이 판 본문에서 읽었다(법령ID·공포일은 부른 쪽이 이미 견줬다)
+          ...revisionInfoFields(a.meta),
           receivedVia: a.receivedVia,
         },
         select: { id: true },

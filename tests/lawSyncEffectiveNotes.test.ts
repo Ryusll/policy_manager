@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { BadGatewayException } from '@nestjs/common';
 import { LawSyncService } from '../apps/api/src/laws/law-sync.service';
 import { mapLawDetail } from '../apps/api/src/lawgokr/lawgokr.mapper';
 import { EFFECTIVE_NOTES_VERSION } from '../apps/api/src/common/effective-notes';
@@ -11,6 +12,8 @@ import { EFFECTIVE_NOTES_VERSION } from '../apps/api/src/common/effective-notes'
  * 2. 읽기 판이 같으면 법제처 본문을 부르지 않는다
  * 3. 맞추다 실패해도 "개정 없음"이 맞다 — 실패는 결과 note 로 알리고 확인 오류(lastCheckError)로 만들지 않는다
  * 4. 새 판이면 맞추기를 따로 하지 않는다(새 판 저장이 이미 지금 규칙으로 쓴다)
+ *
+ * 같은 가짜로 법제처 개정 정보 채우기(T-152)가 어느 분기에서 도는지도 본다 — 채우기 자체는 lawRevisionInfo.test
  */
 
 const MST = '900143';
@@ -22,9 +25,29 @@ const detail = () =>
     },
   }) as any;
 
-function setup(opts: { version: number | null; latest?: string; getLawFails?: boolean }) {
+type BlankVersion = { id: string; mst: string; promulgatedDate: Date | null; lawType: string | null };
+
+type SetupOptions = {
+  version: number | null;
+  latest?: string;
+  getLawFails?: boolean;
+  /** 이 MST 본문만 실패 */
+  failMst?: string;
+  /** 실패할 때 던질 것(기본은 일반 오류) */
+  getLawError?: Error;
+  /** 개정 정보를 아직 읽지 않은 판(T-152) */
+  blank?: BlankVersion[];
+  /** 저장 판(MST) 본문의 법령명약칭 */
+  baseShortTitle?: string;
+};
+
+function setup(opts: SetupOptions) {
   const calls = {
     getLaw: 0,
+    infoReads: 0,
+    infoWrites: 0,
+    infoMarks: 0,
+    shortTitleWrites: 0,
     collectClaims: 0,
     casClaims: 0,
     notesWrites: 0,
@@ -62,9 +85,10 @@ function setup(opts: { version: number | null; latest?: string; getLawFails?: bo
         if ('lastCheckedAt' in a.data) calls.markChecked.push(a.data);
         return ok({});
       },
-      // 표기 채우기(T-144)는 OR 로 판을 보고, 판 반영(T-151)은 직전 MST 로 비교·교체한다
+      // 표기 채우기(T-144)는 OR 로 판을 보고, 판 반영(T-151)은 직전 MST 로 비교·교체한다. 개정 정보 채우기(T-152)는 빈 약칭만 채운다
       updateMany: (a: any) => {
-        if (a.where.OR) calls.collectClaims += 1;
+        if ('shortTitle' in a.data) calls.shortTitleWrites += 1;
+        else if (a.where.OR) calls.collectClaims += 1;
         else calls.casClaims += 1;
         return ok({ count: 1 });
       },
@@ -85,6 +109,17 @@ function setup(opts: { version: number | null; latest?: string; getLawFails?: bo
       },
       create: () => ok({ id: 'ver-1' }),
       update: () => ok({}),
+      // 개정 정보 채우기(T-152) — 아직 읽지 않은 판(기본은 없음)과 그 판 행 쓰기
+      findMany: () => {
+        calls.infoReads += 1;
+        return ok(opts.blank ?? []);
+      },
+      updateMany: (a: any) => {
+        if ('revisionReason' in a.data) calls.infoWrites += 1;
+        else calls.infoMarks += 1; // 읽지 못한 판의 실패 시각
+        return ok({ count: 1 });
+      },
+      count: () => ok(opts.blank?.length ?? 0),
     },
   };
   prisma.$transaction = (fn: (tx: unknown) => Promise<unknown>) => fn(prisma);
@@ -100,8 +135,10 @@ function setup(opts: { version: number | null; latest?: string; getLawFails?: bo
     getCurrentTitleById: () => ok(null),
     getLaw: (mst: string) => {
       calls.getLaw += 1;
-      if (opts.getLawFails) return Promise.reject(new Error('법제처 응답 오류'));
-      return ok(mapLawDetail(mst === MST ? detail() : { ...detail(), 기본정보: { ...detail().기본정보, 공포일자: '20260201' } }, mst));
+      if (opts.getLawFails || mst === opts.failMst) return Promise.reject(opts.getLawError ?? new Error('법제처 응답 오류'));
+      const raw = mst === MST ? detail() : { ...detail(), 기본정보: { ...detail().기본정보, 공포일자: '20260201' } };
+      if (mst === MST && opts.baseShortTitle) raw.기본정보 = { ...raw.기본정보, 법령명약칭: opts.baseShortTitle };
+      return ok(mapLawDetail(raw, mst));
     },
   };
   const amendments: any = { processPendingEvents: () => ok({ created: 0 }) };
@@ -149,5 +186,50 @@ describe('LawSyncService — 조별 시행일 표기 맞추기 (T-144)', () => {
     expect(calls.getLaw).toBe(1); // 새 판 본문 한 번 — 표기 채우기로 저장 판 본문을 따로 받지 않는다
     expect(calls.collectClaims).toBe(0);
     expect(calls.markChecked).toEqual([expect.objectContaining({ lastCheckError: null })]);
+  });
+});
+
+describe('LawSyncService — 법제처 개정 정보 채우기의 자리 (T-152)', () => {
+  const base: BlankVersion = { id: 'ver-base', mst: MST, promulgatedDate: new Date('2025-12-01T00:00:00Z'), lawType: '법률' };
+  const older: BlankVersion = { id: 'ver-old', mst: '900100', promulgatedDate: new Date('2025-06-01T00:00:00Z'), lawType: '법률' };
+
+  it("'개정 없음'이면 아직 읽지 않은 판을 이벤트 없이 채운다 — 저장 판 본문의 약칭도", async () => {
+    const { service, calls } = setup({ version: EFFECTIVE_NOTES_VERSION, blank: [base], baseShortTitle: '시험약칭' });
+    const run = await service.run({ trigger: 'manual', limit: 1 });
+    expect(run.results[0].outcome).toBe('unchanged');
+    expect(run.results[0].note).toBeUndefined();
+    expect(calls.infoWrites).toBe(1);
+    expect(calls.shortTitleWrites).toBe(1);
+  });
+
+  it('판을 반영한 동기화도 남은 옛 판을 채운다 — 약칭은 반영한 뒤의 저장 판 본문으로만(옛 판 본문의 약칭을 법령 행에 쓰지 않는다)', async () => {
+    const { service, calls } = setup({ version: EFFECTIVE_NOTES_VERSION, latest: '900200', blank: [base], baseShortTitle: '옛약칭' });
+    const run = await service.run({ trigger: 'manual', limit: 1 });
+    expect(run.results[0]).toMatchObject({ outcome: 'updated', toMst: '900200' });
+    expect(run.results[0].note).toBeUndefined();
+    expect(calls.getLaw).toBe(2); // 새 판 본문 + 남은 옛 판 본문
+    expect(calls.infoWrites).toBe(1);
+    expect(calls.shortTitleWrites).toBe(0);
+  });
+
+  it('판 반영이 실패해도(늘 같은 판에서 멈추는 법령) 남은 옛 판을 채운다 — 건너뛰면 그 법령은 영영 빈다', async () => {
+    const { service, calls } = setup({ version: EFFECTIVE_NOTES_VERSION, latest: '900200', failMst: '900200', blank: [base] });
+    const run = await service.run({ trigger: 'manual', limit: 1 });
+    expect(run.results[0].outcome).toBe('failed');
+    expect(calls.getLaw).toBe(2); // 새 판 본문(실패) + 남은 옛 판 본문
+    expect(calls.infoWrites).toBe(1);
+    expect(run.results[0].note ?? '').not.toContain('개정 정보');
+  });
+
+  it('법제처가 응답하지 않으면(502) 채우기는 한 번 시도하고 멈춘다 — 판마다 응답 제한을 기다리지 않고, 남은 판은 note 로', async () => {
+    const getLawError = new BadGatewayException('법제처 API 호출에 실패했습니다: 응답 시간 초과(15000ms)');
+    const { service, calls } = setup({ version: EFFECTIVE_NOTES_VERSION, latest: '900200', getLawFails: true, getLawError, blank: [base, older] });
+    const run = await service.run({ trigger: 'manual', limit: 1 });
+    expect(run.results[0].outcome).toBe('failed');
+    expect(calls.getLaw).toBe(2); // 새 판 본문 + 옛 판 하나 — 그다음 판(900100)은 부르지 않는다
+    expect(calls.infoWrites).toBe(0);
+    expect(calls.infoMarks).toBe(1); // 시도한 판은 실패 시각을 남겨 다음에 뒤로
+    expect(run.results[0].note).toContain(`법제처 개정 정보를 채우지 못했습니다(다음 동기화에서 다시 시도): MST ${MST} — 법제처 API 호출에 실패했습니다`);
+    expect(run.results[0].note).toContain('개정 정보를 아직 못 읽은 판이 2개 남았습니다');
   });
 });

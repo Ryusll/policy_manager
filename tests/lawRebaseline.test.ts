@@ -64,6 +64,7 @@ function prisma(
   },
 ) {
   const writes: string[] = [];
+  const versionCreates: any[] = [];
   const holdsOf = (h: Holds = {}) => ({
     lawLink: { count: () => Promise.resolve(h.links ?? 0) },
     amendmentCandidate: { count: () => Promise.resolve(h.candidates ?? 0) },
@@ -78,7 +79,7 @@ function prisma(
     lawVersion: {
       count: () => Promise.resolve(o.versionsAfterClaim ?? o.changeVersions ?? 0),
       deleteMany: () => (writes.push('lawVersion.deleteMany'), Promise.resolve({ count: 1 })),
-      create: () => (writes.push('lawVersion.create'), Promise.resolve({})),
+      create: (a: any) => (writes.push('lawVersion.create'), versionCreates.push(a.data), Promise.resolve({})),
     },
     lawChangeEvent: {
       count: () => Promise.resolve(o.eventsAfterClaim ?? o.events ?? 0),
@@ -111,7 +112,7 @@ function prisma(
     lawChangeEvent: { count: () => Promise.resolve(o.events ?? 0) },
     $transaction: (fn: (t: unknown) => unknown) => fn(tx),
   };
-  return { p, writes };
+  return { p, writes, versionCreates };
 }
 
 describe('보정 계획 (T-150 ④)', () => {
@@ -217,14 +218,17 @@ describe('먼저 공포된 판이 등록 때 시행 전이었던 법령 — 묻�
     const walked = { storedMst: '300900', baselineMst: '285279', changeVersions: 2, events: 38 };
     const lg = lawGoKr(rows);
     const plan = async (o: Record<string, unknown> = {}) => {
-      const { p, writes } = prisma({ ...walked, ...o });
+      const { p, writes, versionCreates } = prisma({ ...walked, ...o });
       const out = await planRebaseline({ prisma: p, lawGoKr: lg }, 'law-1', { reset: true });
       if (out.kind !== 'plan') throw new Error(`계획이 아니다: ${out.kind}`);
-      return { p, writes, out };
+      return { p, writes, versionCreates, out };
     };
     const ok = await plan();
     await expect(applyRebaseline({ prisma: ok.p, lawGoKr: lg }, ok.out)).resolves.toMatchObject({ deletedEvents: 38, lateHolds: null });
     expect(ok.writes.slice(0, 4)).toEqual(['law.updateMany', 'lawChangeEvent.deleteMany', 'lawVersion.deleteMany', 'lawVersion.create']);
+    // 다시 만든 기준판에 대상 판 본문의 개정 정보와 읽은 시각을 남긴다(T-152) — 동기화가 다시 부르지 않게
+    expect(ok.versionCreates[0]).toHaveProperty('revisionReason');
+    expect(ok.versionCreates[0].revisionInfoAt).toBeInstanceOf(Date);
 
     const more = await plan({ eventsAfterClaim: 40 });
     await expect(applyRebaseline({ prisma: more.p, lawGoKr: lg }, more.out)).rejects.toThrow('계획 뒤에 판·이벤트가 바뀌었습니다');

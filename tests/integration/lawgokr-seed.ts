@@ -55,6 +55,10 @@ export interface FakeVersion {
   revisionType?: string;
   /** 조문. null 이면 조문 없는 본문(별표만 있는 문서처럼) — 반영이 실패한다 */
   articles: FakeArticle[] | null;
+  /** 법제처 제개정이유·개정문의 줄들과 법령명약칭(T-152) — 없으면 본문에 그 칸이 없다 */
+  reason?: string[];
+  amendment?: string[];
+  shortTitle?: string;
 }
 
 const iso = (d: string) => `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
@@ -104,12 +108,20 @@ export class FakeLaw {
         공포번호: v.promulgationNo,
         시행일자: v.effective,
         제개정구분: v.revisionType ?? '일부개정',
+        ...(v.shortTitle ? { 법령명약칭: v.shortTitle } : {}),
       },
+      ...(v.reason ? { 제개정이유: { 제개정이유내용: [v.reason] } } : {}),
+      ...(v.amendment ? { 개정문: { 개정문내용: [v.amendment] } } : {}),
       조문: {
         조문단위: (v.articles ?? []).map((a) => ({ 조문번호: a.no, 조문여부: '조문', 조문제목: a.title, 조문내용: `제${a.no}조(${a.title}) ${a.body}` })),
       },
     };
     this.set(lawDetailCacheKey(v.mst), mapLawDetail(detail, v.mst));
+  }
+
+  /** 본문 캐시를 망가진 값으로 — 그 판 본문 조회가 실패한 것처럼(T-152 채우기 실패 시험). 다시 seedBody 하면 돌아온다 */
+  seedBrokenBody(mst: string) {
+    this.set(lawDetailCacheKey(mst), {});
   }
 
   /** 판 목록(`target=eflaw&LID=`) 1쪽 — 법령ID 로, 공포일 내림차순, 단계 시행일마다 한 행. current 판의 행은 현행 표시 */

@@ -100,6 +100,29 @@ describe('applyLawVersion — 판 하나의 트랜잭션 (T-151)', () => {
     });
   });
 
+  it('판 기록에 법제처 제개정이유·개정문과 읽은 시각을, 법령 행에 약칭을 남긴다 — 쓰는 순서와 이벤트는 그대로 (T-152)', async () => {
+    const { prisma, args, writes, order } = setup();
+    const withInfo = {
+      ...detail(),
+      기본정보: { ...detail().기본정보, 법령명약칭: '시험약칭법' },
+      제개정이유: { 제개정이유내용: [['[일부개정]', '◇ 개정이유']] },
+      개정문: { 개정문내용: [['국회에서 의결된 시험법 일부개정법률을 공포한다.']] },
+    };
+    await applyLawVersion(prisma, { ...args, meta: mapLawDetail(withInfo, entry.mst).meta });
+    expect(writes.versionCreate[0].data).toMatchObject({ revisionReason: '[일부개정]\n◇ 개정이유', amendmentText: '국회에서 의결된 시험법 일부개정법률을 공포한다.' });
+    expect(writes.versionCreate[0].data.revisionInfoAt).toBeInstanceOf(Date);
+    expect(writes.lawUpdate[0].data).toMatchObject({ shortTitle: '시험약칭법' });
+    expect(order).toEqual(['cas', 'prior', 'versionCreate', 'lawUpdate', 'articlesBefore', 'events', 'versionUpdate']);
+  });
+
+  it('법제처가 주지 않은 개정 정보는 null 로 두고 읽은 시각은 찍는다 — 약칭이 없으면 저장된 값을 덮지 않는다 (T-152)', async () => {
+    const { prisma, args, writes } = setup();
+    await applyLawVersion(prisma, args);
+    expect(writes.versionCreate[0].data).toMatchObject({ revisionReason: null, amendmentText: null });
+    expect(writes.versionCreate[0].data.revisionInfoAt).toBeInstanceOf(Date);
+    expect(writes.lawUpdate[0].data.shortTitle).toBeUndefined();
+  });
+
   it('확인 시각은 쓰지 않는다 — 법령의 판을 다 걷은 끝에서 한 번(일부만 반영한 법령이 확인 성공처럼 보이지 않게)', async () => {
     const { prisma, args, writes } = setup();
     await applyLawVersion(prisma, args);

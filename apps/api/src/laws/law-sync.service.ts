@@ -4,6 +4,7 @@ import type { LawSyncTrigger } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { collectEffectiveNotes } from './law-effective-collect';
+import { revisionInfoNote } from './law-revision-info';
 import { AmendmentsService } from '../amendments/amendments.service';
 import { summarizeRun, type LawSyncResult } from './law-sync-logic';
 import { maxVersionsPerRun, planLawVersions, runBudgetMs, walkLawVersions, walkResult } from './law-version-sync';
@@ -209,9 +210,15 @@ export class LawSyncService {
       if (outcome) {
         const { result, mark } = walkResult(base, outcome);
         if (result.error) this.log.warn(`법령 동기화 실패 [${law.lawName}]: ${result.error}`);
+        // T-152: 반영하고 남은 옛 판(등록 기준판·T-152 이전 판)의 개정 정보도 채운다 — 개정이 잦아 '개정 없음'에 잘 오지 않는 법령도, 반영이
+        // 실패·폐지로 늘 같은 판에서 멈추는 법령도(건너뛰면 영영 빈다). 약칭은 반영한 뒤의 저장 판 본문으로만 — 옛 판 본문의 약칭을 쓰지 않게.
+        // 법제처가 응답하지 않거나 응답이 깨졌으면 채우기가 그 법령에서 멈춘다(law-revision-info)
+        const current = { ...law, externalId: result.toMst ?? law.externalId };
+        const infoNote = await revisionInfoNote(this.prisma, this.lawGoKr, current, { max: maxVersionsPerRun(), deadline }, this.log);
         // 판은 이미 반영됐다 — 확인 기록을 남기다 실패해도 결과(반영한 판·이벤트)는 그대로 돌려준다
         const markNote = await this.mark(law, mark, result.error ?? null);
-        if (markNote) result.note = [result.note, markNote].filter(Boolean).join(' ');
+        const note = [result.note, infoNote, markNote].filter(Boolean).join(' ');
+        if (note) result.note = note;
         return result;
       }
       // T-144: 저장된 판이 마지막이면 본문을 다시 받지 않으므로, 조별 시행일 표기를 아직 지금 규칙으로 읽지 않은(T-144 이전 등록·규칙 변경)
@@ -225,8 +232,11 @@ export class LawSyncService {
         (e) => errorText(e),
       );
       if (notesError) this.log.warn(`조별 시행일 표기를 채우지 못했습니다 [${law.lawName}]: ${notesError}`);
+      // T-152: 아직 읽지 않은 판의 법제처 개정 정보(제개정이유·개정문·약칭)도 같은 자리에서 이벤트 없이 채운다 — 실패는 note 로
+      const infoNote = await revisionInfoNote(this.prisma, this.lawGoKr, law, { max: maxVersionsPerRun(), deadline }, this.log);
       const note = [
         notesError ? `조별 시행일 표기를 채우지 못했습니다(다음 동기화에서 다시 시도): ${notesError}` : null,
+        infoNote,
         await this.mark(law, 'checked', null),
       ]
         .filter(Boolean)

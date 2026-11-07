@@ -17,10 +17,18 @@ import { LAW_BUSY_MESSAGE, LockBusyException, lockLawRowsForRegister } from '../
  * 5. 기다림이 트랜잭션 제한을 넘겨 409(잠시 뒤 다시)가 아니라 500 이 된다
  */
 const LID = '990143';
-const body = (mst: string, lawId: string | null = LID) =>
+const body = (mst: string, lawId: string | null = LID, revision = false) =>
   mapLawDetail(
     {
-      기본정보: { ...(lawId ? { 법령ID: lawId } : {}), 법령명_한글: '시험법', 공포일자: '20260101', 시행일자: '20260101', 공포번호: '100' },
+      기본정보: {
+        ...(lawId ? { 법령ID: lawId } : {}),
+        법령명_한글: '시험법',
+        공포일자: '20260101',
+        시행일자: '20260101',
+        공포번호: '100',
+        ...(revision ? { 법령명약칭: '시험약칭법' } : {}),
+      },
+      ...(revision ? { 제개정이유: { 제개정이유내용: [['[제정]', '◇ 제정이유']] }, 개정문: { 개정문내용: [['국회에서 의결된 시험법을 공포한다.']] } } : {}),
       조문: { 조문단위: [{ 조문번호: '1', 조문여부: '조문', 조문내용: `제1조(목적) ${mst} 본문` }] },
     },
     mst,
@@ -30,7 +38,7 @@ const body = (mst: string, lawId: string | null = LID) =>
 type Row = { id: string; external_id: string; effective_notes_version: number | null };
 const row = (id: string, external_id: string): Row => ({ id, external_id, effective_notes_version: 1 });
 
-function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; createError?: Error; stages?: string[] } = {}) {
+function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; createError?: Error; stages?: string[]; revision?: boolean } = {}) {
   const calls = { locks: [] as unknown[][], advisory: [] as unknown[][], writes: [] as string[], updates: [] as Record<string, unknown>[], versions: [] as any[] };
   const ok = <T>(v: T) => Promise.resolve(v);
   const write = (name: string, v: unknown = {}) => (calls.writes.push(name), ok(v));
@@ -64,7 +72,7 @@ function setup(o: { rows?: Row[]; lawId?: string | null; lockError?: Error; crea
   const lawGoKr: any = {
     getLaw: (mst: string) => {
       requested ||= mst;
-      return ok(body(mst, o.lawId === undefined ? LID : o.lawId));
+      return ok(body(mst, o.lawId === undefined ? LID : o.lawId, o.revision));
     },
     searchVersions: (lawId: string) =>
       o.stages
@@ -123,6 +131,14 @@ describe('LawsService.register — 법령 행 고르기 (T-151)', () => {
       expect(calls.writes).toEqual([]);
     }
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('법령 행이 2개입니다'));
+  });
+
+  it('등록이 기준판 기록에 법제처 제개정이유·개정문과 읽은 시각을, 법령 행에 약칭을 남긴다 — 공포번호도 함께 (T-152)', async () => {
+    const { service, calls } = setup({ revision: true });
+    const r = await service.register('900200');
+    expect(calls.versions[0].create).toMatchObject({ promulgationNo: '100', revisionReason: '[제정]\n◇ 제정이유', amendmentText: '국회에서 의결된 시험법을 공포한다.' });
+    expect(calls.versions[0].create.revisionInfoAt).toBeInstanceOf(Date);
+    expect(r).toMatchObject({ shortTitle: '시험약칭법' });
   });
 
   it('처음이면 새 행을 만든다 — 잠금은 법령원·MST·법령ID 로 찾고(FOR NO KEY UPDATE), 첫 등록끼리는 법령ID 열쇠로 줄 선다', async () => {

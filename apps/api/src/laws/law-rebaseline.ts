@@ -5,6 +5,7 @@ import type { LawSearchResultItem } from '../lawgokr/lawgokr.types';
 import { lawBibliography, prepareVersion, saveArticles, toDate } from './law-articles-save';
 import { baseVersionIndex, groupVersions, needsNextPage, startedOn, versionOrderKey, type LawVersionEntry } from './law-version-plan';
 import { TX_OPTIONS } from './law-tx';
+import { revisionInfoFields } from './law-revision-info';
 
 /**
  * 묻힌 법령 보정 (T-150 ④).
@@ -202,6 +203,7 @@ async function rebaselineTx(
         effectiveDate: version.lawEffectiveDate,
         stageEffectiveDates: plan.target.stageEffectiveDates.map((d) => toDate(d)).filter((d): d is Date => d !== null),
         versionKey: version.versionKey,
+        ...revisionInfoFields(meta), // 개정 정보(T-152) — 대상 판 본문에서
         receivedVia,
       },
     });

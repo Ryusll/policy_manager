@@ -9,6 +9,7 @@ import { TX_OPTIONS } from './law-tx';
 import { lockLawRowsForRegister } from '../common/row-locks';
 import { fetchRegisterVersion } from './law-register-version';
 import { readLawInForce } from './law-in-force.query';
+import { revisionInfoFields } from './law-revision-info';
 
 /** 같은 법령의 옛 중복 행이 있으면 등록하지 않는다(고객 화면에 보이는 문구) */
 const DUPLICATE_LAW_ROWS = '같은 법령이 여러 행으로 등록돼 있어(옛 중복) 정리될 때까지 등록할 수 없습니다 — 아스트룸에 문의하세요.';
@@ -152,6 +153,8 @@ export class LawsService {
           // 단계 시행 판은 첫 단계부터 현행이다 — 이 날짜가 없으면 본문 시행일만 보고 시행 예정으로 보인다(T-150 검토)
           stageEffectiveDates: stageEffectiveDates.map((d) => toDate(d)).filter((d): d is Date => d !== null),
           versionKey: version.versionKey,
+          // 법제처 제개정이유·개정문(T-152) — 저장하는 판 본문에서. 같은 판을 다시 등록하면(update: {}) 동기화가 빈 칸만 채운다
+          ...revisionInfoFields(meta),
           receivedVia,
         },
       });

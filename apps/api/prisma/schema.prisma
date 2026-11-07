@@ -778,6 +778,8 @@ model Law {
   /// 법령ID — MST 와 다르다. 개정되면 MST 는 바뀌고 법령ID 는 유지된다
   externalLawId   String?   @map("external_law_id")
   lawName         String    @map("law_name")
+  /// 법령명 약칭(법제처 기본정보.법령명약칭, T-152) — 인용 찾기(T-165)가 쓴다. 법제처가 주지 않으면 null
+  shortTitle      String?   @map("short_title")
   lawNo           String?   @map("law_no")
   /// '법률' · '대통령령' · '부령' 등
   lawType         String?   @map("law_type")
@@ -1049,6 +1051,14 @@ model LawVersion {
   stageEffectiveDates DateTime[] @default([]) @map("stage_effective_dates") @db.Date
   /// 본문 지문(lawAggregateVersionKey) — 앞 판과 같으면 본문이 바뀌지 않은 판(표기만 다른 판, T-145 의 출발점)
   versionKey String? @map("version_key")
+  /// 법제처 제개정이유(평문, 줄은 \n — T-152). 판마다 다른 문서라 판 행에 둔다. null 이면 법제처가 주지 않았거나 아직 읽지 않았다(revisionInfoAt 로 가른다)
+  revisionReason String? @map("revision_reason") @db.Text
+  /// 법제처 개정문(평문) — 저장만 하고 화면에는 보이지 않는다(SRS LAW-16 은 개정 이유만 보인다)
+  amendmentText String? @map("amendment_text") @db.Text
+  /// 이 판의 개정 정보를 본문에서 읽은 시각. null = 아직 읽지 않음 — 동기화가 이벤트 없이 채우고, 한 번 읽은 판은 다시 부르지 않는다
+  revisionInfoAt DateTime? @map("revision_info_at")
+  /// 개정 정보를 읽지 못한 마지막 시각(본문 조회 실패·다른 판 본문·쓰기 오류, T-152) — 채우기는 실패한 적 없는 판부터, 실패한 판은 오래전에 실패한 것부터 다시 본다(계속 실패하는 판이 뒤 판을 막지 않게)
+  revisionInfoTriedAt DateTime? @map("revision_info_tried_at")
   /// 동기화(poll)·등록(manual). 마이그레이션이 옮겨 적은 기준판은 null
   receivedVia LawEventChannel? @map("received_via")
   /// 이 판을 반영하며 만든 변경 이벤트 수

@@ -22,6 +22,7 @@ import { CorrectionHistoryLabel, CorrectionNotice, IssuedSourceLink, RejectionCo
 import AmendmentDocumentButton from '../components/AmendmentDocumentButton';
 import EvidenceSource from '../components/EvidenceSource';
 import EffectiveNotesLine from '../components/EffectiveNotesLine';
+import LawRevisionReason from '../components/LawRevisionReason';
 import { formatArticleAnchor } from '../lib/articleAnchor';
 import { serviceToday } from '../lib/serviceDate';
 import { versionDates } from '../lib/versionDates';
@@ -436,6 +437,7 @@ function LawChangeCard({ data }: { data: AmendmentDetail }) {
           </p>
         </div>
       </div>
+      <LawRevisionReason version={data.event.version} reason={data.event.revisionReason} />
     </section>
   );
 }

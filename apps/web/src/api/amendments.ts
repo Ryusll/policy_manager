@@ -166,6 +166,10 @@ export type AmendmentDetail = AmendmentCandidate & {
     /** 조별로 다른 시행일 표기(T-144) — 계획용 날짜(lawEffectiveDate)는 그대로. 없으면 null */
     effectiveNotes?: EventEffectiveNotes | null;
     promulgatedDate: string | null;
+    /** 이 변경을 만든 판의 표기·제개정구분(T-152) — 판 기록 전 변경은 null */
+    version?: { lawType: string | null; promulgationNo: string | null; revisionType: string | null } | null;
+    /** 그 판의 법제처 개정 이유(T-152) — 없으면 null */
+    revisionReason?: string | null;
   };
 };
 

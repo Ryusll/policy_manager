@@ -73,6 +73,8 @@ export function lawBibliography(meta: LawDetailMeta, version: PreparedVersion) {
     // 응답에 법령ID 가 빠지는 일이 있어도 저장된 값을 null 로 덮지 않는다 — 동기화의 열쇠다
     externalLawId: meta.lawId ?? undefined,
     lawName: meta.title,
+    // 약칭(T-152) — 인용 찾기(T-165)가 쓴다. 응답에 빠져도 저장된 값을 null 로 덮지 않는다
+    shortTitle: meta.shortTitle ?? undefined,
     lawNo: meta.promulgationNo,
     lawType: meta.lawType,
     ministry: meta.ministry,

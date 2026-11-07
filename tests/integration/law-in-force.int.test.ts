@@ -122,9 +122,10 @@ describe('T-150 시행 예정 법령 (가짜 법제처)', () => {
     it('변경 목록은 어느 판의 개정인지(법률 제N호)를 함께 준다', async () => {
       const res = await api(`/law-changes?lawId=${lawId}`, { token: pf.token });
       expect(res.status, JSON.stringify(res.body)).toBe(200);
-      const items = (res.body.items ?? res.body) as { version: { lawType: string; promulgationNo: string } | null }[];
+      const items = (res.body.items ?? res.body) as { version: { lawType: string; promulgationNo: string; revisionType: string } | null }[];
       expect(items.length).toBe(3);
-      for (const e of items) expect(e.version).toEqual({ lawType: '법률', promulgationNo: '21700' });
+      // 제개정구분도 함께 온다(T-152) — 가짜 법제처의 기본값 '일부개정'
+      for (const e of items) expect(e.version).toEqual({ lawType: '법률', promulgationNo: '21700', revisionType: '일부개정' });
     });
   });
 

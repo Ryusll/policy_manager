@@ -10,6 +10,8 @@ export type Law = {
   externalId: string;
   externalLawId: string | null;
   lawName: string;
+  /** 법령명 약칭(법제처, T-152) — 없으면 null */
+  shortTitle?: string | null;
   lawNo: string | null;
   lawType: string | null;
   ministry: string | null;
