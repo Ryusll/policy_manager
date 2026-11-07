@@ -72,8 +72,6 @@ describe('T-131 잠금 순서·세기·기다림', () => {
         VALUES ('${lawId}', '${sourceId}', '900131', '990131', '잠금시험법', '${today}', now());
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, sort_order, updated_at)
         VALUES ('${lawArt}', '${lawId}', '9//', 9, NULL, '제9조', '목적은 잠금 순서를 시험하는 데 있다.', 'v1:k2', 1, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
-        VALUES ('${ev}', '${lawId}', '${lawArt}', '9//', 'modified', '목적은 잠금 순서를 확인하는 데 있다.', '목적은 잠금 순서를 시험하는 데 있다.', 'v1:k1', 'v1:k2', '${today}', 'poll', now());
     `);
   }, 60_000);
 
@@ -485,6 +483,12 @@ describe('T-131 잠금 순서·세기·기다림', () => {
       it('같은 규정·조문에 의견·즐겨찾기·개정 후보를 넣는 일은 기다리지 않고, 승인이 끝나기 전에 커밋된다', async () => {
         const r = await submitted('승인 중 FK 규정');
         expect((await api('/law-links', { method: 'POST', token: t.token, json: { lawArticleId: lawArt, articleId: r.a1, relationType: 'delegation', evidenceText: '목적' } })).status).toBe(201);
+        // 변경은 연결을 확정한 뒤에 들어온다 — 확정하는 순간 이미 있는 변경으로는 그때 후보를 만들므로(T-149), 경합 중의 생성이
+        // 실제로 후보를 넣어 FK 잠금을 거치도록 변경을 연결 뒤에 심는다
+        sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
+        VALUES ('${ev}', '${lawId}', '${lawArt}', '9//', 'modified', '목적은 잠금 순서를 확인하는 데 있다.', '목적은 잠금 순서를 시험하는 데 있다.', 'v1:k1', 'v1:k2', '${today}', 'poll', now());
+        `);
         const drop = sleepTrigger('approve', 'reparse_reviews', 'BEFORE', 'UPDATE', `NEW.id = '${r.reviewId}' AND NEW.status = 'approved'`, 2.5);
         try {
           const approving = approve(r.reviewId);

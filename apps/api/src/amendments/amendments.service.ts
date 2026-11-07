@@ -29,6 +29,8 @@ import {
 import { diffLawText } from './amendment-text';
 import { generateRuleCandidate, RULES, RULESET_VERSION, TEMPLATES } from './amendment-rules';
 import { articlesWithCandidates, capConfidence, PARENT_LINK_FLAG } from './amendment-reach';
+import { amendmentRecipients } from './amendment-notify';
+import type { CandidateOrigin } from './amendment-catchup-rules';
 import { CANDIDATE_SELECT, currentState, presentCandidate } from './amendment-present';
 import { correctionAfter, detachStaleSources, recordSourceDetach, reopenRejectedLocked } from './amendment-correction';
 import { contentHash, hasSubstantiveChange, historyFingerprint } from './amendment-revision';
@@ -143,6 +145,8 @@ export type GenerateResult = {
   noSubstantiveChange: boolean;
   /** 영향을 찾을 수 없는 이벤트(법령에서 사라진 조문)의 사유 */
   unresolvable: string | null;
+  /** 세기만 할 때(plan, T-149) 만들 조문 — 쓰지 않았다 */
+  planned?: string[];
 };
 
 /**
@@ -171,7 +175,20 @@ export class AmendmentsService {
     tenantId: string,
     eventId: string,
     // onlyNew — 자동 생성: 이 변경으로 이미 후보가 있는 조문은 건너뛴다(T-148, amendment-reach.ts)
-    opts: { asOf?: string; plannedEffectiveDate?: string; userId: string | null; notify?: boolean; articleId?: string; onlyNew?: boolean },
+    // articleIds — 그 조문들만(T-149: 확정한 연결의 조문, 일괄 처리 대상). plan — 만들 조문만 세고 쓰지 않는다(일괄 처리 --plan 이 같은 길로 센다)
+    opts: {
+      asOf?: string;
+      plannedEffectiveDate?: string;
+      userId: string | null;
+      notify?: boolean;
+      articleId?: string;
+      onlyNew?: boolean;
+      articleIds?: string[];
+      plan?: boolean;
+      origin?: CandidateOrigin;
+      // 연결 확정 때 — 누가 어느 연결을 확정해 후보가 생겼나(계기, 감사 details, T-149). 후보의 근거 연결은 lawLinkId·rationale 이다
+      trace?: { confirmedBy?: string; confirmedLinkIds?: string[] };
+    },
   ): Promise<GenerateResult> {
     const event = await this.prisma.lawChangeEvent.findUnique({ where: { id: eventId }, select: SOURCE_SELECT });
     if (!event) throw new NotFoundException('변경 이벤트를 찾을 수 없습니다.');
@@ -195,9 +212,10 @@ export class AmendmentsService {
       return { ...result, noSubstantiveChange: true };
     }
 
+    const only = opts.articleIds && new Set(opts.articleIds);
     const reached = (await this.lawChanges.impactedArticles(tenantId, event.lawArticleId, asOfDate)).filter(
       // "다시 만들기"(T-107)는 그 조문만 — 같은 이벤트의 다른 조문까지 새로 만들지 않는다
-      (item) => !opts.articleId || item.article.id === opts.articleId,
+      (item) => (!opts.articleId || item.article.id === opts.articleId) && (!only || only.has(item.article.id)),
     );
     const had = opts.onlyNew
       ? await articlesWithCandidates(this.prisma, tenantId, event.id, reached.map((i) => i.article.id))
@@ -226,6 +244,7 @@ export class AmendmentsService {
         }),
       );
     }
+    if (opts.plan) return { ...result, planned: rows.map((r) => r.articleId) };
     if (!rows.length) return result;
     // 조문 id 순으로 넣는다(T-131) — FK 확인이 조문을 id 순으로 잡아, 조문을 id 순으로 잡고 지우는 규정·장 삭제와 엇갈리지 않게
     rows.sort((a, b) => (a.articleId < b.articleId ? -1 : a.articleId > b.articleId ? 1 : 0));
@@ -263,6 +282,8 @@ export class AmendmentsService {
           entityId: event.id,
           details: {
             trigger: opts.userId ? 'user' : 'system',
+            // 나중에 확정한 연결로 만든 것(T-149) — 연결 확정 때(link_confirm)·배포 때 일괄 처리(catchup). 동기화 끝 자동 생성과 가른다
+            ...(opts.origin ? { origin: opts.origin, ...opts.trace } : {}),
             law: event.law.lawName,
             label: event.lawArticle?.label ?? labelFromNodeKey(event.nodeKey),
             asOf: result.asOf,
@@ -1541,10 +1562,7 @@ export class AmendmentsService {
     event: SourceEvent,
     made: Array<{ reviewFlags: string[] }>,
   ) {
-    const users = await tx.user.findMany({
-      where: { tenantId, role: { in: ['admin', 'editor'] } },
-      select: { id: true },
-    });
+    const users = await amendmentRecipients(tx, tenantId);
     if (!users.length) return;
     const label = event.lawArticle?.label ?? labelFromNodeKey(event.nodeKey);
     const manual = made.filter((m) => m.reviewFlags.includes('manual_draft_required')).length;
@@ -1557,9 +1575,9 @@ export class AmendmentsService {
       .filter(Boolean)
       .join('\n');
     await tx.userNotification.createMany({
-      data: users.map((u) => ({
+      data: users.map((userId) => ({
         tenantId,
-        userId: u.id,
+        userId,
         kind: 'law_amendment',
         title: `[법령 개정] ${event.law.lawName} ${label}`,
         body,

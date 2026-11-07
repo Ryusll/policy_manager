@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { AmendmentCatchupService } from '../amendments/amendment-catchup.service';
 import { CreateLawLinkDto, UpdateLawLinkDto } from './law-links.dto';
 import { citationNodeKey, extractLawCitations } from './law-citation';
 import { ourLinks } from './our-links';
@@ -23,7 +24,11 @@ import { todayDateOnly } from '../common/date-only';
  */
 @Injectable()
 export class LawLinksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // 연결이 확정되면 개정 후보를 만든다(T-149) — 만들기·확정으로 바꾸기가 같은 함수(afterLinksConfirmed)를 부른다
+    private readonly catchup: AmendmentCatchupService,
+  ) {}
 
   private async requireOwnedArticle(tenantId: string, articleId: string) {
     const article = await this.prisma.article.findFirst({
@@ -139,7 +144,7 @@ export class LawLinksService {
     if (dup) throw new ConflictException('이미 연결된 조합입니다.');
 
     // 근거 문구를 본문에 담은 판을 원천으로 남긴다(T-177) — 판 id 는 요청에서 받지 않고, 조문과 판들을 잡은 채 서버가 고른다
-    return withHeldVersions(this.prisma, dto.articleId, (tx, versions, today) =>
+    const link = await withHeldVersions(this.prisma, dto.articleId, (tx, versions, today) =>
       tx.lawLink.create({
         data: {
           tenantId,
@@ -155,6 +160,8 @@ export class LawLinksService {
         },
       }),
     );
+    await this.catchup.afterLinksConfirmed(tenantId, [link.id], userId);
+    return link;
   }
 
   async update(tenantId: string, id: string, userId: string, dto: UpdateLawLinkDto) {
@@ -170,24 +177,29 @@ export class LawLinksService {
       confirmState: dto.confirmState,
       ...(becomingConfirmed ? { confirmedBy: userId, confirmedAt: new Date() } : {}),
     });
-    // 근거 문구를 보내지 않으면(확정·반려·관계 유형) 원천은 그대로 — 판을 잡지 않는다
-    if (dto.evidenceText === undefined) return this.prisma.lawLink.update({ where: { id }, data: data(null) });
+    // 근거 문구를 보내지 않으면(확정·반려·관계 유형) 원천은 그대로 — 판을 잡지 않는다.
     // 보내면 원천도 함께 쓴다(T-177) — 바뀌었으면 잡은 판들로 다시 고르고, 같으면 읽어 둔 원천 그대로(그 판이 그 사이 지워졌으면 비운다).
     // 다른 요청이 그 사이 근거 문구를 고쳐도 문구와 원천이 짝으로 남는다(마지막 요청이 둘 다 쓴다)
     const evidenceText = dto.evidenceText;
-    return withHeldVersions(this.prisma, existing.articleId, (tx, versions, today) =>
-      tx.lawLink.update({
-        where: { id },
-        data: data(
-          evidenceText !== existing.evidenceText
-            ? evidenceSource(versions, evidenceText, today)
-            : {
-                evidenceVersionId: versions.some((v) => v.id === existing.evidenceVersionId) ? existing.evidenceVersionId : null,
-                evidenceFromBody: existing.evidenceFromBody,
-              },
-        ),
-      }),
-    );
+    const saved =
+      evidenceText === undefined
+        ? await this.prisma.lawLink.update({ where: { id }, data: data(null) })
+        : await withHeldVersions(this.prisma, existing.articleId, (tx, versions, today) =>
+            tx.lawLink.update({
+              where: { id },
+              data: data(
+                evidenceText !== existing.evidenceText
+                  ? evidenceSource(versions, evidenceText, today)
+                  : {
+                      evidenceVersionId: versions.some((v) => v.id === existing.evidenceVersionId) ? existing.evidenceVersionId : null,
+                      evidenceFromBody: existing.evidenceFromBody,
+                    },
+              ),
+            }),
+          );
+    // 확정으로 바뀔 때만(T-149) — 이미 확정인 연결의 문구·관계 유형 수정과 반려는 후보를 만들지 않는다
+    if (becomingConfirmed) await this.catchup.afterLinksConfirmed(tenantId, [id], userId);
+    return saved;
   }
 
   async remove(tenantId: string, id: string) {

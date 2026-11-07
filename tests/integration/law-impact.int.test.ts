@@ -61,10 +61,6 @@ describe('T-105 영향 조문 식별', () => {
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, sort_order, updated_at) VALUES
         ('${artA}', '${lawId}', '60/1/', 60, 1, '제60조제1항', '① 사용자는 16일의 유급휴가를 주어야 한다.', 'v1:a', 1, now()),
         ('${artB}', '${lawId}', '61//', 61, NULL, '제61조', '제61조(휴가) 바뀐 문구', 'v1:b', 2, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, promulgated_date, law_effective_date, received_via) VALUES
-        ('${evA}', '${lawId}', '${artA}', '60/1/', 'modified', '① 사용자는 15일의 유급휴가를 주어야 한다.', '① 사용자는 16일의 유급휴가를 주어야 한다.', '${day(-5)}', '${lawEffective}', 'poll'),
-        ('${evB}', '${lawId}', '${artB}', '61//', 'modified', '옛 문구', '바뀐 문구', NULL, NULL, 'poll'),
-        ('${evGone}', '${lawId}', NULL, '62//', 'deleted', '제62조(대체휴가) 옛 본문', NULL, NULL, NULL, 'poll');
     `);
 
     // 회사 1: 규정 하나에 조문 넷
@@ -104,6 +100,15 @@ describe('T-105 영향 조문 식별', () => {
     const other = await createPolicyWithArticle(t2.token, `IMP2-${Date.now().toString(36)}`, '다른 회사 규정');
     art.w = other.article.id;
     await link(t2.token, art.w);
+
+    // 변경은 연결을 다 건 뒤에 들어온다 — 연결을 확정하는 순간 이미 들어와 있는 변경으로는 그때 후보를 만들므로(T-149),
+    // 영향 조회를 보는 이 시험은 변경을 연결 뒤에 심는다
+    sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, promulgated_date, law_effective_date, received_via) VALUES
+        ('${evA}', '${lawId}', '${artA}', '60/1/', 'modified', '① 사용자는 15일의 유급휴가를 주어야 한다.', '① 사용자는 16일의 유급휴가를 주어야 한다.', '${day(-5)}', '${lawEffective}', 'poll'),
+        ('${evB}', '${lawId}', '${artB}', '61//', 'modified', '옛 문구', '바뀐 문구', NULL, NULL, 'poll'),
+        ('${evGone}', '${lawId}', NULL, '62//', 'deleted', '제62조(대체휴가) 옛 본문', NULL, NULL, NULL, 'poll');
+    `);
   }, 120_000);
 
   afterAll(() => {

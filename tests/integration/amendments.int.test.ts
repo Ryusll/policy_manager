@@ -76,10 +76,6 @@ describe('T-106 개정 후보 생성', () => {
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, sort_order, updated_at) VALUES
         ('${artA}', '${lawId}', '60/1/', 60, 1, '제60조제1항', '${LAW_AFTER}', 'v1:a2', 1, now()),
         ('${artB}', '${lawId}', '61//', 61, NULL, '제61조', '휴가는 나누어 쓸 수 있다. <개정 2012.2.1, 2027.1.1>', 'v1:b2', 2, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, promulgated_date, law_effective_date, received_via, amendments_processed_at) VALUES
-        ('${evA}', '${lawId}', '${artA}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', 'v1:a1', 'v1:a2', '${day(-5)}', '${lawEffective}', 'poll', NULL),
-        ('${evNoop}', '${lawId}', '${artB}', '61//', 'modified', '휴가는 나누어 쓸 수 있다. <개정 2012.2.1>', '휴가는 나누어 쓸 수 있다. <개정 2012.2.1, 2027.1.1>', 'v1:b1', 'v1:b2', NULL, NULL, 'poll', now()),
-        ('${evGone}', '${lawId}', NULL, '62//', 'deleted', '대체휴가 옛 본문', NULL, 'v1:c1', NULL, NULL, NULL, 'poll', now());
     `);
 
     // 회사 1: 조문 다섯
@@ -122,6 +118,15 @@ describe('T-106 개정 후보 생성', () => {
         VALUES ('${ver.w}', '${art.w}', 1, '휴가는 15일로 한다.', 'published', '2020-01-01', now());
     `);
     await link(t2.token, artA, art.w);
+
+    // 변경은 연결을 다 건 뒤에 들어온다 — 연결을 확정하는 순간 이미 들어와 있는 변경으로는 그때 후보를 만들므로(T-149),
+    // 동기화 끝 자동 생성과 '개정 후보 만들기'를 보는 이 시험은 변경을 연결 뒤에 심는다
+    sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, promulgated_date, law_effective_date, received_via, amendments_processed_at) VALUES
+        ('${evA}', '${lawId}', '${artA}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', 'v1:a1', 'v1:a2', '${day(-5)}', '${lawEffective}', 'poll', NULL),
+        ('${evNoop}', '${lawId}', '${artB}', '61//', 'modified', '휴가는 나누어 쓸 수 있다. <개정 2012.2.1>', '휴가는 나누어 쓸 수 있다. <개정 2012.2.1, 2027.1.1>', 'v1:b1', 'v1:b2', NULL, NULL, 'poll', now()),
+        ('${evGone}', '${lawId}', NULL, '62//', 'deleted', '대체휴가 옛 본문', NULL, 'v1:c1', NULL, NULL, NULL, 'poll', now());
+    `);
   }, 120_000);
 
   afterAll(() => {

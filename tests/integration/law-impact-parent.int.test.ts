@@ -91,11 +91,6 @@ describe('T-148 상위 조항에 건 연결도 영향으로 잡기', () => {
         ('${la.p801}', '${lawId}', '80/1/', 80, 1, NULL, '제80조제1항', '① 사용자는 휴일을 주어야 한다.', 'v1:p801', 8, now()),
         ('${la.jo90}', '${lawId}', '90//', 90, NULL, NULL, '제90조', '', 'v1:jo90', 9, now()),
         ('${la.p901}', '${lawId}', '90/1/', 90, 1, NULL, '제90조제1항', '① 연차 유급휴가는 16일로 한다.', 'v1:p901b', 10, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, promulgated_date, law_effective_date, received_via, amendments_processed_at) VALUES
-        ('${ev.p601}', '${lawId}', '${la.p601}', '60/1/', 'modified', '${BEFORE_601}', '${AFTER_601}', 'v1:p601a', 'v1:p601b', '${day(-3)}', '${lawEffective}', 'poll', NULL),
-        ('${ev.h7012}', '${lawId}', '${la.h7012}', '70/1/2', 'modified', '2. 출산전후휴가 90일', '2. 출산전후휴가 120일', 'v1:h7012a', 'v1:h7012b', '${day(-3)}', '${lawEffective}', 'poll', NULL),
-        ('${ev.jo80}', '${lawId}', '${la.jo80}', '80//', 'modified', '휴일은 주 1회로 한다.', '휴일은 주 1회 이상으로 한다.', 'v1:jo80a', 'v1:jo80b', '${day(-3)}', '${lawEffective}', 'poll', NULL),
-        ('${ev.p901}', '${lawId}', '${la.p901}', '90/1/', 'modified', '① 연차 유급휴가는 15일로 한다.', '① 연차 유급휴가는 16일로 한다.', 'v1:p901a', 'v1:p901b', '${day(-3)}', '${lawEffective}', 'poll', NULL);
     `);
 
     // 회사 1: 조문 다섯
@@ -141,6 +136,16 @@ describe('T-148 상위 조항에 건 연결도 영향으로 잡기', () => {
     `);
     // 회사 2 연결: W 는 조(제60조)
     await link(t2.token, la.jo60, art.w, '연차 유급휴가');
+
+    // 변경은 연결을 다 건 뒤에 들어온다 — 동기화가 가져온 변경을 끝에서 처리하는 흐름. 연결을 확정하는 순간 이미 들어와 있는
+    // 변경으로는 그때 후보를 만들므로(T-149), 동기화 끝 자동 생성을 보는 이 시험은 변경을 연결 뒤에 심는다
+    sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, promulgated_date, law_effective_date, received_via, amendments_processed_at) VALUES
+        ('${ev.p601}', '${lawId}', '${la.p601}', '60/1/', 'modified', '${BEFORE_601}', '${AFTER_601}', 'v1:p601a', 'v1:p601b', '${day(-3)}', '${lawEffective}', 'poll', NULL),
+        ('${ev.h7012}', '${lawId}', '${la.h7012}', '70/1/2', 'modified', '2. 출산전후휴가 90일', '2. 출산전후휴가 120일', 'v1:h7012a', 'v1:h7012b', '${day(-3)}', '${lawEffective}', 'poll', NULL),
+        ('${ev.jo80}', '${lawId}', '${la.jo80}', '80//', 'modified', '휴일은 주 1회로 한다.', '휴일은 주 1회 이상으로 한다.', 'v1:jo80a', 'v1:jo80b', '${day(-3)}', '${lawEffective}', 'poll', NULL),
+        ('${ev.p901}', '${lawId}', '${la.p901}', '90/1/', 'modified', '① 연차 유급휴가는 15일로 한다.', '① 연차 유급휴가는 16일로 한다.', 'v1:p901a', 'v1:p901b', '${day(-3)}', '${lawEffective}', 'poll', NULL);
+    `);
   }, 120_000);
 
   afterAll(() => {

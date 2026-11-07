@@ -81,6 +81,21 @@ export async function reachOfEvents(
 }
 
 /**
+ * 연결 하나가 닿는 변경 — 그 연결의 조항과 같은 법령의 **아래** 조항(T-148). 이벤트 조건으로(아래 판정과 같은 규칙)
+ */
+export function linkReachWhere(lawId: string, nodeKey: string): Prisma.LawChangeEventWhereInput {
+  const prefix = descendantPrefix(nodeKey);
+  return prefix ? { lawId, nodeKey: { startsWith: prefix } } : { lawId, nodeKey };
+}
+
+/** 같은 판정을 이벤트 하나에 — 연결의 조항이 바뀐 조항 자신이거나 그 위 조항인가(T-149 확정 시점 경로가 조문을 고를 때) */
+export function linkReachesEvent(link: { lawId: string; nodeKey: string }, event: { lawId: string; nodeKey: string }): boolean {
+  if (link.lawId !== event.lawId) return false;
+  const prefix = descendantPrefix(link.nodeKey);
+  return prefix ? event.nodeKey.startsWith(prefix) : event.nodeKey === link.nodeKey;
+}
+
+/**
  * "우리 조문에 걸린 변경만" — 우리 회사의 확정 연결이 걸린 조항이나 그 **아래** 조항의 변경.
  * 조항 행이 없는 이벤트(예전에 지운 조항)는 연결을 따라갈 수 없어 넣지 않는다(T-105 와 같다)
  */
@@ -93,10 +108,7 @@ export async function affectedEventsWhere(prisma: PrismaService, tenantId: strin
   if (!linked.length) return { id: { in: [] } };
   return {
     lawArticleId: { not: null },
-    OR: linked.map(({ lawArticle: { lawId, nodeKey } }) => {
-      const prefix = descendantPrefix(nodeKey);
-      return prefix ? { lawId, nodeKey: { startsWith: prefix } } : { lawId, nodeKey };
-    }),
+    OR: linked.map(({ lawArticle: { lawId, nodeKey } }) => linkReachWhere(lawId, nodeKey)),
   };
 }
 

@@ -102,9 +102,6 @@ describe('T-108 개정 후보 승인·반려', () => {
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, sort_order, updated_at)
         VALUES ('${lawArt}', '${lawId}', '60/1/', 60, 1, '제60조제1항', '${LAW_AFTER}', 'v1:p2', 1, now()),
                ('${lawArt2}', '${lawId}', '61//', 61, NULL, '제61조', '휴가는 25일을 넘지 않는다.', 'v1:q2', 2, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
-        VALUES ('${ev}', '${lawId}', '${lawArt}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', 'v1:p1', 'v1:p2', '${E}', 'poll', now()),
-               ('${ev2}', '${lawId}', '${lawArt2}', '61//', 'modified', '휴가는 15일을 넘지 않는다.', '휴가는 25일을 넘지 않는다.', 'v1:q1', 'v1:q2', '${E}', 'poll', now());
     `);
 
     const { policy, chapter, article } = await createPolicyWithArticle(t1.token, `APV-${Date.now().toString(36)}`, '취업규칙');
@@ -135,6 +132,13 @@ describe('T-108 개정 후보 승인·반려', () => {
     }
     const q2 = await api('/law-links', { method: 'POST', token: t1.token, json: { lawArticleId: lawArt2, articleId: art.q, relationType: 'delegation' } });
     expect(q2.status).toBe(201);
+    // 변경은 연결을 확정한 뒤에 들어온다 — 연결을 확정하는 순간 이미 들어와 있는 창 안의 변경으로는 그때 후보를 만들므로(T-149),
+    // '개정 후보 만들기'로 만든 후보를 보는 이 시험은 변경을 연결 뒤에 심는다
+    sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
+        VALUES ('${ev}', '${lawId}', '${lawArt}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', 'v1:p1', 'v1:p2', '${E}', 'poll', now()),
+               ('${ev2}', '${lawId}', '${lawArt2}', '61//', 'modified', '휴가는 15일을 넘지 않는다.', '휴가는 25일을 넘지 않는다.', 'v1:q1', 'v1:q2', '${E}', 'poll', now());
+    `);
     const g2 = await api('/amendments/generate', { method: 'POST', token: t1.token, json: { changeEventId: ev2 } });
     candQ2 = g2.body.created[0].id;
     const g = await api('/amendments/generate', { method: 'POST', token: t1.token, json: { changeEventId: ev } });

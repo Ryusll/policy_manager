@@ -66,15 +66,6 @@ describe('T-144 조별 시행일 표기', () => {
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, effective_date, effective_notes, sort_order, updated_at) VALUES
         ('${artClause}', '${lawId}', '60/1/', 60, 1, '제60조제1항', '${LAW_AFTER}', 'v1:c', '${lawEffective}', ${json([NOTE])}, 1, now()),
         ('${artPlain}', '${lawId}', '61//', 61, NULL, '제61조', '제61조(휴가) 본문', 'v1:p', '${lawEffective}', '[]'::jsonb, 2, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, law_effective_date, received_via, effective_info) VALUES
-        ('${evClause}', '${lawId}', '${artClause}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', '${lawEffective}', 'poll',
-          ${json({ mst: '900143', inherited: true, before: null, after: [NOTE] })}),
-        ('${evPlain}', '${lawId}', '${artPlain}', '61//', 'modified', '옛 문구', '바뀐 문구', '${lawEffective}', 'poll', NULL),
-        ('${evGone}', '${lawId}', NULL, '62//', 'deleted', '제62조 옛 본문', NULL, '${lawEffective}', 'poll',
-          ${json({ mst: '900143', inherited: false, before: [NOTE], after: null })}),
-        ('${evOld}', '${lawId}', '${artPlain}', '61//', 'modified', '더 옛 문구', '옛 문구', '${lawEffective}', 'poll', NULL),
-        ('${evRemoved}', '${lawId}', '${artPlain}', '61//', 'modified', '아주 옛 문구', '더 옛 문구', '${lawEffective}', 'poll',
-          ${json({ mst: '900143', inherited: false, before: [NOTE], after: [], rules: 1, beforeRules: 1 })});
     `);
 
     // 회사 규정 — 제1 조문이 되는 시행본(법령 시행일 전부터 시행 중)과 확정된 연결
@@ -88,6 +79,20 @@ describe('T-144 조별 시행일 표기', () => {
     expect(policy.id).toBeTruthy();
     const link = await api('/law-links', { method: 'POST', token: t.token, json: { lawArticleId: artClause, articleId, relationType: 'delegation', evidenceText: '연차휴가 일수' } });
     expect(link.status, JSON.stringify(link.body)).toBe(201);
+
+    // 변경은 연결을 건 뒤에 들어온다 — 연결을 확정하는 순간 이미 들어와 있는 변경으로는 그때 후보를 만들므로(T-149),
+    // '개정 후보 만들기'로 만든 후보를 보는 이 시험은 변경을 연결 뒤에 심는다
+    sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, law_effective_date, received_via, effective_info) VALUES
+        ('${evClause}', '${lawId}', '${artClause}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', '${lawEffective}', 'poll',
+          ${json({ mst: '900143', inherited: true, before: null, after: [NOTE] })}),
+        ('${evPlain}', '${lawId}', '${artPlain}', '61//', 'modified', '옛 문구', '바뀐 문구', '${lawEffective}', 'poll', NULL),
+        ('${evGone}', '${lawId}', NULL, '62//', 'deleted', '제62조 옛 본문', NULL, '${lawEffective}', 'poll',
+          ${json({ mst: '900143', inherited: false, before: [NOTE], after: null })}),
+        ('${evOld}', '${lawId}', '${artPlain}', '61//', 'modified', '더 옛 문구', '옛 문구', '${lawEffective}', 'poll', NULL),
+        ('${evRemoved}', '${lawId}', '${artPlain}', '61//', 'modified', '아주 옛 문구', '더 옛 문구', '${lawEffective}', 'poll',
+          ${json({ mst: '900143', inherited: false, before: [NOTE], after: [], rules: 1, beforeRules: 1 })});
+    `);
   }, 90_000);
 
   afterAll(() => {

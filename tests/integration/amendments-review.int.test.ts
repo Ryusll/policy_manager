@@ -79,8 +79,6 @@ describe('T-107 개정 후보 검토', () => {
         VALUES ('${lawId}', '${sourceId}', '900003', '990003', '검토시험법', '${lawEffective}', now());
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, sort_order, updated_at)
         VALUES ('${lawArt}', '${lawId}', '60/1/', 60, 1, '제60조제1항', '${LAW_AFTER}', 'v1:r2', 1, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
-        VALUES ('${ev}', '${lawId}', '${lawArt}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', 'v1:r1', 'v1:r2', '${lawEffective}', 'poll', now());
     `);
 
     // 회사 1: 시행 중 규정에 조문 둘(X: 규칙이 고치는 조문, M: 대응 문구 없는 조문), 비활성 규정에 하나(I)
@@ -113,6 +111,12 @@ describe('T-107 개정 후보 검토', () => {
         VALUES ('${randomUUID()}', '${other.article.id}', 1, '휴가는 15일로 한다.', 'published', '2020-01-01', now());
     `);
     await api('/law-links', { method: 'POST', token: t2.token, json: { lawArticleId: lawArt, articleId: other.article.id, relationType: 'delegation' } });
+    // 변경은 연결을 확정한 뒤에 들어온다 — 연결을 확정하는 순간 이미 들어와 있는 창 안의 변경으로는 그때 후보를 만들므로(T-149),
+    // '개정 후보 만들기'로 만든 후보를 보는 이 시험은 변경을 연결 뒤에 심는다
+    sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
+        VALUES ('${ev}', '${lawId}', '${lawArt}', '60/1/', 'modified', '${LAW_BEFORE}', '${LAW_AFTER}', 'v1:r1', 'v1:r2', '${lawEffective}', 'poll', now());
+    `);
 
     const g1 = await api('/amendments/generate', { method: 'POST', token: t1.token, json: { changeEventId: ev } });
     expect(g1.status, JSON.stringify(g1.body)).toBe(200);

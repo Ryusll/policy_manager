@@ -106,13 +106,17 @@ describe('T-109 변수 값·유효기간과 본문 위치 연결', () => {
         VALUES ('${lawId}', '${sourceId}', '900109', '990109', '변수시험법', '${E}', now());
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, sort_order, updated_at)
         VALUES ('${lawArt}', '${lawId}', '60/1/', 60, 1, '제60조제1항', '사용자는 근로자에게 20일의 유급휴가를 주어야 한다.', 'v1:p2', 1, now());
-      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
-        VALUES ('${ev}', '${lawId}', '${lawArt}', '60/1/', 'modified', '사용자는 근로자에게 15일의 유급휴가를 주어야 한다.', '사용자는 근로자에게 20일의 유급휴가를 주어야 한다.', 'v1:p1', 'v1:p2', '${E}', 'poll', now());
     `);
     for (const k of ['d', 'f'] as const) {
       const link = await post('/law-links', { lawArticleId: lawArt, articleId: art[k], relationType: 'delegation', evidenceText: '연차휴가 일수' });
       expect(link.status, JSON.stringify(link.body)).toBe(201);
     }
+    // 변경은 연결을 확정한 뒤에 들어온다 — 연결을 확정하는 순간 이미 들어와 있는 창 안의 변경으로는 그때 후보를 만들므로(T-149),
+    // '개정 후보 만들기'로 만든 후보를 보는 이 시험은 변경을 연결 뒤에 심는다
+    sql(`
+      INSERT INTO law_change_events (id, law_id, law_article_id, node_key, change_type, before_content, after_content, before_version_key, after_version_key, law_effective_date, received_via, amendments_processed_at)
+        VALUES ('${ev}', '${lawId}', '${lawArt}', '60/1/', 'modified', '사용자는 근로자에게 15일의 유급휴가를 주어야 한다.', '사용자는 근로자에게 20일의 유급휴가를 주어야 한다.', 'v1:p1', 'v1:p2', '${E}', 'poll', now());
+    `);
   });
 
   afterAll(() => {
