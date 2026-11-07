@@ -30,8 +30,9 @@ export function LawInForceHeader({ law, inForce, failed, articleCount }: { law: 
   // 판 기록이 모두 시행 예정이면(보정하지 않은 묻힌 법령) 법령 행의 시행일은 예정 판의 날짜라 '현행'으로 찍지 않는다
   const unconfirmed = !current && inForce.scheduled.length > 0;
   const currentDate = current ? currentStageDate(current, inForce.today) : unconfirmed ? null : law.effectiveDate?.slice(0, 10);
-  const fallback = t(unconfirmed ? 'lawInForce.currentUnknown' : 'lawInForce.currentFallback');
-  // 첫 개정 확인 전에는 '현행'이라 하지 않는다 — 현행보다 앞 판으로 등록했으면 현행 판까지 아직 반영되지 않았다(T-150 마지막 검토)
+  // 첫 개정 확인 전에는 '현행'이라 하지 않는다 — 현행보다 앞 판으로 등록했으면 현행 판까지 아직 반영되지 않았다(T-150 마지막 검토).
+  // 판 기록이 없는 옛 행도 같다 — 확인에 성공한 적이 없으면 '등록한 판'(T-153 ⑤)
+  const fallback = t(unconfirmed ? 'lawInForce.currentUnknown' : law.lastCheckedAt ? 'lawInForce.currentFallback' : 'lawInForce.registeredFallback');
   const currentKey = law.lastCheckedAt ? 'lawInForce.current' : 'lawInForce.registeredVersion';
   return (
     <div className="mt-0.5 space-y-1">

@@ -183,9 +183,12 @@ describe('T-104 법령 동기화', () => {
 
     // 확인을 실패시키는 방법: 판 목록에서 저장 판(B)을 뺀다 — 사이 판을 확인할 수 없어 반영하지 않는다. (예전에는 법령ID 를 비웠는데,
     // 이제 동기화가 저장 판 본문에서 법령ID 를 채운다 — law-sync-lawid.int.test.ts)
-    it('확인하지 못하면 failed 로 남겨 "개정 없음"과 구별한다', async () => {
+    it('확인하지 못하면 failed 로 남겨 "개정 없음"과 구별한다 — 마지막 확인 시각은 그대로, 시도 시각만 새로(T-153 ⑤)', async () => {
       law.seedVersionList([A]);
       try {
+        const before = (await api(`/laws/${lawId}`, { token: platform.token })).body as { lastCheckedAt: string | null; lastAttemptedAt: string | null };
+        expect(before.lastCheckedAt).not.toBeNull(); // 앞 시험의 성공 확인 — 그대로 남는지 볼 값이 있어야 한다
+        expect(before.lastAttemptedAt).not.toBeNull(); // 성공도 시도 시각을 찍는다 — 이번 실패가 그보다 뒤인지 견준다
         const run = await runOne();
         expect(run.status).toBe('failed');
         expect(run.failedCount).toBe(1);
@@ -194,6 +197,9 @@ describe('T-104 법령 동기화', () => {
 
         const got = await api(`/laws/${lawId}`, { token: platform.token });
         expect(got.body.lastCheckError).toContain('판 목록에서 찾지 못했습니다');
+        // 실패를 성공처럼 보이지 않게 — '마지막 확인'은 앞선 성공의 시각, 다음 차례를 정하는 시도 시각만 이번 실패로(T-153 ⑤)
+        expect(got.body.lastCheckedAt).toBe(before.lastCheckedAt);
+        expect(new Date(got.body.lastAttemptedAt).getTime()).toBeGreaterThan(new Date(before.lastAttemptedAt ?? 0).getTime());
 
         const runs = await api('/platform-admin/law-sync/runs?limit=1', { token: platform.token });
         expect(runs.body[0].id).toBe(run.id);

@@ -98,7 +98,7 @@ async function printPlan(sync: LawSyncService, limit: number | undefined, lawIds
     console.log(`  ${p.lawName} [${p.lawId}]: 저장 MST ${p.storedMst} · 현행 ${'currentMst' in p ? p.currentMst : '?'} · 반영할 판 ${pending.length}개${chain ? ` — ${chain}` : ''}`);
   }
   const total = lawIds ? plans.length : await sync.lawCount();
-  const rest = total > plans.length ? ` — 전체 ${total}개 중 확인이 오래된 ${plans.length}개만 봤습니다(나머지는 법령 화면 주소의 id 로 --law <id>)` : '';
+  const rest = total > plans.length ? ` — 전체 ${total}개 중 확인 시도가 오래된 ${plans.length}개만 봤습니다(나머지는 법령 화면 주소의 id 로 --law <id>)` : '';
   console.log(`[law-sync --plan] 법령 ${plans.length}개 · 확인 실패 ${failed}개${rest} (DB 에는 쓰지 않았습니다)`);
   return failed ? 1 : 0;
 }
@@ -136,7 +136,7 @@ async function main(): Promise<number> {
     const results = (run.results ?? []) as { outcome: string; lawName: string; error?: string; note?: string; versions?: { label: string; events: number }[] }[];
     for (const r of results) {
       if (r.versions?.length) console.log(`  ${r.lawName}: 판 ${r.versions.map((v) => `${v.label} ${v.events}건`).join(' → ')}`);
-      if (r.outcome === 'failed') console.log(`  실패: ${r.lawName} — ${r.error}`);
+      if (r.outcome === 'failed') console.log(`  실패: ${r.lawName} — ${r.error}${r.note ? ` (참고: ${r.note})` : ''}`);
       else if (r.note) console.log(`  참고: ${r.lawName} — ${r.note}`);
     }
     return run.status === 'succeeded' ? 0 : 1;

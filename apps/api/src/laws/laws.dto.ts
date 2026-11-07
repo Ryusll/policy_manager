@@ -14,7 +14,7 @@ export class RegisterLawDto {
 }
 
 export class RunLawSyncDto {
-  @ApiPropertyOptional({ description: '이번에 확인할 법령 수(확인이 오래된 순)', minimum: 1, maximum: 100, default: 20 })
+  @ApiPropertyOptional({ description: '이번에 확인할 법령 수(확인 시도가 오래된 순)', minimum: 1, maximum: 100, default: 20 })
   @IsOptional()
   @IsInt()
   @Min(1)

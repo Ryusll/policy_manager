@@ -10,6 +10,7 @@ import { lockLawRowsForRegister } from '../common/row-locks';
 import { fetchRegisterVersion } from './law-register-version';
 import { readLawInForce } from './law-in-force.query';
 import { revisionInfoFields } from './law-revision-info';
+import { lawSyncStatus } from './law-sync-status';
 
 /** 같은 법령의 옛 중복 행이 있으면 등록하지 않는다(고객 화면에 보이는 문구) */
 const DUPLICATE_LAW_ROWS = '같은 법령이 여러 행으로 등록돼 있어(옛 중복) 정리될 때까지 등록할 수 없습니다 — 아스트룸에 문의하세요.';
@@ -136,7 +137,7 @@ export class LawsService {
       // 시각을 찍으면 동기화 차례가 맨 뒤로 밀리고 '최근 개정 확인에 실패' 표시가 확인 없이 사라진다(T-150 검토)
       const law = same
         ? await tx.law.update({ where: { id: same.id }, data: fields })
-        : await tx.law.create({ data: { sourceId: source.id, externalId: mst, ...fields, lastCheckedAt: null, lastCheckError: null } });
+        : await tx.law.create({ data: { sourceId: source.id, externalId: mst, ...fields, lastCheckedAt: null, lastAttemptedAt: null, lastCheckError: null } });
       await tx.lawVersion.upsert({
         where: { lawId_mst: { lawId: law.id, mst } },
         update: {},
@@ -168,6 +169,11 @@ export class LawsService {
       });
       return { ...law, articleCount: version.rows.length, skipped: version.skipped, alreadyTracked: false };
     }, TX_OPTIONS);
+  }
+
+  /** 법령 개정 확인이 멈췄는지(T-153 ④) — 플랫폼 관리자 화면과 같은 계산(law-sync-status) */
+  syncStatus() {
+    return lawSyncStatus(this.prisma);
   }
 
   /** 등록된 법령 목록 */

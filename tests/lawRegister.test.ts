@@ -146,7 +146,7 @@ describe('LawsService.register — 법령 행 고르기 (T-151)', () => {
     const r = await service.register('900200');
     expect(r).toMatchObject({ id: 'law-new', alreadyTracked: false });
     // 확인 시각을 비워 다음 동기화의 맨 앞에 선다 — 공포됐지만 시행 전인 판을 곧바로 변경으로 받게(T-150 ③)
-    expect(r).toMatchObject({ lastCheckedAt: null });
+    expect(r).toMatchObject({ lastCheckedAt: null, lastAttemptedAt: null }); // 시도 시각도 비워야 다음 동기화 차례 맨 앞(T-153 ⑤)
     expect(calls.writes.slice(0, 2)).toEqual(['law.create', 'lawVersion.upsert']);
     const [sql, ...values] = calls.locks[0] as [string, ...unknown[]];
     expect(sql).toMatch(/FOR NO KEY UPDATE/);

@@ -792,9 +792,12 @@ model Law {
   /// 조항의 조별 시행일 표기(effectiveNotes)를 쓴 읽기 규칙의 판(T-144). null = 아직 읽지 않음.
   /// 지금 규칙(EFFECTIVE_NOTES_VERSION)과 다르면 주기 동기화가 같은 판이어도 한 번 다시 읽는다
   effectiveNotesVersion Int? @map("effective_notes_version")
-  /// 마지막 확인 시도 시각. T-104 가 오래된 순으로 고른다 — 실패해도 갱신해야
-  /// 고장 난 법령 하나가 매번 맨 앞에 서서 나머지를 막지 않는다
+  /// 마지막으로 확인에 성공한 시각(T-153 ⑤ — 실패는 찍지 않는다). 비어 있으면 아직 성공한 확인이 없다 — 법령 화면이 '현행' 대신
+  /// '등록한 판'으로 적는다(T-150)
   lastCheckedAt   DateTime? @map("last_checked_at")
+  /// 마지막 확인 시도 시각(성공·실패). 동기화가 오래된 순으로 고른다 — 실패해도 갱신해야 고장 난 법령 하나가 매번 맨 앞에 서서
+  /// 나머지를 막지 않는다(T-104, T-153 ⑤ 에서 확인 시각과 나눔)
+  lastAttemptedAt DateTime? @map("last_attempted_at")
   /// 마지막 확인이 실패했으면 그 사유, 성공했으면 null.
   /// "개정 없음"과 "확인 못 함"을 화면에서 구별하려고 둔다(법제처는 실패도 HTTP 200 이다)
   lastCheckError  String?   @map("last_check_error") @db.Text
@@ -809,7 +812,7 @@ model Law {
   versions     LawVersion[]
 
   @@unique([sourceId, externalId])
-  @@index([lastCheckedAt])
+  @@index([lastAttemptedAt])
   @@map("laws")
 }
 

@@ -14,6 +14,7 @@ import { lawGoKrApi } from '../api/lawgokr';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import LawChangeList from '../components/LawChangeList';
+import LawSyncStaleNotice from '../components/LawSyncStaleNotice';
 import { useI18n } from '../i18n/useI18n';
 
 export default function LawsPage() {
@@ -47,6 +48,9 @@ export default function LawsPage() {
           </button>
         )}
       </div>
+
+      {/* 개정 확인이 36시간 넘게 멈췄으면(T-153 ④) — 법령이 있을 때만 */}
+      {laws.length > 0 && <LawSyncStaleNotice scope="laws" />}
 
       {/* T-105: "법이 바뀌었고 우리 제28조가 걸려 있다"를 법령 화면 첫머리에서 알린다 */}
       {canEdit && laws.length > 0 && (

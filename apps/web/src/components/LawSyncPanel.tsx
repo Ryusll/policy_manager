@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { clsx } from 'clsx';
 import { lawSyncApi, type LawSyncRun } from '../api/laws';
+import LawSyncStaleNotice from './LawSyncStaleNotice';
+import { LAW_SYNC_STATUS_KEY } from '../api/lawSyncStatus';
 import { toast } from '../stores/toastStore';
 import { apiErrorMessage } from '../lib/apiError';
 import LawSyncVersions from './LawSyncVersions';
@@ -35,6 +37,7 @@ export default function LawSyncPanel() {
       );
       setOpenId(run.id);
       void qc.invalidateQueries({ queryKey: ['law-sync', 'runs'] });
+      void qc.invalidateQueries({ queryKey: LAW_SYNC_STATUS_KEY.platform }); // 멈춤 경고(T-153 ④)
       void qc.invalidateQueries({ queryKey: ['laws'] });
     },
     onError: (err) => toast(apiErrorMessage(err, '법령 동기화를 실행하지 못했습니다.'), 'error'),
@@ -61,6 +64,8 @@ export default function LawSyncPanel() {
           {runMutation.isPending ? '확인 중…' : '지금 확인'}
         </button>
       </div>
+
+      <LawSyncStaleNotice scope="platform" />
 
       {isLoading ? (
         <p className="text-xs text-gray-500">불러오는 중...</p>

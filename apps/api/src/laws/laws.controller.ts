@@ -36,6 +36,13 @@ export class LawsController {
     return this.lawsService.register(dto.mst, dto.sourceCode);
   }
 
+  // ':id' 보다 먼저 — 'sync-status' 가 법령 id 로 잡히지 않게
+  @Get('sync-status')
+  @ApiOperation({ summary: '법령 개정 확인이 36시간 넘게 멈췄는지(T-153 ④) — 마지막 성공 시각과 참·거짓만' })
+  syncStatus() {
+    return this.lawsService.syncStatus();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '법령 1건' })
   findOne(@Param('id') id: string) {

@@ -24,6 +24,7 @@ import { useI18n } from '../i18n/useI18n';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { EmptyState } from '../components/ui/EmptyState';
 import { invalidateAmendmentCounts } from '../api/amendmentSummary';
+import LawSyncStaleNotice from '../components/LawSyncStaleNotice';
 
 export default function LawDetailPage() {
   const { t } = useI18n();
@@ -85,8 +86,12 @@ export default function LawDetailPage() {
             마지막 개정 확인 {new Date(lawQuery.data.lastCheckedAt).toLocaleString('ko-KR')}
           </p>
         )}
-        {/* 등록·보정 직후 — 현행보다 앞 판으로 등록했으면 현행 판까지 아직 반영되지 않았다(T-150 마지막 검토) */}
-        {lawQuery.data && !lawQuery.data.lastCheckedAt && <p className="text-[11px] text-amber-800 mt-1">{t('lawInForce.notChecked')}</p>}
+        {/* 등록·보정 직후 — 현행보다 앞 판으로 등록했으면 현행 판까지 아직 반영되지 않았다(T-150 마지막 검토). 확인을 시도했지만
+            성공한 적이 없으면 '첫 확인 전'이 아니다(T-153 ⑤) */}
+        {lawQuery.data && !lawQuery.data.lastCheckedAt && (
+          <p className="text-[11px] text-amber-800 mt-1">{t(lawQuery.data.lastCheckError ? 'lawInForce.neverSucceeded' : 'lawInForce.notChecked')}</p>
+        )}
+        {lawQuery.data && <LawSyncStaleNotice scope="laws" className="mt-2" />}
         {lawQuery.data?.lastCheckError && (
           <p
             role="alert"

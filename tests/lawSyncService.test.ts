@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { LawSyncService } from '../apps/api/src/laws/law-sync.service';
@@ -10,9 +10,11 @@ import { EFFECTIVE_NOTES_VERSION } from '../apps/api/src/common/effective-notes'
  * 동기화 서비스가 판 걷기 결과를 법령 행에 남기는 방법 (T-151, PAT-07). DB·법제처 없이 가짜로 `run()` 을 돌린다.
  *
  * 지킬 것:
- * 1. 판이 남으면(한 번에 반영하는 판 수 상한) 오류만 지우고 확인 시각은 그대로 — 다음 실행 앞에 서고, "확인 성공"처럼 보이지 않는다
+ * 1. 판이 남으면(한 번에 반영하는 판 수 상한) 오류만 지우고 확인·시도 시각은 그대로 — 다음 실행 앞에 서고, "확인 성공"처럼 보이지
+ *    않는다. 단 실행 시간을 절반 넘게 남기고 시작했는데도 한 판도 반영하지 못하면 실패로 센다(시도 시각이 찍혀 뒤로 — 나머지를 굶기지
+ *    않게, T-153 ⑤). 늦게 시작해 한 판도 반영하지 못했으면 아무것도 쓰지 않는다(앞선 오류를 지우지 않는다)
  * 2. 경합(다른 경로가 먼저 판을 바꿈)이면 확인 시각도 오류도 쓰지 않는다
- * 3. 실패면 확인 시각과 오류를 남긴다
+ * 3. 실패면 시도 시각과 오류만 남긴다 — 확인 시각은 그대로(실패를 성공처럼 보이지 않게, T-153 ⑤). 예외로 끝난 실패도 같다
  * 4. lawIds 를 주면 그 법령만 돈다 — 없는 법령이면 실행을 시작하지 않는다(404)
  * 5. 확인 기록을 남기다 실패해도 이미 반영한 판은 결과에 남는다
  * 6. 법령ID 없이 등록된 옛 행을 짐작으로 채우지 않는다 — 옛 중복이면 멈춘 행을 만든다. 법제처를 부르지 않고 실패로 알린다
@@ -31,8 +33,13 @@ const body = (mst: string, day: string, lawId: string | null = LID) =>
     mst,
   );
 
-function setup(o: { cas?: number; failBody?: string; markFails?: boolean | 'notfound'; stored?: string; noLawId?: boolean } = {}) {
-  const calls = { lawUpdates: [] as any[], findMany: [] as any[], lawGoKr: 0, runsStarted: 0 };
+function setup(
+  o: {
+    cas?: number; failBody?: string; markFails?: boolean | 'notfound'; stored?: string; noLawId?: boolean; listFails?: boolean;
+    twoLaws?: boolean; firstNoLawId?: boolean; onList?: (n: number) => void;
+  } = {},
+) {
+  const calls = { lawUpdates: [] as any[], lawWrites: [] as { id: string; data: any }[], findMany: [] as any[], lawGoKr: 0, lists: 0, runsStarted: 0 };
   const ok = <T>(v: T) => Promise.resolve(v);
   const prisma: any = {
     $executeRaw: () => ok(0),
@@ -45,7 +52,8 @@ function setup(o: { cas?: number; failBody?: string; markFails?: boolean | 'notf
     law: {
       findMany: (a: any) => {
         calls.findMany.push(a);
-        const rows = [{ id: 'law-1', lawName: '시험법', externalId: o.stored ?? '900100', externalLawId: o.noLawId ? null : LID, effectiveNotesVersion: EFFECTIVE_NOTES_VERSION, promulgatedDate: new Date('2026-01-01T00:00:00Z') }];
+        const row = { id: 'law-1', lawName: '시험법', externalId: o.stored ?? '900100', externalLawId: o.noLawId ? null : LID, effectiveNotesVersion: EFFECTIVE_NOTES_VERSION, promulgatedDate: new Date('2026-01-01T00:00:00Z') };
+        const rows = o.twoLaws ? [{ ...row, externalLawId: o.firstNoLawId ? null : row.externalLawId }, { ...row, id: 'law-2', lawName: '둘째시험법' }] : [row];
         const only: string[] | undefined = a?.where?.id?.in;
         return ok(only ? rows.filter((r) => only.includes(r.id)) : rows);
       },
@@ -57,6 +65,7 @@ function setup(o: { cas?: number; failBody?: string; markFails?: boolean | 'notf
           );
         }
         calls.lawUpdates.push(a.data);
+        calls.lawWrites.push({ id: a.where.id, data: a.data });
         return ok({});
       },
       updateMany: () => ok({ count: o.cas ?? 1 }),
@@ -74,7 +83,12 @@ function setup(o: { cas?: number; failBody?: string; markFails?: boolean | 'notf
   prisma.$transaction = (fn: (tx: unknown) => Promise<unknown>) => fn(prisma);
   // 판 목록은 법령ID 로만 받는다 — 법령명 검색(search)은 없다
   const lawGoKr: any = {
-    searchVersions: () => ((calls.lawGoKr += 1), ok({ total: 3, page: 1, display: 100, items: [item('900300', '2026-03-01'), item('900200', '2026-02-01'), item('900100', '2026-01-01')] })),
+    searchVersions: () => {
+      calls.lawGoKr += 1;
+      o.onList?.((calls.lists += 1));
+      if (o.listFails) return Promise.reject(new Error('법제처 연결 실패'));
+      return ok({ total: 3, page: 1, display: 100, items: [item('900300', '2026-03-01'), item('900200', '2026-02-01'), item('900100', '2026-01-01')] });
+    },
     getLaw: (mst: string) => ((calls.lawGoKr += 1), mst === o.failBody ? Promise.reject(new Error('법제처 응답 오류')) : ok(body(mst, mst === '900200' ? '2026-02-01' : '2026-03-01'))),
   };
   const amendments: any = { processPendingEvents: () => ok({ created: 0 }) };
@@ -88,11 +102,19 @@ describe('LawSyncService — 판 걷기 결과 남기기 (T-151)', () => {
     else process.env.LAW_SYNC_MAX_VERSIONS = env;
   });
 
-  it('모두 반영하면 확인 시각을 찍고 오류를 지운다', async () => {
+  it('모두 반영하면 확인·시도 시각을 찍고 오류를 지운다', async () => {
     const { service, calls } = setup();
     const run = await service.run({ trigger: 'manual' });
     expect(run.results[0]).toMatchObject({ outcome: 'updated', toMst: '900300' });
-    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d)).toEqual([{ lastCheckedAt: expect.any(Date), lastCheckError: null }]);
+    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d)).toEqual([{ lastCheckedAt: expect.any(Date), lastAttemptedAt: expect.any(Date), lastCheckError: null }]);
+  });
+
+  it('동기화 대상은 확인 시도가 오래된 순 — 실패한 법령도 시도 시각이 찍혀 다음 실행에서 맨 앞에 서지 않는다, 실행과 계획이 같은 차례 (T-153 ⑤)', async () => {
+    const { service, calls } = setup();
+    await service.run({ trigger: 'manual' });
+    await service.plan({});
+    const order = [{ lastAttemptedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }];
+    expect(calls.findMany.filter((a) => a?.orderBy).map((a) => a.orderBy)).toEqual([order, order]);
   });
 
   it('상한에 걸려 판이 남으면 오류만 지우고 확인 시각은 그대로 — 다음 실행 앞에 선다', async () => {
@@ -100,7 +122,7 @@ describe('LawSyncService — 판 걷기 결과 남기기 (T-151)', () => {
     const { service, calls } = setup();
     const run = await service.run({ trigger: 'manual' });
     expect(run.results[0]).toMatchObject({ outcome: 'updated', toMst: '900200', remaining: 1 });
-    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d)).toEqual([]);
+    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d || 'lastAttemptedAt' in d)).toEqual([]);
     expect(calls.lawUpdates).toContainEqual({ lastCheckError: null });
   });
 
@@ -109,16 +131,76 @@ describe('LawSyncService — 판 걷기 결과 남기기 (T-151)', () => {
     const run = await service.run({ trigger: 'manual' });
     expect(run.results[0]).toMatchObject({ outcome: 'unchanged' });
     expect(run.results[0].note).toContain('다른 경로가 먼저');
-    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d || 'lastCheckError' in d)).toEqual([]);
+    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d || 'lastAttemptedAt' in d || 'lastCheckError' in d)).toEqual([]);
   });
 
-  it('실패면 확인 시각과 오류를 남긴다 — 앞서 반영한 판은 결과에 함께', async () => {
+  it('실패면 시도 시각과 오류만 남긴다 — 확인 시각은 그대로(실패를 성공처럼 보이지 않게, T-153 ⑤), 앞서 반영한 판은 결과에 함께', async () => {
     const { service, calls } = setup({ failBody: '900300' });
     const run = await service.run({ trigger: 'manual' });
     expect(run.results[0]).toMatchObject({ outcome: 'failed', toMst: '900200' });
-    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d)).toEqual([{ lastCheckedAt: expect.any(Date), lastCheckError: expect.stringContaining('MST 900300 반영 실패') }]);
+    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d)).toEqual([]);
+    expect(calls.lawUpdates).toContainEqual({ lastAttemptedAt: expect.any(Date), lastCheckError: expect.stringContaining('MST 900300 반영 실패') });
     expect(run.changedCount).toBe(1);
     expect(run.failedCount).toBe(1);
+  });
+
+  it('예외로 끝난 실패(판 목록을 받지 못함)도 시도 시각과 오류만 — 확인 시각은 찍지 않는다 (T-153 ⑤)', async () => {
+    const { service, calls } = setup({ listFails: true });
+    const run = await service.run({ trigger: 'manual' });
+    expect(run.results[0]).toMatchObject({ outcome: 'failed', error: expect.stringContaining('법제처 연결 실패') });
+    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d)).toEqual([]);
+    expect(calls.lawUpdates).toContainEqual({ lastAttemptedAt: expect.any(Date), lastCheckError: expect.stringContaining('법제처 연결 실패') });
+  });
+
+  it('실행 시간을 절반 넘게 남기고 시작했는데도 한 판도 반영하지 못하면 실패(시도 시각·오류, 실행도 실패) — 늦게 시작했으면 아무것도 쓰지 않는다 (T-153 ⑤)', async () => {
+    const marks = (writes: { id: string; data: any }[], id: string) =>
+      writes.filter((w) => w.id === id && ('lastCheckedAt' in w.data || 'lastAttemptedAt' in w.data || 'lastCheckError' in w.data)).map((w) => w.data);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // 판 목록을 받는 사이에 실행 시간이 다 간다(또는 일부가 간다)
+      const pass = (share: number) => vi.setSystemTime(Date.now() + runBudgetMs() * share + 1);
+      const jump = () => pass(1);
+      const first = setup({ onList: jump });
+      const run = await first.service.run({ trigger: 'manual' });
+      expect(run.results[0]).toMatchObject({ outcome: 'failed', remaining: 2, error: expect.stringContaining('확인 시간 안에 새 판을 하나도 반영하지 못했습니다') });
+      expect(run.results[0].note).toContain('차례를 뒤로 돌렸습니다');
+      expect(run).toMatchObject({ status: 'failed', failedCount: 1 }); // 그 법령만 돈 실행은 실패 실행이 된다 — 멈춤 경고·종료 코드로 드러난다
+      expect(marks(first.calls.lawWrites, 'law-1')).toEqual([{ lastAttemptedAt: expect.any(Date), lastCheckError: expect.stringContaining('확인 시간 안에') }]);
+
+      // 둘째 법령은 앞 법령이 실행 시간의 절반 넘게 쓴 뒤 시작했다 — 실패가 아니고 아무것도 쓰지 않는다(앞선 오류를 지우지 않고 앞에 남는다)
+      const late = setup({ twoLaws: true, onList: (n) => (n === 1 ? pass(0.6) : jump()) });
+      const run2 = await late.service.run({ trigger: 'manual' });
+      expect(run2.results.map((r: any) => r.outcome)).toEqual(['updated', 'unchanged']);
+      expect(run2.status).toBe('succeeded');
+      expect(run2.results[1].note).toContain('다음 동기화가 이어서 반영합니다(실행 시간 상한)');
+      expect(marks(late.calls.lawWrites, 'law-2')).toEqual([]);
+
+      // 첫 법령이 법제처를 부르지 않고 바로 실패한 옛 행이면 둘째 법령은 실행 시간을 거의 다 받았다 — 순서가 아니라 시간으로 가른다
+      const afterNoLawId = setup({ twoLaws: true, firstNoLawId: true, onList: jump });
+      const run3 = await afterNoLawId.service.run({ trigger: 'manual' });
+      expect(run3.results.map((r: any) => r.outcome)).toEqual(['failed', 'failed']);
+      expect(run3.status).toBe('failed'); // 확인에 성공한 법령이 없는 실행을 일부 실패(성공 실행)로 세지 않는다
+      expect(marks(afterNoLawId.calls.lawWrites, 'law-2')).toEqual([{ lastAttemptedAt: expect.any(Date), lastCheckError: expect.stringContaining('확인 시간 안에') }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('넉넉함의 경계는 남은 시간이 전체 실행 시간의 절반 — 꼭 절반이면 늦게 시작한 것, 1ms 라도 많으면 넉넉히 시작한 것 (T-153 ⑤)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const budget = runBudgetMs();
+      // 첫 법령이 판 목록을 받는 사이에 spent 만큼 지나고, 둘째 법령은 판 목록을 받는 사이에 실행 시간이 다 간다
+      const outcomes = async (spent: number) => {
+        const t0 = Date.now();
+        const { service } = setup({ twoLaws: true, onList: (n) => vi.setSystemTime(n === 1 ? t0 + spent : t0 + budget + 1) });
+        return (await service.run({ trigger: 'manual' })).results.map((r: any) => r.outcome);
+      };
+      expect(await outcomes(budget / 2)).toEqual(['updated', 'unchanged']);
+      expect(await outcomes(budget / 2 - 1)).toEqual(['updated', 'failed']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('lawIds 를 주면 그 법령만 고른다', async () => {
@@ -173,7 +255,8 @@ describe('법령ID 없이 등록된 옛 행 (T-151 검토)', () => {
     expect(run.results[0].error).toBe('법령ID 가 없는 옛 법령이라 자동으로 확인할 수 없습니다 — 아스트룸에 문의하세요.');
     expect(run.results[0].note).toContain('런북 7-5 의 점검(t151-law-id-check.sql)'); // 운영자 안내는 통합 관리자 화면(실행 결과)에
     expect(calls.lawGoKr).toBe(0);
-    expect(calls.lawUpdates).toContainEqual({ lastCheckedAt: expect.any(Date), lastCheckError: expect.stringContaining('법령ID 가 없는 옛 법령') });
+    expect(calls.lawUpdates).toContainEqual({ lastAttemptedAt: expect.any(Date), lastCheckError: expect.stringContaining('법령ID 가 없는 옛 법령') });
+    expect(calls.lawUpdates.filter((d) => 'lastCheckedAt' in d)).toEqual([]); // 실패는 확인 시각을 찍지 않는다(T-153 ⑤)
   });
 
   it('계획(--plan)도 같은 까닭으로 확인 실패로 찍는다', async () => {

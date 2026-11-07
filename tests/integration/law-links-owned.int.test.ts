@@ -43,11 +43,11 @@ describe('T-148 법령 관계 정보는 조문의 실제 소속까지 본다', (
     await waitForApi();
     t1 = await createTenant('owned-1');
     t2 = await createTenant('owned-2');
-    // 확인 시각을 지금으로 둬 법령 동기화 시험이 이 가짜 법령을 먼저 고르지 않게 한다
+    // 확인·시도 시각을 지금으로 둬 법령 동기화 시험이 이 가짜 법령을 먼저 고르지 않게 한다(차례는 시도 시각 순, T-153 ⑤)
     sql(`
       INSERT INTO law_sources (id, code, name, base_url, updated_at) VALUES ('${sourceId}', 'it-${sourceId.slice(0, 8)}', '통합테스트', 'http://example.test', now());
-      INSERT INTO laws (id, source_id, external_id, external_law_id, law_name, last_checked_at, updated_at)
-        VALUES ('${lawId}', '${sourceId}', '900248', '990248', '소속확인시험법', now(), now());
+      INSERT INTO laws (id, source_id, external_id, external_law_id, law_name, last_checked_at, last_attempted_at, updated_at)
+        VALUES ('${lawId}', '${sourceId}', '900248', '990248', '소속확인시험법', now(), now(), now());
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, item_no, label, content, version_key, sort_order, updated_at)
         VALUES ('${jo}', '${lawId}', '60//', 60, NULL, NULL, '제60조', '연차 유급휴가', 'v1:jo60', 1, now());
     `);

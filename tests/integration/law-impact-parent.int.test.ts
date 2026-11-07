@@ -74,12 +74,12 @@ describe('T-148 상위 조항에 건 연결도 영향으로 잡기', () => {
     platformToken = platform.token;
 
     // 공용 법령 데이터. 항이 여럿인 조(제60조·제70조)는 머리 행 본문이 비어 있다 — 법제처 응답 그대로의 모양.
-    // 확인 시각을 가장 오래된 값으로 둬 동기화(limit 1)가 이 법령을 고르게 한다 — 가짜 법령이라 동기화 자체는
+    // 동기화는 이 법령만 돌린다(lawId — 차례에 기대지 않는다, T-153 ⑤) — 가짜 법령이라 동기화 자체는
     // 실패하지만, 끝에 붙은 개정 후보 자동 생성은 그대로 돈다
     sql(`
       INSERT INTO law_sources (id, code, name, base_url, updated_at) VALUES ('${sourceId}', 'it-${sourceId.slice(0, 8)}', '통합테스트', 'http://example.test', now());
-      INSERT INTO laws (id, source_id, external_id, external_law_id, law_name, effective_date, last_checked_at, updated_at)
-        VALUES ('${lawId}', '${sourceId}', '900148', '990148', '상위조항시험법', '${lawEffective}', '1970-01-01', now());
+      INSERT INTO laws (id, source_id, external_id, external_law_id, law_name, effective_date, updated_at)
+        VALUES ('${lawId}', '${sourceId}', '900148', '990148', '상위조항시험법', '${lawEffective}', now());
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, item_no, label, content, version_key, sort_order, updated_at) VALUES
         ('${la.jo60}', '${lawId}', '60//', 60, NULL, NULL, '제60조', '', 'v1:jo60', 1, now()),
         ('${la.p601}', '${lawId}', '60/1/', 60, 1, NULL, '제60조제1항', '${AFTER_601}', 'v1:p601b', 2, now()),
@@ -240,8 +240,9 @@ describe('T-148 상위 조항에 건 연결도 영향으로 잡기', () => {
 
   describe('자동 생성 — 법령 동기화가 끝날 때', () => {
     it('상위 조항 연결로도 후보를 만든다 — 신뢰도는 보통까지, 조 단위 연결로 찾았다고 표시', async () => {
-      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { limit: 1 } });
+      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { lawId } });
       expect(run.status, JSON.stringify(run.body)).toBeLessThan(300);
+      expect(run.body.results.map((r: { lawId: string }) => r.lawId)).toEqual([lawId]); // 이 법령만 돌았다
       expect(run.body.amendments).toMatchObject({ failed: 0 });
 
       const rows = sql(
@@ -285,10 +286,10 @@ describe('T-148 상위 조항에 건 연결도 영향으로 잡기', () => {
         INSERT INTO article_versions (id, article_id, version_num, content, status, effective_date, updated_at)
           VALUES ('${ver.x2}', '${art.x}', 2, '연차 유급휴가는 15일로 하고 근속 가산을 둔다.', 'published', '${day(1)}', now());
         UPDATE law_change_events SET amendments_processed_at = NULL WHERE law_id='${lawId}';
-        UPDATE laws SET last_checked_at='1970-01-01' WHERE id='${lawId}';
       `);
-      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { limit: 1 } });
+      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { lawId } });
       expect(run.status).toBeLessThan(300);
+      expect(run.body.results.map((r: { lawId: string }) => r.lawId)).toEqual([lawId]); // 이 법령만 돌았다
       expect(run.body.amendments).toMatchObject({ failed: 0 });
       expect(sql(`SELECT count(*) FROM amendment_candidates WHERE change_event_id IN ('${ev.p601}', '${ev.h7012}', '${ev.jo80}', '${ev.p901}');`)).toBe('4');
       expect(await lawNotes(t1.token)).toHaveLength(2);

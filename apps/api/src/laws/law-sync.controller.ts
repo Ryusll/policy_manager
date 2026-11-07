@@ -20,9 +20,15 @@ export class LawSyncController {
 
   @Post('run')
   @HttpCode(200)
-  @ApiOperation({ summary: '법령 동기화 지금 실행 — 확인이 오래된 법령부터 limit 건(lawId 를 주면 그 법령만)' })
+  @ApiOperation({ summary: '법령 동기화 지금 실행 — 확인 시도가 오래된 법령부터 limit 건(lawId 를 주면 그 법령만)' })
   run(@Request() req: any, @Body() dto: RunLawSyncDto) {
     return this.sync.run({ trigger: 'manual', limit: dto.limit, triggeredBy: req.user.id, lawIds: dto.lawId ? [dto.lawId] : undefined });
+  }
+
+  @Get('status')
+  @ApiOperation({ summary: '마지막 성공 실행과 36시간 경고(T-153 ④) — 성공 실행이 한 번도 없으면 everSucceeded=false' })
+  status() {
+    return this.sync.status();
   }
 
   @Get('runs')

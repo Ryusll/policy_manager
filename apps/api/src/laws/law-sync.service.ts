@@ -5,12 +5,16 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { LawGoKrService } from '../lawgokr/lawgokr.service';
 import { collectEffectiveNotes } from './law-effective-collect';
 import { revisionInfoNote } from './law-revision-info';
+import { lawSyncStatus } from './law-sync-status';
+import { errorText, markLaw, type CheckMark } from './law-sync-mark';
 import { AmendmentsService } from '../amendments/amendments.service';
 import { summarizeRun, type LawSyncResult } from './law-sync-logic';
 import { maxVersionsPerRun, planLawVersions, runBudgetMs, walkLawVersions, walkResult } from './law-version-sync';
 import { versionLabel } from './law-version-plan';
 
 export const LAW_SYNC_DEFAULT_BATCH = 20;
+/** 동기화 대상 차례 — 확인 시도가 오래된 법령부터(실패한 법령도 시도 시각이 찍혀 뒤로 간다, T-153 ⑤). 실행과 계획이 같은 차례를 쓴다 */
+const SYNC_ORDER = [{ lastAttemptedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }] satisfies Prisma.LawOrderByWithRelationInput[];
 export const LAW_SYNC_MAX_BATCH = 100;
 /** 이보다 오래 "진행 중"인 실행은 중간에 죽은 것으로 본다(컨테이너 재시작 등) */
 const STALE_RUN_MS = 30 * 60 * 1000;
@@ -32,18 +36,10 @@ const NO_LAW_ID = '법령ID 가 없는 옛 법령이라 자동으로 확인할 �
 /** 운영자에게만(서버 로그·--plan) — 고객 화면의 확인 오류(lastCheckError)에는 내부 문서·작업 번호를 싣지 않는다 */
 const NO_LAW_ID_OPS = '법령ID 가 없는 옛 행 — 런북 7-5 의 점검(t151-law-id-check.sql) 순서로 정리(같은 판 다시 등록, 옛 중복이면 T-154)';
 
-/** 그새 법령이 삭제됐다 — 확인 기록을 남길 곳이 없다 */
-const isNotFound = (e: unknown) => e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025';
-
-function errorText(e: unknown): string {
-  const message = (e as { message?: unknown } | null)?.message;
-  return typeof message === 'string' && message ? message : String(e);
-}
-
 /**
  * 법령 주기 동기화 (T-104, 청구항 3).
  *
- * 추적 중인 법령을 확인이 오래된 순으로 N건 골라, 법제처에 새 판이 났는지 본다.
+ * 추적 중인 법령을 확인 시도가 오래된 순으로 N건 골라, 법제처에 새 판이 났는지 본다.
  * 저장된 판 뒤에 공포된 판이 있으면 **공포 순으로 한 판씩** 반영해 판마다 달라진 조항을
  * `LawChangeEvent`(수신경로 `poll`)로 남긴다(T-151, PAT-07 — law-version-sync.ts).
  *
@@ -64,7 +60,7 @@ export class LawSyncService {
   ) {}
 
   /**
-   * @param lawIds 이 법령만 돈다(플랫폼 관리자의 점검·통합 시험). 없으면 확인이 오래된 순으로 limit 건
+   * @param lawIds 이 법령만 돈다(플랫폼 관리자의 점검·통합 시험). 없으면 확인 시도가 오래된 순으로 limit 건
    */
   async run(options: { trigger: LawSyncTrigger; limit?: number; triggeredBy?: string | null; lawIds?: string[] }) {
     const limit = Math.min(
@@ -74,11 +70,12 @@ export class LawSyncService {
     await this.assertLawsExist(options.lawIds);
     const run = await this.start(options.trigger, options.triggeredBy ?? null);
     const results: LawSyncResult[] = [];
-    const deadline = Date.now() + runBudgetMs();
+    const budget = runBudgetMs();
+    const deadline = Date.now() + budget;
     try {
       const targets = await this.prisma.law.findMany({
         where: options.lawIds?.length ? { id: { in: options.lawIds } } : undefined,
-        orderBy: [{ lastCheckedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
+        orderBy: SYNC_ORDER,
         take: limit,
         select: { id: true, lawName: true, externalId: true, externalLawId: true, effectiveNotesVersion: true, promulgatedDate: true },
       });
@@ -88,7 +85,8 @@ export class LawSyncService {
           this.log.warn(`실행 시간 상한 — 남은 법령 ${targets.length - results.length}개는 다음 실행에서 확인합니다.`);
           break;
         }
-        results.push(await this.syncOne(law, deadline));
+        // 실행 시간이 절반 넘게 남았을 때 시작한 법령인가 — 앞 법령이 법제처를 부르지 않고 바로 실패했어도(법령ID 없는 옛 행) 시간으로 가른다
+        results.push(await this.syncOne(law, deadline, deadline - Date.now() > budget / 2));
       }
       const finished = await this.finish(run.id, results);
       // 새 변경 이벤트로 개정 후보를 만든다(T-106). 동기화 결과와 따로 간다 — 후보 생성이 실패해도
@@ -113,7 +111,7 @@ export class LawSyncService {
     await this.assertLawsExist(options.lawIds);
     const targets = await this.prisma.law.findMany({
       where: options.lawIds?.length ? { id: { in: options.lawIds } } : undefined,
-      orderBy: [{ lastCheckedAt: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
+      orderBy: SYNC_ORDER,
       take: Math.min(LAW_SYNC_MAX_BATCH, Math.max(1, Math.trunc(options.limit ?? LAW_SYNC_MAX_BATCH))),
       select: { id: true, lawName: true, externalId: true, externalLawId: true, promulgatedDate: true },
     });
@@ -147,6 +145,11 @@ export class LawSyncService {
     const found = await this.prisma.law.findMany({ where: { id: { in: lawIds } }, select: { id: true } });
     const missing = lawIds.filter((id) => !found.some((f) => f.id === id));
     if (missing.length) throw new NotFoundException(`법령을 찾을 수 없습니다: ${missing.join(', ')}`);
+  }
+
+  /** 마지막 성공 실행과 36시간 경고(T-153 ④) — 화면이 읽을 때 계산한다 */
+  status() {
+    return lawSyncStatus(this.prisma);
   }
 
   listRuns(limit?: number) {
@@ -193,7 +196,8 @@ export class LawSyncService {
     });
   }
 
-  private async syncOne(law: SyncTarget, deadline: number): Promise<LawSyncResult> {
+  /** @param ampleTime 실행 시간이 절반 넘게 남았을 때 시작했다(그러고도 판을 하나도 반영하지 못하면 실패로 센다, walkResult) */
+  private async syncOne(law: SyncTarget, deadline: number, ampleTime: boolean): Promise<LawSyncResult> {
     const base = { lawId: law.id, lawName: law.lawName, fromMst: law.externalId };
     try {
       if (!law.externalLawId) {
@@ -208,7 +212,7 @@ export class LawSyncService {
         { cap: maxVersionsPerRun(), deadline },
       );
       if (outcome) {
-        const { result, mark } = walkResult(base, outcome);
+        const { result, mark } = walkResult(base, outcome, { ampleTime });
         if (result.error) this.log.warn(`법령 동기화 실패 [${law.lawName}]: ${result.error}`);
         // T-152: 반영하고 남은 옛 판(등록 기준판·T-152 이전 판)의 개정 정보도 채운다 — 개정이 잦아 '개정 없음'에 잘 오지 않는 법령도, 반영이
         // 실패·폐지로 늘 같은 판에서 멈추는 법령도(건너뛰면 영영 빈다). 약칭은 반영한 뒤의 저장 판 본문으로만 — 옛 판 본문의 약칭을 쓰지 않게.
@@ -245,34 +249,14 @@ export class LawSyncService {
     } catch (e) {
       const error = errorText(e);
       this.log.warn(`법령 동기화 실패 [${law.lawName}]: ${error}`);
-      // 실패해도 확인 시각은 갱신한다 — 고장 난 법령 하나가 매번 맨 앞에 서서 나머지를 막지 않게
+      // 실패는 확인 시각이 아니라 시도 시각만 찍는다 — 고장 난 법령 하나가 매번 맨 앞에 서서 나머지를 막지 않게(T-153 ⑤)
       const markNote = await this.mark(law, 'error', error);
       return { ...base, outcome: 'failed', error, ...(markNote ? { note: markNote } : {}) };
     }
   }
 
-  /**
-   * 확인 기록 — 실패해도 동기화 결과(반영한 판·이벤트·판정)는 바꾸지 않는다. 그새 법령이 지워졌으면(P2025) 남길 곳이 없으니
-   * 넘어가고, 그 밖의 실패는 로그와 결과 안내(돌려주는 문구)로 알린다
-   * - `checked` 확인 시각 + 오류 지우기, `error` 확인 시각 + 오류, `clearError` 오류만 지우기(확인 시각은 그대로), `none` 쓰지 않음
-   */
-  private async mark(law: SyncTarget, how: 'checked' | 'error' | 'clearError' | 'none', error: string | null): Promise<string | null> {
-    if (how === 'none') return null;
-    try {
-      if (how === 'clearError') await this.prisma.law.update({ where: { id: law.id }, data: { lastCheckError: null } });
-      else await this.markChecked(law.id, how === 'error' ? error : null);
-      return null;
-    } catch (e) {
-      if (isNotFound(e)) return null;
-      this.log.error(`확인 기록을 남기지 못했습니다 [${law.lawName}]: ${errorText(e)}`);
-      return `확인 기록을 남기지 못했습니다: ${errorText(e)}`;
-    }
-  }
-
-  private markChecked(lawId: string, error: string | null) {
-    return this.prisma.law.update({
-      where: { id: lawId },
-      data: { lastCheckedAt: new Date(), lastCheckError: error },
-    });
+  /** 확인 기록(law-sync-mark.ts) — 실패해도 동기화 결과는 바꾸지 않고, 남기지 못했으면 결과 안내 문구로 돌려준다 */
+  private mark(law: SyncTarget, how: CheckMark, error: string | null): Promise<string | null> {
+    return markLaw(this.prisma, this.log, law, how, error);
   }
 }

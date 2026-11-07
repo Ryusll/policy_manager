@@ -67,12 +67,12 @@ describe('T-106 개정 후보 생성', () => {
     sql(`UPDATE users SET platform_role='global_admin' WHERE id='${platform.user.id}';`);
     platformToken = platform.token;
 
-    // 공용 법령 데이터. 확인 시각을 가장 오래된 값으로 둬 동기화(limit 1)가 이 법령을 고르게 한다 —
-    // 가짜 법령이라 동기화 자체는 실패하지만, 끝에 붙은 개정 후보 자동 생성은 그대로 돈다
+    // 공용 법령 데이터. 동기화는 이 법령만 돌린다(lawId — 차례에 기대지 않는다, T-153 ⑤) — 가짜 법령이라 동기화 자체는
+    // 실패하지만, 끝에 붙은 개정 후보 자동 생성은 그대로 돈다
     sql(`
       INSERT INTO law_sources (id, code, name, base_url, updated_at) VALUES ('${sourceId}', 'it-${sourceId.slice(0, 8)}', '통합테스트', 'http://example.test', now());
-      INSERT INTO laws (id, source_id, external_id, external_law_id, law_name, effective_date, last_checked_at, updated_at)
-        VALUES ('${lawId}', '${sourceId}', '900002', '990002', '개정후보시험법', '${lawEffective}', '1970-01-01', now());
+      INSERT INTO laws (id, source_id, external_id, external_law_id, law_name, effective_date, updated_at)
+        VALUES ('${lawId}', '${sourceId}', '900002', '990002', '개정후보시험법', '${lawEffective}', now());
       INSERT INTO law_articles (id, law_id, node_key, article_no, clause_no, label, content, version_key, sort_order, updated_at) VALUES
         ('${artA}', '${lawId}', '60/1/', 60, 1, '제60조제1항', '${LAW_AFTER}', 'v1:a2', 1, now()),
         ('${artB}', '${lawId}', '61//', 61, NULL, '제61조', '휴가는 나누어 쓸 수 있다. <개정 2012.2.1, 2027.1.1>', 'v1:b2', 2, now());
@@ -260,8 +260,9 @@ describe('T-106 개정 후보 생성', () => {
 
   describe('자동 생성 — 법령 동기화가 끝날 때', () => {
     it('처리하지 않은 이벤트로 회사마다 후보를 만들고 검토 권한자에게 한 번 알린다', async () => {
-      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { limit: 1 } });
+      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { lawId } });
       expect(run.status, JSON.stringify(run.body)).toBeLessThan(300);
+      expect(run.body.results.map((r: { lawId: string }) => r.lawId)).toEqual([lawId]); // 이 법령만 돌았다
       expect(run.body.amendments).toMatchObject({ failed: 0 });
       expect(run.body.amendments.created).toBeGreaterThanOrEqual(1);
 
@@ -284,9 +285,10 @@ describe('T-106 개정 후보 생성', () => {
     });
 
     it('다시 돌아도 같은 후보·알림이 또 생기지 않는다', async () => {
-      sql(`UPDATE law_change_events SET amendments_processed_at = NULL WHERE id='${evA}'; UPDATE laws SET last_checked_at='1970-01-01' WHERE id='${lawId}';`);
-      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { limit: 1 } });
+      sql(`UPDATE law_change_events SET amendments_processed_at = NULL WHERE id='${evA}';`);
+      const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { lawId } });
       expect(run.status).toBeLessThan(300);
+      expect(run.body.results.map((r: { lawId: string }) => r.lawId)).toEqual([lawId]); // 이 법령만 돌았다
       expect(sql(`SELECT count(*) FROM amendment_candidates WHERE change_event_id='${evA}';`)).toBe('4');
       const notes = (await api('/notifications', { token: t2.token })).body.filter((n: any) => n.kind === 'law_amendment');
       expect(notes).toHaveLength(1);

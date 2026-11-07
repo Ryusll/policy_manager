@@ -6,6 +6,7 @@ import { applyChain, type ChainOutcome } from './law-version-chain';
 import { applyLawVersion, LawVersionRaceError } from './law-version-apply';
 import { prepareVersion, toDate } from './law-articles-save';
 import type { LawSyncResult, SyncedVersion } from './law-sync-logic';
+import type { CheckMark } from './law-sync-mark';
 import {
   groupVersions,
   isRepealVersion,
@@ -18,7 +19,7 @@ import {
 
 /**
  * 법령 하나의 판 걷기(T-151, PAT-07 — 특허 도 7 S770): 판 목록 받기 → 계획 → 저장 판 기록 보장 → 차례 반영.
- * 확인 시각·오류 기록(markChecked)은 부르는 쪽(LawSyncService.syncOne)이 `walkResult` 의 지시대로 한 곳에서 한다.
+ * 확인 기록(칸은 law-sync-mark.ts)은 부르는 쪽(LawSyncService.syncOne)이 `walkResult` 가 고른 종류대로 남긴다.
  * 판 목록은 **법령ID 로** 받는다(시행일법령 목록 `LID`) — 법령명으로 찾으면 제명이 바뀐 판을 놓치고 시행령이 섞인다.
  */
 
@@ -186,16 +187,19 @@ export function syncedVersions(applied: ChainOutcome<LawVersionEntry>['applied']
 }
 
 /**
- * 판 걷기 결과 → 동기화 결과와 확인 시각 처리. 순수 함수.
- * - `checked` — 확인 끝(오류 없음): 확인 시각을 찍는다
- * - `error` — 실패: 확인 시각과 오류를 남긴다
- * - `clearError` — 판이 남음(상한·시간): 오류만 지우고 확인 시각은 그대로 둬 다음 실행 앞에 선다
- * - `none` — 경합: 아무것도 쓰지 않는다(다음 동기화가 새 자리에서 다시 계획한다)
+ * 판 걷기 결과 → 동기화 결과와 확인 기록의 종류(칸은 law-sync-mark.ts). 순수 함수.
+ * - 모두 반영 `checked`, 실패·폐지 판 `error`
+ * - 경합·판 수 상한·시간 상한 — 반영한 판이 있으면 `clearError`(차례 앞에 남아 다음 실행이 잇는다), 없으면 `none`(새로 확인한 것이 없으니
+ *   앞선 오류를 지우지 않는다)
+ * - 단 실행 시간을 절반 넘게 남기고 시작했는데도(ampleTime) 시간 상한까지 한 판도 반영하지 못했으면 실패(`error`)로 센다: 남은 판을
+ *   반영하지 못했으니 '개정 없음'이 아니고, 시도 시각이 찍혀 뒤로 가야 매 실행이 이 법령에서 시간 상한에 걸려 끝나지 않는다. 실행이 모두
+ *   그렇게 끝나면 실패 실행이 돼 멈춤 경고·종료 코드로 드러난다(T-153 ⑤)
  */
 export function walkResult(
   base: Pick<LawSyncResult, 'lawId' | 'lawName' | 'fromMst'>,
   outcome: ChainOutcome<LawVersionEntry>,
-): { result: LawSyncResult; mark: 'checked' | 'error' | 'clearError' | 'none' } {
+  o: { ampleTime?: boolean } = {},
+): { result: LawSyncResult; mark: CheckMark } {
   const versions = syncedVersions(outcome.applied);
   const events = versions.reduce((n, v) => n + v.events, 0);
   const moved = versions.length ? { toMst: outcome.lastMst, versions, events } : { events: 0 };
@@ -205,6 +209,19 @@ export function walkResult(
   switch (stop.kind) {
     case 'cap':
     case 'deadline':
+      if (stop.kind === 'deadline' && !versions.length && o.ampleTime) {
+        return {
+          result: {
+            ...base,
+            outcome: 'failed',
+            ...moved,
+            remaining: outcome.remaining,
+            error: `확인 시간 안에 새 판을 하나도 반영하지 못했습니다(남은 판 ${outcome.remaining}개) — 다음 확인 때 다시 시도합니다.`,
+            note: '실행 시간을 다 쓰고도 판을 하나도 반영하지 못해 실패로 남기고 차례를 뒤로 돌렸습니다 — 법제처 응답 시간과 DB 상태를 확인하세요.',
+          },
+          mark: 'error',
+        };
+      }
       return {
         result: {
           ...base,
@@ -213,7 +230,7 @@ export function walkResult(
           remaining: outcome.remaining,
           note: `판 ${outcome.remaining}개가 남았습니다 — 다음 동기화가 이어서 반영합니다(${stop.kind === 'cap' ? '한 번에 반영하는 판 수 상한' : '실행 시간 상한'}).`,
         },
-        mark: 'clearError',
+        mark: versions.length ? 'clearError' : 'none',
       };
     case 'race':
       return {

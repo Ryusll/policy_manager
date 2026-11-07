@@ -223,10 +223,10 @@ describe('T-149 연결을 확정할 때 개정 후보를 만든다', () => {
     // 본문은 여러 줄이라 건수와 첫 줄을 따로 읽는다
     const pendingNotes = (what: string) => sql(`SELECT ${what} FROM user_notifications WHERE tenant_id='${t1.user.tenantId}' AND link LIKE '%change=${ev.pending}';`);
     expect(pendingNotes('count(*)')).toBe('0');
-    // 확인 시각을 가장 오래된 값으로 둬 동기화가 이 법령을 고른다 — 가짜 법령이라 확인은 실패하지만 끝의 자동 생성은 돈다
-    sql(`UPDATE laws SET last_checked_at='1970-01-01' WHERE id='${lawId}';`);
-    const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { limit: 1 } });
+    // 이 법령만 돌린다(lawId — 차례에 기대지 않는다, T-153 ⑤) — 가짜 법령이라 확인은 실패하지만 끝의 자동 생성은 돈다
+    const run = await api('/platform-admin/law-sync/run', { method: 'POST', token: platformToken, json: { lawId } });
     expect(run.status, JSON.stringify(run.body)).toBeLessThan(300);
+    expect(run.body.results.map((r: { lawId: string }) => r.lawId)).toEqual([lawId]); // 이 법령만 돌았다
     expect(sql(`SELECT amendments_processed_at IS NOT NULL FROM law_change_events WHERE id='${ev.pending}';`)).toBe('t');
     // X 는 확정 때 이미 만들었으니 다시 만들지 않는다. 같은 조에 미리 걸려 있던 Y 만 이번에 만들고 알린다(변경마다 1건)
     expect(candidates(t1.user.tenantId, art.x).filter((e) => e === ev.pending)).toHaveLength(1);
