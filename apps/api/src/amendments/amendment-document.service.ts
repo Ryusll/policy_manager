@@ -2,11 +2,12 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { toDateOnlyString, todayDateOnly } from '../common/date-only';
-import { labelFromNodeKey } from '../laws/law-rows';
 import { PolicyPdfService } from '../policies/policy-pdf.service';
 import { formatArticleLabel } from '../common/article-label';
 import { AmendmentsService } from './amendments.service';
 import { buildAmendmentDocument, type DocCandidate, type DocState } from './amendment-document';
+import { reasonLawOf } from './amendment-reason';
+import { applicationsOf, articleReason, changesOf, reasonDraft, type ReasonDraftInput } from './amendment-reason-draft';
 
 /** 발행된 버전만 승인의 결과다(발행 뒤 폐지 포함) */
 const ISSUED = new Set<string>(['published', 'archived']);
@@ -38,6 +39,9 @@ export class AmendmentDocumentService {
         reviewState: true,
         revision: true,
         candidateContent: true,
+        // 승인한 판의 변경과 규칙 적용 — 초안 그대로 승인했는지 다시 만들어 본다(T-161)
+        diff: true,
+        rationale: true,
         plannedEffectiveDate: true,
         baseVersion: { select: { content: true } },
         resultVersion: { select: { changeNote: true, status: true, effectiveDate: true } },
@@ -92,6 +96,17 @@ export class AmendmentDocumentService {
       const e = r.changeEvent;
       // 승인으로 발행된 버전만 결과다 — 발행 전 초안(T-178 전 철회가 남긴 것 등)은 결과가 아니다
       const issued = r.reviewState === 'approved' && ISSUED.has(r.resultVersion?.status ?? '') ? r.resultVersion : null;
+      const law = reasonLawOf(e);
+      const approvedNote = issued?.changeNote ?? null;
+      // 개정 이유 줄과 초안이 같은 재료·같은 판정을 쓴다(T-161) — 법 개정 때문인 곳이 없으면 둘 다 '을 계기로'
+      const reasonInput: ReasonDraftInput = {
+        law,
+        article: r.article,
+        baseContent: r.baseVersion.content,
+        candidateContent: r.candidateContent,
+        changes: changesOf(r.diff),
+        applications: applicationsOf(r.rationale),
+      };
       return {
         id: r.id,
         reviewState: r.reviewState as DocState,
@@ -102,19 +117,11 @@ export class AmendmentDocumentService {
         // 승인 때 정한 실제 사내 시행일 — 계획 시행일과 다를 수 있다
         issuedEffectiveDate: issued?.effectiveDate ? toDateOnlyString(issued.effectiveDate) : null,
         article: r.article,
-        law: {
-          eventId: e.id,
-          lawName: e.law.lawName,
-          label: e.lawArticle?.label ?? labelFromNodeKey(e.nodeKey),
-          changeType: e.changeType,
-          promulgatedDate: e.promulgatedDate ? toDateOnlyString(e.promulgatedDate) : null,
-          lawEffectiveDate: e.lawEffectiveDate ? toDateOnlyString(e.lawEffectiveDate) : null,
-          lawType: e.lawVersion?.lawType ?? null,
-          promulgationNo: e.lawVersion?.promulgationNo ?? null,
-          beforeContent: e.beforeContent,
-          afterContent: e.afterContent,
-        },
-        approvedNote: issued?.changeNote ?? null,
+        law: { eventId: e.id, ...law, beforeContent: e.beforeContent, afterContent: e.afterContent },
+        approvedNote,
+        // 개정 이유 초안(T-161)을 고치지 않고 승인했으면 그 문장 하나만 — 승인 뒤 판 기록이 채워져 초안이 달라졌으면 두 줄 그대로
+        approvedAsDraft: !!approvedNote && approvedNote.trim() === reasonDraft(reasonInput),
+        reason: articleReason(reasonInput),
       };
     });
 

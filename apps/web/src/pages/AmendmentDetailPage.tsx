@@ -29,6 +29,7 @@ import { versionDates } from '../lib/versionDates';
 import { toast } from '../stores/toastStore';
 import { useAuthStore } from '../stores/authStore';
 import { StateBadge } from './AmendmentsPage';
+import ApproveNoteField from '../components/ApproveNoteField';
 
 /**
  * 개정 후보 검토 화면 (T-107, 특허 도 11).
@@ -540,25 +541,7 @@ function DecisionPanel({ data }: { data: AmendmentDetail }) {
               ` 이 후보의 변수 값은 예정 사내 시행일 ${data.plannedEffectiveDate} 기준입니다 — 다른 날로 승인하면 그 날 값과 다를 때 다시 만들어야 합니다.`}
           </p>
         </div>
-        <div>
-          <label htmlFor="approve-note" className="block text-xs text-gray-600 mb-1">
-            개정 사유 <span className="text-red-600">*</span>
-          </label>
-          <input
-            id="approve-note"
-            className="input"
-            maxLength={500}
-            value={changeNote}
-            onChange={(e) => setChangeNote(e.target.value)}
-          />
-          <button
-            type="button"
-            className="text-[11px] text-navy-700 hover:underline mt-1"
-            onClick={() => setChangeNote(`${data.event.lawName} ${data.event.label} 개정 반영`)}
-          >
-            사유 초안 넣기
-          </button>
-        </div>
+        <ApproveNoteField value={changeNote} onChange={setChangeNote} draft={data.reasonDraft} />
       </div>
       {early && (
         <div>

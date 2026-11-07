@@ -21,6 +21,8 @@ import {
 } from './amendment-variables';
 import { labelFromNodeKey } from '../laws/law-rows';
 import { VERSION_LABEL_SELECT, presentVersion } from '../laws/law-version-present';
+import { reasonLawOf } from './amendment-reason';
+import { applicationsOf, changesOf, draftRecord, reasonDraft } from './amendment-reason-draft';
 import {
   LawChangesService,
   UNRESOLVABLE_REMOVED,
@@ -91,6 +93,10 @@ const OWNED_SELECT = {
       afterVersionKey: true,
       law: { select: { lawName: true } },
       lawArticle: { select: { label: true } },
+      // 승인 때 개정 이유 초안을 다시 만드는 재료(T-161) — 상세 조회와 같은 칸
+      changeType: true,
+      promulgatedDate: true,
+      lawVersion: { select: { lawType: true, promulgationNo: true } },
     },
   },
   article: {
@@ -935,6 +941,18 @@ export class AmendmentsService {
             },
             changeNote,
             earlyReason,
+            // 개정 이유 초안을 고치지 않고 승인했는지(T-161, LAW-21) — 화면이 보낸 값이 아니라 같은 함수로 승인한 판에서 다시 만든 초안과 견준다
+            changeNoteDraft: draftRecord(
+              changeNote,
+              reasonDraft({
+                law: reasonLawOf(cand.changeEvent),
+                article: cand.article,
+                baseContent: cand.baseVersion.content,
+                candidateContent: rev.content,
+                changes: changesOf(rev.diff),
+                applications: applicationsOf(cand.rationale),
+              }),
+            ),
             evidence: { link: rationale.link ?? null, engine: meta.engine ?? null, rules: meta.rules ?? null, templates: meta.templates ?? null },
             // 변수 선택(T-109 ②, 특허 도 12) — 어느 연결에 어떤 값(유효기간·범위)을 넣었는지
             plannedEffectiveDate: dateOnly(cand.plannedEffectiveDate),
@@ -1422,6 +1440,15 @@ export class AmendmentsService {
         version: presentVersion(e.lawVersion),
         revisionReason: e.lawVersion?.revisionReason ?? null,
       },
+      /** 승인 화면 '사유 초안 넣기'가 채우는 사실 문장(T-161) — 지금 판의 변경으로 만든다. 승인 때 같은 함수로 다시 만들어 견준다 */
+      reasonDraft: reasonDraft({
+        law: reasonLawOf(e),
+        article,
+        baseContent: row.baseVersion.content,
+        candidateContent: rest.candidateContent,
+        changes: changesOf(rest.diff),
+        applications: applicationsOf(rest.rationale),
+      }),
     };
   }
 

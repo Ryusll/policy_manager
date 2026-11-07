@@ -48,6 +48,8 @@ describe('T-162 개정안 문서 PDF', () => {
   let stale = '';
   let staleArticle = '';
   let approved = '';
+  let approvedDraft = '';
+  let handEdited = '';
   const cleanups: (() => void)[] = [];
   const E = day(30);
 
@@ -89,6 +91,8 @@ describe('T-162 개정안 문서 PDF', () => {
     stale = s.candidateId;
     staleArticle = s.articleId;
     approved = await seed(policyId, set.chapter.id, 24, '문서P');
+    approvedDraft = await seed(policyId, set.chapter.id, 25, '문서D');
+    handEdited = await seed(policyId, set.chapter.id, 26, '문서M');
     const oset = await createPolicyWithArticle(other.token, `ADO-${Date.now().toString(36)}`, '남의규정');
     theirs = (await seedFull(oset.policy.id, oset.chapter.id, 40, '문서O', other.token)).candidateId;
   }, 180_000);
@@ -175,6 +179,38 @@ describe('T-162 개정안 문서 PDF', () => {
     expect(text).toContain('승인 사유: 이사회 의결 반영');
     expect(text.replace(/\s+/g, ' ')).toContain(`사내 시행 ${y}. ${m}. ${d}.`);
     expect(text).toContain('승인되지 않은 조문 1개');
+  });
+
+  it('개정 이유 초안을 고치지 않고 승인한 후보는 개정 이유에 그 문장 하나만 싣는다 — 승인 사유를 따로 붙이지 않는다 (T-161)', async () => {
+    const draft = (await api(`/amendments/${approvedDraft}`, { token: t.token })).body.reasonDraft as string;
+    const ok = await api(`/amendments/${approvedDraft}/approve`, {
+      method: 'POST',
+      token: t.token,
+      json: { ...(await lockOf(t.token, approvedDraft)), effectiveDate: E, changeNote: draft },
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const res = await documentPdf(t.token, [approvedDraft]);
+    expect(res.status).toBe(200);
+    // 줄바꿈 위치는 렌더러가 정한다 — 공백을 모두 지우고 견준다
+    const flat = readPdf(new Uint8Array(await res.arrayBuffer())).text.replace(/\s+/g, '');
+    expect(flat.split(draft.replace(/\s+/g, '')).length - 1, flat).toBe(1);
+    expect(flat).not.toContain('승인사유');
+  });
+
+  it('법 개정 때문인 곳이 없는 후보(사람이 고친 값)는 개정 이유에 "에 따라" 대신 "을 계기로" — 초안과 같은 판정 (T-161)', async () => {
+    // 규칙이 넣은 20일을 사람이 25일로 고쳤다 — 그 자리는 규칙이 낸 문구가 아니다
+    const edit = await api(`/amendments/${handEdited}`, {
+      method: 'PATCH',
+      token: t.token,
+      json: { ...(await lockOf(t.token, handEdited)), candidateContent: '직원에게는 매년 25일의 연차휴가를 준다.', note: '회사 방침으로 25일' },
+    });
+    expect(edit.status, JSON.stringify(edit.body)).toBe(200);
+    expect(edit.body.reasonDraft).toContain('을 계기로 제26조(조26) 중 1곳을 고침');
+    const res = await documentPdf(t.token, [handEdited]);
+    expect(res.status).toBe(200);
+    const flat = readPdf(new Uint8Array(await res.arrayBuffer())).text.replace(/\s+/g, '');
+    expect(flat, flat).toContain('을계기로제26조를바꿈');
+    expect(flat).not.toContain('에따라제26조를바꿈');
   });
 
   it('다른 규정의 후보가 섞이면 400 (T-162)', async () => {

@@ -171,6 +171,8 @@ export type AmendmentDetail = AmendmentCandidate & {
     /** 그 판의 법제처 개정 이유(T-152) — 없으면 null */
     revisionReason?: string | null;
   };
+  /** 승인 화면 '사유 초안 넣기'가 채우는 사실 문장(T-161) — 서버가 지금 판의 변경으로 만든다 */
+  reasonDraft?: string;
 };
 
 export type AmendmentHistory = {

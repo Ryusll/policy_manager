@@ -1,5 +1,8 @@
-import { formatArticleLabel } from '../common/article-label';
 import { diffCandidate, type CandidateDiffPart } from './amendment-diff';
+import { CHANGE_LABEL, articleHeading, articleSentence, koreanDate, promulgation } from './amendment-reason';
+
+// 문장 조각은 승인 화면의 개정 이유 초안(T-161)과 같이 쓴다 — 예전 이름으로도 부를 수 있게 다시 내보낸다
+export { koreanDate, objectParticle } from './amendment-reason';
 
 /**
  * 개정안 문서(T-162, SRS LAW-22) — 같은 규정의 개정 후보를 신구조문대비표(현행·개정안·비고)·개정 이유·법령 근거
@@ -37,6 +40,10 @@ export interface DocCandidate {
   };
   /** 승인 때 사람이 남긴 개정 사유(발행 버전의 changeNote) — 승인된 후보에만 있다 */
   approvedNote: string | null;
+  /** 개정 이유 초안(T-161)을 고치지 않고 승인했는지 — 그러면 개정 이유에 그 문장 하나만 싣는다(같은 앞부분이 두 번 찍히지 않게) */
+  approvedAsDraft?: boolean;
+  /** 개정 이유 한 줄(T-161) — 서비스가 후보의 변경으로 만든다(amendment-reason-draft 의 articleReason). 없으면 조문 단위 문장 */
+  reason?: string;
 }
 
 export interface DocInput {
@@ -47,17 +54,9 @@ export interface DocInput {
 }
 
 const STATE_LABEL: Record<DocState, string> = { draft: '작성 중', review: '검토 중', approved: '승인' };
-const CHANGE_LABEL: Record<DocCandidate['law']['changeType'], string> = { created: '신설', modified: '개정', deleted: '삭제' };
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-/** 2026-05-26 → "2026. 5. 26." (법령 문서의 날짜 표기) */
-export function koreanDate(iso: string | null): string {
-  if (!iso) return '';
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  return m ? `${m[1]}. ${Number(m[2])}. ${Number(m[3])}.` : iso;
 }
 
 const text = (s: string) => escapeHtml(s).replace(/\r?\n/g, '<br>');
@@ -78,37 +77,9 @@ function comparePair(before: string, after: string) {
   };
 }
 
-const articleHeading = (c: DocCandidate) =>
-  formatArticleLabel(c.article) + (c.article.title ? `(${c.article.title})` : '');
-
-function promulgation(law: DocCandidate['law']): string {
-  const no = law.lawType && law.promulgationNo ? `${law.lawType} 제${law.promulgationNo}호` : '';
-  return [no, law.promulgatedDate && `${koreanDate(law.promulgatedDate)} 공포`, law.lawEffectiveDate && `${koreanDate(law.lawEffectiveDate)} 시행`]
-    .filter(Boolean)
-    .join(', ');
-}
-
-/** 사실만 담은 개정 이유 한 줄 — "「법」 조항 개정(법률 제N호, 공포, 시행)에 따라 제N조를 바꿈" */
+/** 사실만 담은 개정 이유 한 줄 — "「법」 조항 개정(법률 제N호, 공포, 시행)에 따라 제N조를 바꿈"(amendment-reason 의 조문 단위 문장) */
 export function reasonSentence(c: DocCandidate): string {
-  const p = promulgation(c.law);
-  const verb = c.candidateContent.trim() ? '바꿈' : '삭제함';
-  const label = formatArticleLabel(c.article);
-  return `「${c.law.lawName}」 ${c.law.label} ${CHANGE_LABEL[c.law.changeType]}${p ? `(${p})` : ''}에 따라 ${label}${objectParticle(label)} ${verb}`;
-}
-
-/**
- * 목적격 조사 — 읽을 때 받침이 있으면 '을'. 조(받침 없음)는 '를', 항·목은 '을', 가지번호로 끝나면 숫자를 읽는 소리로
- * (제3조의2 → '이' 를, 제3조의3 → '삼' 을, 10·100·1000 → 십·백·천 을)
- */
-export function objectParticle(label: string): string {
-  const digits = /(\d+)$/.exec(label)?.[1];
-  if (digits) {
-    const last = digits.replace(/0+$/, '');
-    // 0 으로 끝나면 십·백·천…(모두 받침) — 끝 자리 숫자 소리: 일·삼·육·칠·팔은 받침, 이·사·오·구는 없음
-    if (last.length < digits.length) return '을';
-    return '13678'.includes(last[last.length - 1]) ? '을' : '를';
-  }
-  return /[항목]$/.test(label) ? '을' : '를';
+  return c.reason ?? articleSentence(c.law, c.article, !c.candidateContent.trim());
 }
 
 function noteCell(c: DocCandidate): string {
@@ -139,7 +110,9 @@ export function buildAmendmentDocument(input: DocInput) {
 
   const reasons = rows
     .map((c) => {
-      const note = c.approvedNote?.trim() ? `<br><span class="amend-muted">승인 사유: ${text(c.approvedNote.trim())}</span>` : '';
+      const approved = c.approvedNote?.trim();
+      if (approved && c.approvedAsDraft) return `<li>${text(approved)}</li>`; // 초안 그대로 승인 — 같은 앞부분을 두 번 싣지 않는다
+      const note = approved ? `<br><span class="amend-muted">승인 사유: ${text(approved)}</span>` : '';
       return `<li>${escapeHtml(reasonSentence(c))}${note}</li>`;
     })
     .join('');
@@ -147,7 +120,7 @@ export function buildAmendmentDocument(input: DocInput) {
   const table = rows
     .map((c) => {
       const pair = comparePair(c.baseContent, c.candidateContent);
-      const head = `<b>${escapeHtml(articleHeading(c))}</b><br>`;
+      const head = `<b>${escapeHtml(articleHeading(c.article))}</b><br>`;
       return `<tr><td>${head}${pair.before}</td><td>${head}${pair.after}</td><td class="amend-note">${noteCell(c)}</td></tr>`;
     })
     .join('');

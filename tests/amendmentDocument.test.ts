@@ -87,6 +87,22 @@ describe('개정안 문서 조립 (T-162)', () => {
     expect(html).toContain('승인 사유: 법 개정 반영');
   });
 
+  it('서비스가 만든 개정 이유 한 줄이 있으면 그것을 싣는다 — 법 개정 때문인 곳이 없는 후보의 "을 계기로" (T-161)', () => {
+    const reason = '「남녀고용평등과 일·가정 양립 지원에 관한 법률」 제18조의3제1항 개정(법률 제21700호, 2026. 5. 26. 공포, 2026. 11. 27. 시행)을 계기로 제12조를 바꿈';
+    const html = doc([cand({ number: 12, reason })]).html;
+    expect(/<ul class="amend-reasons">(.*?)<\/ul>/.exec(html)?.[1]).toBe(`<li>${reason}</li>`);
+  });
+
+  it('개정 이유 초안을 고치지 않고 승인했으면 그 문장 하나만 — 같은 앞부분을 두 번 싣지 않는다 (T-161)', () => {
+    const note = '「남녀고용평등과 일·가정 양립 지원에 관한 법률」 제18조의3제1항 개정(법률 제21700호, 2026. 5. 26. 공포, 2026. 11. 27. 시행)에 따라 제12조(난임치료휴가) 중 ‘2일’을 ‘4일’로 바꿈';
+    const html = doc([cand({ number: 12, reviewState: 'approved', approvedNote: note, approvedAsDraft: true })]).html;
+    const reasons = /<ul class="amend-reasons">(.*?)<\/ul>/.exec(html)?.[1] ?? '';
+    expect(reasons).toBe(`<li>${note}</li>`);
+    expect(html).not.toContain('승인 사유:');
+    // 고쳐서 승인했으면 예전처럼 개정 이유 + 승인 사유
+    expect(doc([cand({ number: 12, reviewState: 'approved', approvedNote: note, approvedAsDraft: false })]).html).toContain(`승인 사유: ${note}`);
+  });
+
   it('법령 근거는 변경 이벤트마다 한 번 — 변경 전·후 문구를 밑줄로', () => {
     const html = doc([cand({ number: 12 }), cand({ id: 'x', number: 13 })]).html;
     const basis = html.slice(html.indexOf('3. 법령 근거'));
