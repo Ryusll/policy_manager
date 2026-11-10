@@ -3,9 +3,11 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { todayDateOnly } from '../common/date-only';
 import { currentVersionsSql } from '../common/as-of';
-import { AnthropicAskProvider, AskProvider, AskRefusedError, AiUsage, MockAskProvider } from './ask-provider';
+import { AskProvider, AskRefusedError, AiUsage } from './ask-provider';
+import { createAskProvider } from './ask-provider-factory';
 import { AI_QA_CONSENT_SELECT, aiQaNotice, aiQaState, assertAskAllowed, guardProvider } from './ask-notice';
 import { AskConsentService } from './ask-consent.service';
+import { answerStep, type AskCitation, type AskLawCitation } from './ask-answer';
 import {
   ASK_MAX_GROUPS,
   AnswerBlock,
@@ -13,7 +15,6 @@ import {
   JoGroup,
   buildContext,
   buildToc,
-  checkAnswer,
   groupRows,
   joKey,
   questionKeywords,
@@ -30,27 +31,14 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 export type AskReason = 'no_regulations' | 'no_candidates' | 'no_basis' | 'refused';
 
-export interface AskCitation {
-  ref: string;
-  articleId: string;
-  policyId: string;
-  policyTitle: string;
-  policyCode: string;
-  label: string;
-  joTitle: string;
-  number: number;
-  branchNumber: number | null;
-  clauseNumber: number | null;
-  itemNumber: number | null;
-  /** DB 의 시행 중 본문 — AI 가 옮긴 글이 아니다 */
-  content: string;
-}
+export type { AskCitation, AskLawCitation } from './ask-answer';
 
 export interface AskResult {
   answerable: boolean;
   reason?: AskReason;
   blocks: AnswerBlock[];
   citations: AskCitation[];
+  lawCitations: AskLawCitation[];
   /** AI 에 본문을 준 조 — 답하지 못했을 때 직원이 직접 확인할 수 있게 */
   consulted: { policyId: string; policyTitle: string; number: number; branchNumber: number | null; label: string }[];
   usage: { used: number; limit: number; userUsed: number; userLimit: number };
@@ -96,9 +84,8 @@ export class AskService {
     private readonly prisma: PrismaService,
     private readonly consent: AskConsentService,
   ) {
-    const key = process.env.ANTHROPIC_API_KEY?.trim();
-    this.provider =
-      process.env.AI_QA_PROVIDER?.trim() === 'mock' ? new MockAskProvider() : key ? new AnthropicAskProvider(key) : null;
+    // 제공사는 서버 설정으로 고른다(T-208, `ask-provider-factory.ts`) — 고지 판도 같은 설정을 따른다
+    this.provider = createAskProvider();
     this.monthlyLimit = monthlyLimitFrom(process.env.AI_QA_MONTHLY_LIMIT);
     this.userMonthlyLimit = monthlyLimitFrom(process.env.AI_QA_USER_MONTHLY_LIMIT, DEFAULT_USER_MONTHLY_LIMIT);
   }
@@ -321,7 +308,7 @@ export class AskService {
       if (extra) usages.push(extra);
       if (e instanceof AskRefusedError) {
         await this.finish(slot.id, { aiCalled: true, usages, failure: `refused:${e.message}` });
-        return { answerable: false, reason: 'refused', blocks: [], citations: [], consulted: [], usage: usage(true) };
+        return { answerable: false, reason: 'refused', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(true) };
       }
       // AI 를 부르기 시작했으면 실패해도 비용이 났을 수 있다 — 예약을 그대로 두어 한도에 센다.
       // 부르기 전에 끝났으면(그사이 관리자가 껐을 때 등) 한도에서 돌려준다
@@ -345,7 +332,7 @@ export class AskService {
     if (!groups.length) {
       // AI 를 부르지 않았다 — 한도에서 돌려준다
       await this.finish(logId, { aiCalled: false, usages });
-      return { answerable: false, reason: 'no_regulations', blocks: [], citations: [], consulted: [], usage: usage(false) };
+      return { answerable: false, reason: 'no_regulations', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(false) };
     }
     const toc = buildToc(groups, TOC_MAX_CHARS);
     if (toc.truncated) this.log.warn(`목차가 ${TOC_MAX_CHARS}자를 넘어 일부만 보냄 (tenant ${tenantId})`);
@@ -363,7 +350,7 @@ export class AskService {
     }
     if (!chosen.length) {
       await this.finish(logId, { aiCalled: true, usages });
-      return { answerable: false, reason: 'no_candidates', blocks: [], citations: [], consulted: [], usage: usage(true) };
+      return { answerable: false, reason: 'no_candidates', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(true) };
     }
 
     // ② 고른 조의 시행 중 본문만 참조 번호를 붙여 준다
@@ -386,41 +373,22 @@ export class AskService {
         (g.title ? `(${g.title})` : ''),
     }));
 
-    // ③ 답 — 준 번호 밖의 근거는 버리고, 근거가 남지 않으면 답하지 않은 것으로 본다
-    let checked;
+    // ③ 답 — 법령 근거(T-209)를 붙여 정해진 칸을 받고(T-207), 준 번호 밖의 근거는 버린다. 근거가 남지 않으면 답하지 않은
+    // 것으로 본다(`ask-answer.ts`)
+    let step;
     try {
-      const ans = await provider.answer({ context: ctx.text, question });
-      usages.push(ans.usage);
-      checked = checkAnswer(ans.raw, new Set(ctx.refs.map((r) => r.ref)));
+      step = await answerStep(this.prisma, provider, tenantId, question, ctx);
+      usages.push(step.usage);
     } catch (e) {
       if (e instanceof AskRefusedError) {
         if (e.usage) usages.push(e.usage);
         await this.finish(logId, { aiCalled: true, usages, contextRowCount: ctx.refs.length, failure: `refused:${e.message}` });
-        return { answerable: false, reason: 'refused', blocks: [], citations: [], consulted, usage: usage(true) };
+        return { answerable: false, reason: 'refused', blocks: [], citations: [], lawCitations: [], consulted, usage: usage(true) };
       }
       throw e;
     }
+    const { checked, citations, lawCitations } = step;
     if (checked.droppedCitations) this.log.warn(`준 적 없는 근거 ${checked.droppedCitations}건을 버림 (tenant ${tenantId})`);
-
-    const refRow = new Map(ctx.refs.map((r) => [r.ref, r.row]));
-    const joTitle = new Map(ctx.used.map((g) => [g.key, g.title]));
-    const citations: AskCitation[] = checked.citations.map((ref) => {
-      const row = refRow.get(ref)!;
-      return {
-        ref,
-        articleId: row.articleId,
-        policyId: row.policyId,
-        policyTitle: row.policyTitle,
-        policyCode: row.policyCode,
-        label: rowLabel(row),
-        joTitle: joTitle.get(joKey(row.policyId, row.number, row.branchNumber)) ?? '',
-        number: row.number,
-        branchNumber: row.branchNumber,
-        clauseNumber: row.clauseNumber,
-        itemNumber: row.itemNumber,
-        content: row.content,
-      };
-    });
     await this.finish(logId, {
       aiCalled: true,
       answerable: checked.answerable,
@@ -434,6 +402,7 @@ export class AskService {
       ...(checked.answerable ? {} : { reason: 'no_basis' as const }),
       blocks: checked.blocks,
       citations,
+      lawCitations,
       consulted,
       usage: usage(true),
     };

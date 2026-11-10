@@ -188,75 +188,41 @@ export function buildContext(groups: JoGroup[], maxChars: number): { text: strin
   return { text: parts.join('\n'), refs, used };
 }
 
-// ─── AI 답 검사 ───────────────────────────────────────────────────────────────
+/** 근거 요약이 비었을 때 서버가 쓰는 문장(T-207) — 인용한 조문을 규정별로 모은다 */
+export function basisSentence(rows: Pick<AskRow, 'policyTitle' | 'number' | 'branchNumber'>[]): string {
+  const byPolicy = new Map<string, string[]>();
+  for (const r of rows) {
+    const jo = formatJo(r.number, r.branchNumber);
+    const list = byPolicy.get(r.policyTitle) ?? [];
+    if (!list.includes(jo)) list.push(jo);
+    byPolicy.set(r.policyTitle, list);
+  }
+  if (!byPolicy.size) return '';
+  return `근거 규정은 ${[...byPolicy].map(([title, jos]) => `${title} ${jos.join('·')}`).join(', ')}입니다.`;
+}
 
+// ─── 답 블록 ─────────────────────────────────────────────────────────────────
+
+/** 검토 표의 판단 — 이 여섯 값만 쓴다(SEARCH-7). 화면은 값마다 색을 정해 둔다 */
+export const VERDICTS = ['부합', '대체로 부합', '부분 부합', '보완 필요', '추가 확인 필요', '해당 없음'] as const;
+export type Verdict = (typeof VERDICTS)[number];
+
+/** 검토 표 한 행 — 머리(검토 영역·관련 법령·기준·현재 규정 상태·판단·개정·보완 권고)는 화면이 정한다 */
+export interface ReviewRow {
+  area: string;
+  law: string;
+  current: string;
+  verdict: Verdict;
+  advice: string;
+}
+
+/**
+ * 화면에 내는 답 블록. T-207 부터 답은 늘 [직답 문단, 검토 표, 우선 권고(또는 핵심 정리), 종합 의견 문단, 근거 요약 문단]
+ * 순서다(`ask-report.ts`). 문단의 굵게는 `**` 짝으로만 표시한다. list·table 은 T-207 전 기록의 모양이다.
+ */
 export type AnswerBlock =
   | { type: 'paragraph'; text: string }
   | { type: 'list'; items: string[] }
-  | { type: 'table'; headers: string[]; rows: string[][] };
-
-export interface CheckedAnswer {
-  answerable: boolean;
-  blocks: AnswerBlock[];
-  /** 준 참조 번호 중 실제로 있는 것만, 처음 나온 순서대로 */
-  citations: string[];
-  /** 준 적 없는 번호를 근거로 댄 수 — 기록용 */
-  droppedCitations: number;
-}
-
-const LIMIT = { blocks: 30, items: 50, rows: 50, cols: 8, chars: 2000 };
-
-/** 본문에 섞여 나온 참조 번호 표기([R3], (R3), R3)는 지운다 — 근거는 따로 보여 준다 */
-const cleanText = (v: unknown): string =>
-  typeof v === 'string'
-    ? v
-        .replace(/[[(]\s*R\d+(?:\s*[,，]\s*R\d+)*\s*[\])]/g, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim()
-        .slice(0, LIMIT.chars)
-    : '';
-
-const strings = (v: unknown, max: number): string[] =>
-  Array.isArray(v) ? v.map(cleanText).filter(Boolean).slice(0, max) : [];
-
-/**
- * AI 가 낸 JSON 을 화면에 낼 모양으로 거른다. 형식이 틀린 블록은 버리고, 준 번호 밖의 근거도 버린다.
- * **근거가 하나도 남지 않으면 답하지 않은 것으로 본다** — 근거 없는 답은 규정 해석으로 오해받는다.
- */
-export function checkAnswer(raw: unknown, allowedRefs: Set<string>): CheckedAnswer {
-  const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const blocks: AnswerBlock[] = [];
-  for (const b of Array.isArray(obj.blocks) ? obj.blocks.slice(0, LIMIT.blocks) : []) {
-    if (!b || typeof b !== 'object') continue;
-    const blk = b as Record<string, unknown>;
-    if (blk.type === 'paragraph') {
-      const text = cleanText(blk.text);
-      if (text) blocks.push({ type: 'paragraph', text });
-    } else if (blk.type === 'list') {
-      const items = strings(blk.items, LIMIT.items);
-      if (items.length) blocks.push({ type: 'list', items });
-    } else if (blk.type === 'table') {
-      const headers = (Array.isArray(blk.headers) ? blk.headers : []).map(cleanText).slice(0, LIMIT.cols);
-      const width = headers.length;
-      const rows = (Array.isArray(blk.rows) ? blk.rows : [])
-        .slice(0, LIMIT.rows)
-        .map((r) => (Array.isArray(r) ? r.map(cleanText).slice(0, LIMIT.cols) : []))
-        .filter((r) => r.some(Boolean))
-        .map((r) => (width ? [...r, ...Array(Math.max(0, width - r.length)).fill('')].slice(0, width) : r));
-      if (rows.length) blocks.push({ type: 'table', headers, rows });
-    }
-  }
-  const asked = Array.isArray(obj.citations) ? obj.citations.filter((c): c is string => typeof c === 'string') : [];
-  const citations: string[] = [];
-  let dropped = 0;
-  for (const c of asked) {
-    const ref = c.trim().replace(/^\[|\]$/g, '');
-    if (!allowedRefs.has(ref)) {
-      dropped += 1;
-      continue;
-    }
-    if (!citations.includes(ref)) citations.push(ref);
-  }
-  const answerable = obj.answerable === true && blocks.length > 0 && citations.length > 0;
-  return { answerable, blocks: answerable ? blocks : [], citations: answerable ? citations : [], droppedCitations: dropped };
-}
+  | { type: 'table'; headers: string[]; rows: string[][] }
+  | { type: 'review'; rows: ReviewRow[] }
+  | { type: 'priorities'; kind: 'amend' | 'summary'; items: { title: string; detail: string }[] };

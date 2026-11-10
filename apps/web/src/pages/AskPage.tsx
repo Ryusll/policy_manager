@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircleQuestion, Send, BookOpen, AlertTriangle, ExternalLink } from 'lucide-react';
-import { askApi, AiQaNotice, AskBlock, AskCitation, AskResult } from '../api/ask';
+import { MessageCircleQuestion, Send, AlertTriangle } from 'lucide-react';
+import { askApi, AiQaNotice, AskResult } from '../api/ask';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { AskConsentDialog, AskNoticeFooter, AskOffNotice } from '../components/AskNotice';
+import { AskAnswer } from '../components/AskAnswer';
 import { useI18n } from '../i18n/useI18n';
 import { articleHash } from '../lib/articleAnchor';
-import { formatArticleJo, formatClauseHang, formatItemMok } from '../lib/legalArticleLabel';
 
 /**
  * T-130 규정 질문 — 직원이 말로 물으면 지금 시행 중인 사내 규정만 근거로 AI 가 답한다(D-09 결정).
@@ -33,70 +33,13 @@ interface Turn {
   result: AskResult;
 }
 
-function citationLabel(c: Pick<AskCitation, 'number' | 'branchNumber' | 'clauseNumber' | 'itemNumber'>): string {
-  return [
-    formatArticleJo(c.number, c.branchNumber),
-    c.clauseNumber != null ? formatClauseHang(c.clauseNumber) : '',
-    c.itemNumber != null ? formatItemMok(c.itemNumber) : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-}
-
 function errorMessage(err: unknown): string {
   const data = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data;
   const msg = Array.isArray(data?.message) ? data?.message[0] : data?.message;
   return msg || '답을 받지 못했습니다. 잠시 후 다시 물어 주세요.';
 }
 
-function Blocks({ blocks }: { blocks: AskBlock[] }) {
-  return (
-    <div className="space-y-3 text-sm leading-relaxed text-gray-800">
-      {blocks.map((b, i) => {
-        if (b.type === 'paragraph') return <p key={i} className="whitespace-pre-wrap">{b.text}</p>;
-        if (b.type === 'list') {
-          return (
-            <ul key={i} className="list-disc pl-5 space-y-1">
-              {b.items.map((item, j) => (
-                <li key={j}>{item}</li>
-              ))}
-            </ul>
-          );
-        }
-        return (
-          <div key={i} className="overflow-x-auto">
-            <table className="min-w-full border border-gray-200 text-sm">
-              {b.headers.length > 0 && (
-                <thead className="bg-gray-50">
-                  <tr>
-                    {b.headers.map((h, j) => (
-                      <th key={j} className="border border-gray-200 px-3 py-1.5 text-left font-medium text-gray-700">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-              )}
-              <tbody>
-                {b.rows.map((row, j) => (
-                  <tr key={j}>
-                    {row.map((cell, k) => (
-                      <td key={k} className="border border-gray-200 px-3 py-1.5 align-top">
-                        {cell}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function TurnView({ turn }: { turn: Turn }) {
+function TurnView({ turn, canOpenLaws }: { turn: Turn; canOpenLaws: boolean }) {
   const { question, result } = turn;
   return (
     <div className="card p-5 space-y-4" data-testid="ask-turn">
@@ -106,30 +49,7 @@ function TurnView({ turn }: { turn: Turn }) {
       </div>
 
       {result.answerable ? (
-        <>
-          <Blocks blocks={result.blocks} />
-          <p className="text-[11px] text-gray-500">
-            AI가 아래 조문을 근거로 쓴 답입니다. 정확한 내용은 근거 조문을 확인하세요.
-          </p>
-          <div className="space-y-2" data-testid="ask-citations">
-            <p className="text-xs font-medium text-gray-600 flex items-center gap-1">
-              <BookOpen size={13} /> 근거 조문 {result.citations.length}건
-            </p>
-            {result.citations.map((c) => (
-              <div key={c.ref} className="rounded border border-gray-200 bg-gray-50 px-3 py-2">
-                <Link
-                  to={`/policies/${c.policyId}${articleHash(c)}`}
-                  className="text-xs font-medium text-navy-700 hover:underline inline-flex items-center gap-1"
-                >
-                  {c.policyTitle} · {citationLabel(c)}
-                  {c.joTitle ? `(${c.joTitle})` : ''}
-                  <ExternalLink size={11} />
-                </Link>
-                {c.content.trim() && <p className="mt-1 text-xs text-gray-700 whitespace-pre-wrap">{c.content}</p>}
-              </div>
-            ))}
-          </div>
-        </>
+        <AskAnswer result={result} canOpenLaws={canOpenLaws} />
       ) : (
         <div className="space-y-2">
           <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
@@ -210,7 +130,7 @@ export default function AskPage() {
   const canAsk = !!status?.configured && !!status?.enabled;
 
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-5 max-w-5xl">
       <PageHeader
         title="규정 질문"
         description="사내 규정에 대해 물으면, 지금 시행 중인 규정을 근거로 AI가 답합니다."
@@ -255,14 +175,7 @@ export default function AskPage() {
             <p className="font-medium">규정 질문(AI)은 아직 준비 중입니다.</p>
             <p className="text-xs mt-1">
               {/* 서버 키는 고객사가 넣을 수 없다 — 운영자(플랫폼 관리자)에게만 설정 방법을 보인다 */}
-              {isPlatformAdmin ? (
-                <>
-                  서버 환경변수 <code className="font-mono">ANTHROPIC_API_KEY</code>에 AI 키를 넣고 API를 다시 띄우면
-                  쓸 수 있습니다.
-                </>
-              ) : (
-                '쓰려면 아스트룸에 문의하세요.'
-              )}
+              {isPlatformAdmin ? t('ask.notConfigured.platformHint') : '쓰려면 아스트룸에 문의하세요.'}
             </p>
           </div>
         </div>
@@ -319,14 +232,14 @@ export default function AskPage() {
       )}
 
       {askMutation.isPending && (
-        <div className="card p-4 text-sm text-gray-600">규정에서 근거를 찾아 답을 쓰고 있습니다… (보통 10~30초)</div>
+        <div className="card p-4 text-sm text-gray-600">{t('ask.pending')}</div>
       )}
       {askMutation.isError && (
         <div className="card p-4 text-sm text-red-700 bg-red-50 border-red-200">{errorMessage(askMutation.error)}</div>
       )}
 
       {turns.map((turn, i) => (
-        <TurnView key={turns.length - i} turn={turn} />
+        <TurnView key={turns.length - i} turn={turn} canOpenLaws={user?.role === 'admin' || user?.role === 'editor'} />
       ))}
     </div>
   );

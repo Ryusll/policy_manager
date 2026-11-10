@@ -3,7 +3,6 @@ import {
   AskRow,
   buildContext,
   buildToc,
-  checkAnswer,
   groupRows,
   questionKeywords,
   rowLabel,
@@ -89,52 +88,7 @@ describe('AI 에 주는 목차·본문', () => {
   });
 });
 
-describe('AI 답 검사', () => {
-  const allowed = new Set(['R1', 'R2']);
-
-  it('준 번호 밖의 근거는 버리고 본문의 참조 표기는 지운다', () => {
-    const out = checkAnswer(
-      {
-        answerable: true,
-        blocks: [
-          { type: 'paragraph', text: '본인 결혼은 50만원입니다 [R2].', items: [], headers: [], rows: [] },
-          { type: 'table', text: '', items: [], headers: ['구분', '금액'], rows: [['본인 결혼', '50만원', '넘친 칸']] },
-          { type: 'list', text: '', items: ['', '신청서 제출 (R1, R2)'], headers: [], rows: [] },
-          { type: 'video', text: '모르는 블록' },
-        ],
-        citations: ['R2', 'R999', '[R1]', 'R2'],
-      },
-      allowed,
-    );
-    expect(out.answerable).toBe(true);
-    expect(out.citations).toEqual(['R2', 'R1']);
-    expect(out.droppedCitations).toBe(1);
-    expect(out.blocks).toEqual([
-      { type: 'paragraph', text: '본인 결혼은 50만원입니다 .' },
-      { type: 'table', headers: ['구분', '금액'], rows: [['본인 결혼', '50만원']] },
-      { type: 'list', items: ['신청서 제출'] },
-    ]);
-  });
-
-  it('근거가 하나도 남지 않으면 답하지 않은 것으로 본다', () => {
-    const out = checkAnswer(
-      { answerable: true, blocks: [{ type: 'paragraph', text: '아마 30만원일 겁니다.' }], citations: ['R7'] },
-      allowed,
-    );
-    expect(out).toMatchObject({ answerable: false, blocks: [], citations: [], droppedCitations: 1 });
-  });
-
-  it('AI 가 답할 수 없다고 하면 블록이 있어도 내보내지 않는다', () => {
-    const out = checkAnswer({ answerable: false, blocks: [{ type: 'paragraph', text: '추측' }], citations: ['R1'] }, allowed);
-    expect(out.answerable).toBe(false);
-    expect(out.blocks).toEqual([]);
-  });
-
-  it('형식이 깨진 응답도 예외 없이 "답 없음"', () => {
-    expect(checkAnswer(null, allowed).answerable).toBe(false);
-    expect(checkAnswer({ answerable: 'yes', blocks: 'x', citations: 3 }, allowed).answerable).toBe(false);
-  });
-});
+// AI 답 검사(근거 규칙)는 T-207 에서 검토 보고서 검사로 옮겼다 — tests/askReport.test.ts
 
 describe('월 한도의 달 시작', () => {
   it('한국 시간 1일 0시 — UTC 로는 전달 말일 15시', () => {

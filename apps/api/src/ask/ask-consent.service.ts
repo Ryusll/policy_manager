@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { AI_QA_NOTICE_VERSION } from './ask-notice';
+import { currentNoticeVersion } from './ask-notice';
 
 /**
  * 규정 질문 켜기·끄기와 동의 기록 (T-146, D-09 재결정 2026-10-14, ADR-0025).
@@ -19,7 +19,9 @@ export class AskConsentService {
   ) {}
 
   async setEnabled(tenantId: string, userId: string, enabled: boolean, noticeVersion?: number) {
-    if (enabled && noticeVersion !== AI_QA_NOTICE_VERSION) {
+    // 지금 서버가 쓰는 제공사의 고지 판 — 제공사가 바뀌면 판도 바뀐다(T-208)
+    const current = currentNoticeVersion();
+    if (enabled && noticeVersion !== current) {
       throw new BadRequestException({
         statusCode: 400,
         code: 'AI_QA_NOTICE_REQUIRED',
@@ -31,9 +33,9 @@ export class AskConsentService {
           // 판이 비어 있으면 `not` 비교가 NULL 이라 따로 적는다
           where: {
             id: tenantId,
-            OR: [{ aiQaEnabled: false }, { aiQaNoticeVersion: null }, { aiQaNoticeVersion: { not: AI_QA_NOTICE_VERSION } }],
+            OR: [{ aiQaEnabled: false }, { aiQaNoticeVersion: null }, { aiQaNoticeVersion: { not: current } }],
           },
-          data: { aiQaEnabled: true, aiQaNoticeVersion: AI_QA_NOTICE_VERSION, aiQaConsentedAt: new Date(), aiQaConsentedBy: userId },
+          data: { aiQaEnabled: true, aiQaNoticeVersion: current, aiQaConsentedAt: new Date(), aiQaConsentedBy: userId },
         })
       : await this.prisma.tenant.updateMany({ where: { id: tenantId, aiQaEnabled: true }, data: { aiQaEnabled: false } });
     if (changed.count === 0) {
@@ -49,7 +51,7 @@ export class AskConsentService {
       action: 'ai_qa.settings_change',
       entityType: 'Tenant',
       entityId: tenantId,
-      details: enabled ? { enabled, noticeVersion: AI_QA_NOTICE_VERSION, consentedBy } : { enabled },
+      details: enabled ? { enabled, noticeVersion: current, consentedBy } : { enabled },
     });
   }
 }
