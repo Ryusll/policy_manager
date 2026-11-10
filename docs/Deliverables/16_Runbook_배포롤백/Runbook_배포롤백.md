@@ -394,8 +394,25 @@ PY
 
 - 90일(코드 상수 `AI_QA_LOG_RETENTION_DAYS`)보다 오래된 질문·답 기록을 모든 회사에서 지운다. 로그에는 지운 건수만 남고 질문 내용은 남지 않는다. 실패하면 종료 코드 1.
 - **파기가 실제로 도는지 주 1회 확인한다**(cron 이 빠지면 고지의 "90일 보관한 뒤 지웁니다"가 거짓이 된다): `tail ~/ai-qa-purge.log` 와 점검 SQL — 가장 오래된 기록의 지난 일수가 90 을 넘으면 cron 을 확인한다(하루 한 번, 정확히 90일 기준으로 지우므로 정상이면 지난 일수 — 하루 미만은 버린 값 — 가 90 을 넘지 않는다).
-- 보관 일수는 관리자가 동의한 고지에 실린다 — 바꾸려면 코드에서 바꾸고 `apps/api/src/ask/ask-notice.ts` 의 고지 판(`AI_QA_NOTICE_VERSION`)을 올려 배포한다(고지 지문 시험이 잡는다). 판을 올리면 모든 회사가 관리자가 다시 확인할 때까지 꺼진다.
+- 보관 일수는 관리자가 동의한 고지에 실린다 — 바꾸려면 코드에서 바꾸고 `apps/api/src/ask/ask-notice.ts` 의 그 제공사 고지 판(`AI_QA_NOTICE_VERSIONS`, T-208 부터 제공사별)을 올려 배포한다(고지 지문 시험이 잡는다). 판을 올리면 모든 회사가 관리자가 다시 확인할 때까지 꺼진다.
 - **백업에는 파기 전 기록이 남는다.** 고지는 "장애 복구용 백업에는 백업 보관 기간 동안 남습니다"라고만 적는다. 지금 배포 전 로컬 덤프(`backups/oracle/*`)는 자동으로 지워지지 않고, 서버 밖 백업 보관 기간도 7-3(30일)과 `backup-oci.py`(14일)가 다르다 — 대장 T-171(백업 보관 기간 정리)을 끝내 운영에 배포하고 처리방침에 적기 전에는 운영 AI 키를 넣지 않는다(3단계).
+
+## 7-9-1. 규정 질문을 무료 제공사 묶음으로 켜기 (T-208, ADR-0028)
+
+Anthropic 키 없이 규정 질문을 무료 AI 제공사 묶음(freellmapi — 같은 서버의 내부 컨테이너, 호스트 포트 없음)으로 연다. 질문·조 목차·관련 조문·연결된 법령 조문이 **Google(Gemini API 무료 등급)·Groq** 로 간다. Google 무료 등급은 보낸 내용을 제품 개선·학습에 쓰고 사람이 검토할 수 있다 — 고객 데이터가 없는 시연·시험 회사로 먼저 쓰고, 실제 고객사를 받기 전에 유료 제공사로 돌아갈 시점은 D-26 에서 정한다. 고지는 제공사별이라(무료 = 판 2) 켜는 순간 이전 고지에 동의한 회사는 관리자가 다시 확인할 때까지 꺼진다.
+
+1. 7-9 의 1·2단계(이미 나간 것이 없는지, 질문 기록 파기 cron)를 먼저 마친다.
+2. 새 코드를 배포한다(4절·deploy.sh — 무료 제공사는 아직 꺼진 채라 배포에 영향이 없다).
+3. Mac 에서 한 번 실행한다(키는 Mac `.env` 의 `FREELLMAPI_GOOGLE_KEY`·`FREELLMAPI_GROQ_KEY` 를 표준 입력으로만 넘기고 화면에 찍지 않는다):
+   `ORACLE_SSH=ubuntu@<서버주소> bash scripts/oracle/ai-free-setup.sh`
+   - 서버 `.env.oracle` 에 `COMPOSE_PROFILES=ai`·`AI_QA_PROVIDER=freellmapi`·제공사 키를 넣고, 암호화 키와 freellmapi 관리자 비밀번호는 없을 때만 새로 만든다(이전 파일은 `.env.oracle.bak-<시각>`).
+   - 운영 설정 검사(validate-config.py — 암호화 키 64자리 16진수, 관리자 비밀번호 16자 이상, 제공사 키 하나 이상, 이미지 digest 고정) → `freellmapi` 기동 → api·web 다시 만들기.
+   - 끝에 `freellm-init: 켠 제공사 google,groq · 통합 키를 공유 볼륨에 씀` 과 `api 제공사: freellmapi · 고지 판: 2` 가 보여야 한다. freellmapi 가 뜰 때 허용 제공사(Google·Groq) 밖의 키를 모두 끄고 통합 키를 api 와 함께 쓰는 볼륨에 쓴다 — 대시보드에서 키를 옮겨 적지 않는다.
+4. 시험 회사에서 확인한다(7-9 의 4단계 3·4번과 같다): 관리자로 "바뀐 고지 확인하고 켜기" → 무료 제공사 고지(받는 곳 Google LLC·Groq, Inc., 학습·사람 검토, 민감·기밀 주의)를 확인하고 켠다 → 질문하면 직답·검토 표·우선 개정 권고·종합 의견·근거가 나와야 한다. 답한 모델은 질문 기록의 `model`(예: `google/gemini-3.8-flash`)에 남는다.
+5. 한도: 무료 등급은 모델마다 하루 한도가 작다(카탈로그 기준 Gemini 3.5~3.7 Flash 는 하루 20회). 질문 하나가 고르기·답하기 두 번을 부르고, 한도에 걸리면 다음 허용 모델로 넘어간다. 모두 걸리면 "무료 AI 사용량이 지금 모두 찼습니다"로 끝난다 — 약한 모델로 내리지 않는다. 시연 날에는 개발·시험 호출로 한도를 쓰지 않는다.
+6. 키 교체: `.env.oracle` 의 `FREELLMAPI_GOOGLE_KEY`·`FREELLMAPI_GROQ_KEY` 를 편집기로 바꾸고 `bash scripts/oracle/compose.sh up -d --wait --force-recreate freellmapi`(뜰 때마다 설정을 다시 적용한다). 암호화 키는 바꾸지 않는다.
+7. 되돌리기: `.env.oracle` 에서 `AI_QA_PROVIDER=` 를 비우고 `COMPOSE_PROFILES` 에서 `ai` 를 뺀 뒤, 먼저 `COMPOSE_PROFILES=ai bash scripts/oracle/compose.sh stop freellmapi`, 이어서 `bash scripts/oracle/compose.sh up -d --wait --force-recreate api web`. 규정 질문은 "설정 안 됨"으로 돌아간다. 데이터 볼륨(`freellmapi_data` — 암호화된 제공사 키)은 남는다.
+8. 고장 확인: `bash scripts/oracle/compose.sh logs --tail=50 freellmapi`(부팅 정책 실패면 `freellm-init: 실패 — …`), api 로그의 `AskFreeLlm` 줄(모델·사유만 남고 질문 내용은 남지 않는다). `허용하지 않은 제공사가 답함` 이 보이면 더 보내지 않고 멈춘 것이다 — freellmapi 키 목록을 점검한다.
 
 ## 7-10. 놓친 개정 후보 보충 (한 번, T-149)
 
