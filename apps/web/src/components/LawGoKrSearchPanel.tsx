@@ -14,6 +14,7 @@ import { lawGoKrApi, type LawSearchItem } from '../api/lawgokr';
 import { regulationParseApi, type ParseSession } from '../api/regulationParse';
 import { useI18n } from '../i18n/useI18n';
 import { LAW_SEARCH_QUERY_MAX, retrySearch, searchFailureText } from '../lib/lawSearchPages';
+import LawGoKrNotConfigured from './LawGoKrNotConfigured';
 
 const PAGE_SIZE = 20;
 
@@ -66,31 +67,8 @@ export function LawGoKrSearchPanel({
     setQuery(next);
   };
 
-  // 인증값이 없으면 검색 자체가 불가능하다. 실패를 기다리게 하지 말고 미리 알린다.
-  if (config?.configured === false) {
-    return (
-      <div className="border border-amber-200 bg-amber-50 rounded-lg p-4 space-y-2">
-        <p className="text-sm font-medium text-amber-900">법제처 연동이 설정되지 않았습니다.</p>
-        <p className="text-xs text-amber-800 leading-relaxed">
-          서버 환경변수 <code className="font-mono">LAW_GO_KR_OC</code>에 법제처 인증값을 넣어야 합니다.
-          {' '}
-          <a
-            href="https://open.law.go.kr"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="underline font-medium"
-          >
-            open.law.go.kr
-          </a>
-          에서 OPEN API를 신청해 발급받으세요.
-        </p>
-        <p className="text-xs text-amber-800 leading-relaxed">
-          인증값을 넣었는데도 법제처가 &ldquo;사용자 정보 검증에 실패&rdquo;로 거절하면, 법제처에 등록된
-          <b>서버 IP·도메인</b>에 이 서버가 들어 있는지 확인하세요.
-        </p>
-      </div>
-    );
-  }
+  // 인증값이 없으면 검색 자체가 불가능하다. 실패를 기다리게 하지 말고 미리 알린다 — 설정 안내는 통합 관리자에게만(T-212)
+  if (config?.configured === false) return <LawGoKrNotConfigured />;
 
   const total = result?.total ?? 0;
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));

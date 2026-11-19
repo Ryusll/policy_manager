@@ -23,6 +23,7 @@ import { toast } from '../stores/toastStore';
 import { useI18n } from '../i18n/useI18n';
 import { EmptyState } from './ui/EmptyState';
 import { LoadingBlock } from './ui/LoadingBlock';
+import LawGoKrNotConfigured from './LawGoKrNotConfigured';
 
 export default function RegisterLawModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
@@ -132,11 +133,8 @@ export default function RegisterLawModal({ onClose }: { onClose: () => void }) {
 
         {config?.configured === false ? (
           <div className="p-4">
-            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              {t('laws.register.notConfiguredLead')}
-              <code className="font-mono">LAW_GO_KR_OC</code>
-              {t('laws.register.notConfiguredTail')}
-            </p>
+            {/* 설정 안내(환경변수 이름 등)는 통합 관리자에게만 — 고객사에는 문의 안내(T-212) */}
+            <LawGoKrNotConfigured />
           </div>
         ) : (
           <>

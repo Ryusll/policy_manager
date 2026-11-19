@@ -445,8 +445,12 @@ export const messages: Record<Locale, Msg> = {
     'lawSearch.shortTitle': '약칭 {name}',
     'laws.register.title': '법령 등록',
     'laws.register.close': '닫기',
-    'laws.register.notConfiguredLead': '법제처 연동이 설정되지 않았습니다. 서버 환경변수 ',
-    'laws.register.notConfiguredTail': '가 필요합니다.',
+    // 법제처 연동이 없는 서버 — 설정 안내(op*)는 통합 관리자에게만, 고객사에는 문의 안내(T-212, components/LawGoKrNotConfigured)
+    'lawGoKr.notConfigured.title': '법제처 연동이 준비되지 않았습니다.',
+    'lawGoKr.notConfigured.customer': '법제처에서 법령을 찾아 쓰려면 연동이 필요합니다. 아스트룸에 문의하세요.',
+    'lawGoKr.notConfigured.opKey': '(통합 관리자 안내) 서버 환경변수에 법제처 OPEN API 인증값을 넣고 API 를 다시 띄우세요 — 변수 이름과 발급처:',
+    'lawGoKr.notConfigured.opAuth':
+      '인증값을 넣었는데도 법제처가 "사용자 정보 검증에 실패"로 거절하면, 법제처에 등록된 서버 IP·도메인에 이 서버가 들어 있는지 확인하세요.',
     'laws.register.placeholder': '법령명 검색 (예: 근로기준법)',
     'laws.register.search': '검색',
     'laws.register.searching': '검색 중…',
@@ -1093,8 +1097,11 @@ export const messages: Record<Locale, Msg> = {
     'lawSearch.shortTitle': 'Short title: {name}',
     'laws.register.title': 'Register a law',
     'laws.register.close': 'Close',
-    'laws.register.notConfiguredLead': 'The law.go.kr integration is not configured. Set the server environment variable ',
-    'laws.register.notConfiguredTail': '.',
+    'lawGoKr.notConfigured.title': 'The law.go.kr integration is not set up.',
+    'lawGoKr.notConfigured.customer': 'Finding laws on law.go.kr needs this integration. Please contact Astrum.',
+    'lawGoKr.notConfigured.opKey': '(Platform admin) Put the law.go.kr OPEN API key in the server environment and restart the API — variable and where to get the key:',
+    'lawGoKr.notConfigured.opAuth':
+      'If law.go.kr still rejects requests with "user verification failed", check that this server\'s IP/domain is registered with law.go.kr.',
     'laws.register.placeholder': 'Search by law name (e.g. 근로기준법)',
     'laws.register.search': 'Search',
     'laws.register.searching': 'Searching…',

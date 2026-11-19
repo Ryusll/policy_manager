@@ -51,12 +51,13 @@ export class LawGoKrService {
   private oc(): string {
     const oc = process.env.LAW_GO_KR_OC?.trim();
     if (!oc) {
-      // code — 화면이 '다시 눌러도 풀리지 않는 실패'를 가려 문의하라고 안내한다(T-210)
+      // code — 화면이 '다시 눌러도 풀리지 않는 실패'를 가려 문의하라고 안내한다(T-210).
+      // 문구에 환경변수 이름·설정 방법을 싣지 않는다 — 응답은 고객사 화면에도 그대로 나간다. 설정 안내는 통합 관리자 화면 몫(T-212, NFR-9)
       throw new ServiceUnavailableException({
         statusCode: 503,
         error: 'Service Unavailable',
         code: 'LAWGOKR_NOT_CONFIGURED',
-        message: '법제처 API 인증값(LAW_GO_KR_OC)이 설정되지 않았습니다. .env에 발급받은 인증값을 넣고 API를 재기동하세요.',
+        message: '법제처 연동이 준비되지 않았습니다. 아스트룸에 문의하세요.',
       });
     }
     return oc;
@@ -89,7 +90,8 @@ export class LawGoKrService {
       const reason = e?.name === 'AbortError' ? `응답 시간 초과(${this.timeoutMs}ms)` : e?.message || e;
       // URL에 OC가 들어 있으므로 절대 로그에 URL을 남기지 않는다.
       this.log.warn(`법제처 호출 실패 [${path}]: ${reason}`);
-      throw new BadGatewayException(`법제처 API 호출에 실패했습니다: ${reason}`);
+      // 원인(Node 오류 원문·제한 시간)은 로그에만 — 응답은 법령 등록 창 오류 줄에 그대로 나간다(T-212, NFR-9)
+      throw new BadGatewayException('법제처에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요.');
     } finally {
       clearTimeout(timer);
     }
@@ -97,7 +99,7 @@ export class LawGoKrService {
     if (body === undefined) body = await res.text();
     if (!res.ok) {
       this.log.warn(`법제처 응답 오류 [${path}] status=${res.status}`);
-      throw new BadGatewayException(`법제처 API가 오류를 반환했습니다 (HTTP ${res.status}).`);
+      throw new BadGatewayException('법제처가 오류로 답했습니다. 잠시 뒤 다시 시도하세요.');
     }
 
     let parsed: any;
@@ -106,7 +108,7 @@ export class LawGoKrService {
     } catch {
       // 인증값이 아예 틀리면 JSON 대신 HTML 오류 페이지가 오기도 한다.
       this.log.warn(`법제처 응답을 JSON으로 읽지 못했습니다 [${path}] (앞부분: ${body.slice(0, 80)})`);
-      throw new BadGatewayException('법제처 API 응답 형식이 올바르지 않습니다.');
+      throw new BadGatewayException('법제처 응답을 읽지 못했습니다. 잠시 뒤 다시 시도하세요.');
     }
 
     // 인증/IP 검증 실패: { result: '사용자 정보 검증에 실패하였습니다.', msg: '...IP주소 및 도메인주소를 등록...' }
@@ -117,9 +119,8 @@ export class LawGoKrService {
         statusCode: 503,
         error: 'Service Unavailable',
         code: 'LAWGOKR_AUTH',
-        message:
-          `법제처 API 인증에 실패했습니다: ${detail} ` +
-          '(인증값이 맞는지, 그리고 법제처에 등록된 서버 IP·도메인에 이 서버가 들어 있는지 확인하세요.)',
+        // 법제처의 거절 사유·등록 IP 안내는 위 로그에만 — 고객사 화면에 운영 안내를 싣지 않는다(T-212, NFR-9)
+        message: '법제처가 이 서버의 연결을 거절했습니다. 계속되면 아스트룸에 문의하세요.',
       });
     }
 
@@ -188,7 +189,7 @@ export class LawGoKrService {
     // 상자가 없거나 결과 코드가 성공('00')이 아니면 '0건'이 아니라 실패다 — 0건으로 읽어 캐시하면 10분 동안 없는 법령이 된다
     if (!box || (box.resultCode !== undefined && String(box.resultCode) !== '00')) {
       this.log.warn(`법제처 검색 응답이 올바르지 않습니다 (resultCode=${String(box?.resultCode ?? '없음')})`);
-      throw new BadGatewayException('법제처 API 응답 형식이 올바르지 않습니다.');
+      throw new BadGatewayException('법제처 응답을 읽지 못했습니다. 잠시 뒤 다시 시도하세요.');
     }
     const rows = LawGoKrService.toArray<LawGoKrSearchItem>(box.law);
     const total = Number(box.totalCnt ?? 0) || 0;
