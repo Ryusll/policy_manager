@@ -16,6 +16,7 @@ import {
   type CandidateChange,
   type VariableEntry,
 } from '../api/amendments';
+import { amendmentDetailQuery } from '../api/detailQueries';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import AmendmentDiffView from '../components/AmendmentDiffView';
 import { CorrectionHistoryLabel, CorrectionNotice, IssuedSourceLink, RejectionCorrectionPanel } from '../components/AmendmentCorrection';
@@ -46,11 +47,8 @@ export default function AmendmentDetailPage() {
   // 다른 후보로 옮기면(다시 만들기 등) 고른 변경을 푼다 — 번호가 그 후보의 다른 변경을 가리킨다
   useEffect(() => setSelected(null), [id]);
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['amendment', id],
-    queryFn: () => amendmentsApi.get(id!),
-    enabled: !!id && canReview,
-  });
+  // 경로 표시(Breadcrumbs)와 같은 키·함수 — 후보 이름을 거기서도 이 결과로 읽는다(T-212)
+  const { data, isLoading, isError } = useQuery({ ...amendmentDetailQuery(id ?? ''), enabled: !!id && canReview });
   const { data: history } = useQuery({
     queryKey: ['amendment', id, 'history'],
     queryFn: () => amendmentsApi.history(id!),

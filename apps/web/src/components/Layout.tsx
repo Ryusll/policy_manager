@@ -2,10 +2,10 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
-import { policiesApi } from '../api/policies';
 import { askApi } from '../api/ask';
-import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, ChevronRight, Shield, ScrollText, Scale, FileDiff, MessageCircleQuestion } from 'lucide-react';
+import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, Shield, ScrollText, Scale, FileDiff, MessageCircleQuestion } from 'lucide-react';
 import UserMenu from './UserMenu';
+import Breadcrumbs from './Breadcrumbs';
 import { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import PlanModal from './PlanModal';
@@ -134,32 +134,6 @@ export default function Layout() {
     navigate('/login');
   };
 
-  const pathSegments = location.pathname.split('/').filter(Boolean);
-  const hideGlobalBreadcrumb =
-    (pathSegments[0] === 'policies' && pathSegments.length >= 2) || pathSegments[0] === 'admin';
-  const policyIdInPath = useMemo(() => {
-    if (pathSegments[0] !== 'policies') return null;
-    return pathSegments[1] || null;
-  }, [pathSegments]);
-  const { data: policyForBreadcrumb } = useQuery({
-    queryKey: ['breadcrumb-policy-title', policyIdInPath],
-    queryFn: () => policiesApi.get(policyIdInPath!),
-    enabled: !!policyIdInPath,
-    staleTime: 60_000,
-  });
-  const breadcrumbMap: Record<string, string> = useMemo(
-    () => ({
-      policies: t('layout.nav.policies'),
-      search: t('layout.nav.search'),
-      ask: t('layout.nav.ask'),
-      variables: t('layout.nav.variables'),
-      settings: t('layout.nav.settings'),
-      integrations: t('layout.nav.integrations'),
-      about: t('layout.nav.about'),
-    }),
-    [t, locale],
-  );
-
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       {/* 상단 헤더 */}
@@ -265,27 +239,8 @@ export default function Layout() {
 
         {/* 메인 컨텐츠 */}
         <main className="flex-1 flex flex-col min-w-0">
-          {!hideGlobalBreadcrumb && pathSegments.length > 0 && (
-            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-2">
-              <div className="flex items-center gap-1 text-xs text-gray-500 max-w-6xl mx-auto">
-                <Link to="/" className="hover:text-navy-700 hover:underline">
-                  {t('layout.breadcrumb.home')}
-                </Link>
-                {pathSegments.map((seg, i) => {
-                  const isPolicyId = pathSegments[0] === 'policies' && i === 1;
-                  const label = isPolicyId
-                    ? policyForBreadcrumb?.title || t('layout.nav.policies')
-                    : breadcrumbMap[seg] || seg;
-                  return (
-                    <span key={i + '-' + seg} className="flex items-center gap-1 min-w-0">
-                      <ChevronRight size={12} className="shrink-0" />
-                      <span className="text-gray-700 truncate">{label}</span>
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          {/* 경로 표시 — 메뉴와 같은 이름, 상세는 대상 이름(T-212, lib/routeSections) */}
+          <Breadcrumbs />
 
           <div className="flex-1 p-4 sm:p-6">
             <Outlet />

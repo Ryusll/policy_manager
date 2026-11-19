@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
@@ -7,13 +7,14 @@ import { useI18n } from '../i18n/useI18n';
 import { clsx } from 'clsx';
 import { AppBrandLockup } from '../components/AppBrandLockup';
 import AppFooterBranding from '../components/AppFooterBranding';
+import { loginCopy, loginErrorKey } from '../lib/loginCopy';
 
 export default function LoginPage() {
   const { t, locale, setLocale } = useI18n();
   const navigate = useNavigate();
   const { setAuth } = useAuthStore();
   // 자동 로그인은 기본 꺼짐 — 여러 사람이 쓰는 PC 에서 다음 사람이 그대로 들어오지 않게(T-137)
-  const [form, setForm] = useState({ email: '', password: '', tenantSlug: 'demo', remember: false });
+  const [form, setForm] = useState({ email: '', password: '', tenantSlug: '', remember: false });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { data: signupOptions } = useQuery({
@@ -21,6 +22,14 @@ export default function LoginPage() {
     queryFn: authApi.options,
     staleTime: 5 * 60_000,
   });
+  // 가입이 닫힌 서버(운영)에는 demo·회원가입·시드 안내를 보이지 않는다 — 설정을 받기 전에도 닫힌 쪽(T-212)
+  const copy = loginCopy(signupOptions?.publicSignup);
+  const tenantTouched = useRef(false);
+  useEffect(() => {
+    // 가입이 열린 서버(개발·시험)만 기관 코드를 demo 로 채워 둔다 — 사용자가 이미 고쳤으면 두지 않는다
+    if (tenantTouched.current || !copy.defaultTenant) return;
+    setForm((f) => (f.tenantSlug ? f : { ...f, tenantSlug: copy.defaultTenant }));
+  }, [copy.defaultTenant]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,14 +45,8 @@ export default function LoginPage() {
         setError(t('login.passwordNotSet'));
         return;
       }
-      const apiMsg = err.response?.data?.message;
-      const raw =
-        typeof apiMsg === 'string' ? apiMsg : Array.isArray(apiMsg) ? String(apiMsg[0]) : '';
-      const mapped: Record<string, string> = {
-        'Tenant not found': t('login.tenantNotFound'),
-        'Invalid credentials': t('login.invalidCredentials'),
-      };
-      setError(mapped[raw] || raw || t('login.error'));
+      // 서버 문구(영어 원문)를 그대로 보이지 않고 화면 문구로 바꾼다(T-212, lib/loginCopy)
+      setError(t(loginErrorKey(copy, err.response?.status, err.response?.data?.message)));
     } finally {
       setLoading(false);
     }
@@ -100,12 +103,15 @@ export default function LoginPage() {
                 <input
                   type="text"
                   value={form.tenantSlug}
-                  onChange={(e) => setForm({ ...form, tenantSlug: e.target.value })}
+                  onChange={(e) => {
+                    tenantTouched.current = true;
+                    setForm({ ...form, tenantSlug: e.target.value });
+                  }}
                   className="input"
-                  placeholder="demo"
+                  placeholder={t(copy.tenantPlaceholderKey)}
                   required
                 />
-                <p className="text-xs text-gray-500 mt-1.5">{t('login.tenantHint')}</p>
+                <p className="text-xs text-gray-500 mt-1.5">{t(copy.tenantHintKey)}</p>
               </div>
 
               <div>
@@ -117,7 +123,7 @@ export default function LoginPage() {
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   className="input"
-                  placeholder="admin@demo.com"
+                  placeholder={t(copy.emailPlaceholderKey)}
                   required
                 />
               </div>

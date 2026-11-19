@@ -34,6 +34,7 @@ type Props = {
 
 /** 법령 변경 이벤트 목록 + 우리 회사 영향 수 (T-105) */
 export default function LawChangeList({ lawId, affectedOnlyDefault, expandable, initialOpenId, limit = 30 }: Props) {
+  const { t } = useI18n();
   const [affectedOnly, setAffectedOnly] = useState(affectedOnlyDefault);
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const openRef = useRef<HTMLLIElement | null>(null);
@@ -59,9 +60,8 @@ export default function LawChangeList({ lawId, affectedOnlyDefault, expandable, 
       {isError && <p className="text-xs text-red-700">변경 내역을 불러오지 못했습니다.</p>}
       {!isLoading && !isError && events.length === 0 && (
         <p className="text-xs text-gray-500">
-          {affectedOnly
-            ? '우리 회사 조문에 걸린 법령 변경이 없습니다. (확정된 연결만 셉니다)'
-            : '감지된 법령 변경이 없습니다.'}
+          {/* 영향은 확정 연결로만 센다(LAW-4a) — 그 사실은 남기고 개발 메모 같은 말투만 걷어 낸다(T-212) */}
+          {affectedOnly ? t('lawChanges.emptyAffected') : t('lawChanges.empty')}
         </p>
       )}
 

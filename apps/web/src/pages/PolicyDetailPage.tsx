@@ -3117,9 +3117,6 @@ export default function PolicyDetailPage() {
           <div className="flex items-center gap-2 min-w-0">
             <Layers size={16} className="text-slate-600 flex-shrink-0" aria-hidden />
             <span className="text-xs font-semibold text-slate-800">문서 도구</span>
-            <span className="text-[11px] text-slate-500 hidden sm:inline">
-              국가법령정보센터처럼 단계적으로 확장 중입니다.
-            </span>
           </div>
           {lawToolMsg ? (
             <span className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5">

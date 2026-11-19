@@ -6,6 +6,8 @@ import { authApi } from '../api/auth';
 import { useI18n } from '../i18n/useI18n';
 import { clsx } from 'clsx';
 import { AppBrandLockup } from '../components/AppBrandLockup';
+import { loginCopy } from '../lib/loginCopy';
+import { LoadingBlock } from '../components/ui/LoadingBlock';
 
 function normalizeSlug(raw: string) {
   return raw
@@ -28,7 +30,11 @@ export default function RegisterPage() {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { data: signupOptions } = useQuery({
+  const {
+    data: signupOptions,
+    isLoading: optionsLoading,
+    isError: optionsFailed,
+  } = useQuery({
     queryKey: ['auth-options'],
     queryFn: authApi.options,
     staleTime: 5 * 60_000,
@@ -60,13 +66,23 @@ export default function RegisterPage() {
     }
   };
 
-  // 고객사는 아스트룸이 개설한다 — 주소를 직접 쳐서 들어와도 가입 양식을 보이지 않는다(T-122)
-  if (signupOptions && !signupOptions.publicSignup) {
+  // 고객사는 아스트룸이 개설한다 — 주소를 직접 쳐서 들어와도 가입 양식을 보이지 않는다(T-122).
+  // 서버 설정을 받기 전에는 기다리고, 받지 못했으면 그렇다고 알린다 — 어느 쪽이든 가입 양식은 열린 서버에서만(T-212, lib/loginCopy)
+  if (optionsLoading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
+        <LoadingBlock />
+      </div>
+    );
+  }
+  if (!loginCopy(signupOptions?.publicSignup).open) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
         <div className="w-full max-w-md bg-white border border-gray-300 shadow-sm p-6 space-y-3 text-center">
           <h1 className="text-base font-semibold text-gray-800">{t('register.closedTitle')}</h1>
-          <p className="text-sm text-gray-600 leading-relaxed">{t('register.closedBody')}</p>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            {t(optionsFailed ? 'register.optionsError' : 'register.closedBody')}
+          </p>
           <Link to="/login" className="inline-block text-sm text-navy-700 font-medium hover:underline">
             {t('register.loginLink')}
           </Link>

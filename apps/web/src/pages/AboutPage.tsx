@@ -63,13 +63,8 @@ export default function AboutPage() {
 
       <section className="bg-navy-50 border border-navy-100 rounded p-5 space-y-2">
         <h2 className="text-sm font-semibold text-navy-800">{t('about.contact.title')}</h2>
+        {/* 예시 주소(example.com)를 고객 화면에 두지 않는다 — 실제 문의 주소가 정해지면 다시 단다(T-212) */}
         <p className="text-sm text-gray-700">{t('about.contact.body')}</p>
-        <a
-          href={'mailto:' + t('about.contactEmail')}
-          className="text-sm text-navy-700 font-medium hover:underline"
-        >
-          {t('about.contactEmail')}
-        </a>
       </section>
     </div>
   );

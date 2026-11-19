@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { lawsApi, type LawInForceArticle } from '../api/laws';
+import { lawDetailQuery } from '../api/detailQueries';
 import { InForceText, LawInForceHeader, ScheduledBadge } from '../components/LawInForce';
 import { lawLinksApi, RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { ConfirmBadge } from '../components/LawLinksPanel';
@@ -37,7 +38,8 @@ export default function LawDetailPage() {
   // 법령 목록의 "최근 법령 변경"에서 들어오면 그 변경을 펼친 채로 연다
   const changeId = searchParams.get('change');
 
-  const lawQuery = useQuery({ queryKey: ['laws', id], queryFn: () => lawsApi.get(id!), enabled: !!id });
+  // 경로 표시(Breadcrumbs)와 같은 키·함수 — 법령명을 거기서도 이 결과로 읽는다(T-212)
+  const lawQuery = useQuery({ ...lawDetailQuery(id ?? ''), enabled: !!id });
   // 조항 본문은 마지막 반영 판(시행 전일 수 있다)의 것이라, 지금 시행 중인 문구와 시행 예정 변경을 가른 것을 쓴다(T-150)
   const articlesQuery = useQuery({
     queryKey: ['laws', id, 'in-force'],
