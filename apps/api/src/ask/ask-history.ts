@@ -24,6 +24,7 @@ export const ASK_HISTORY_LIST_SELECT = {
   aiCalled: true,
   model: true,
   contextRowCount: true,
+  parentId: true,
 } as const;
 
 /** 다시 보기에 읽는 칸 */
@@ -49,6 +50,7 @@ interface ListRow extends OutcomeRow {
   id: string;
   question: string;
   createdAt: Date;
+  parentId: string | null;
 }
 
 interface DetailRow extends ListRow {
@@ -64,9 +66,19 @@ export interface AskHistoryItem {
   question: string;
   createdAt: string;
   outcome: AskOutcome;
+  /** 이어 물은 질문이면 앞 질문의 기록 id(T-220) — 앞 질문이 지워졌어도 남는다 */
+  parentId: string | null;
+}
+
+/** 이어 물은 앞 질문 — 보관 기간 안에 남아 있을 때만 */
+export interface AskParentQuestion {
+  id: string;
+  question: string;
 }
 
 export interface AskHistoryDetail extends AskHistoryItem {
+  /** 앞 질문(T-220) — 이어 물은 질문이 아니거나 앞 질문이 보관 기간을 넘겨 지워졌으면 null */
+  parent: AskParentQuestion | null;
   /** 물을 때 고른 범위 — 그때의 이름·코드 그대로, 비었으면 회사 전체에서 물었다(T-219). 목록에는 싣지 않는다 */
   scope: AskScopePolicy[];
   /** 물은 때의 근거를 남긴 기록인가 — T-218 전 기록이면 false 라 답 본문만 보인다 */
@@ -110,10 +122,11 @@ export function toHistoryItem(row: ListRow): AskHistoryItem {
     question: row.question,
     createdAt: row.createdAt.toISOString(),
     outcome: askOutcome(row),
+    parentId: row.parentId ?? null,
   };
 }
 
-export function toHistoryDetail(row: DetailRow): AskHistoryDetail {
+export function toHistoryDetail(row: DetailRow, parent: AskParentQuestion | null = null): AskHistoryDetail {
   const item = toHistoryItem(row);
   const snapshot = row.citations !== null && row.citations !== undefined;
   const consulted = list<AskResult['consulted'][number]>(row.consulted);
@@ -129,5 +142,5 @@ export function toHistoryDetail(row: DetailRow): AskHistoryDetail {
   } else if (isReason(item.outcome)) {
     result = { answerable: false, reason: item.outcome, blocks: [], citations: [], lawCitations: [], consulted };
   }
-  return { ...item, scope: scopeOf(row.scope), snapshot, result };
+  return { ...item, parent, scope: scopeOf(row.scope), snapshot, result };
 }

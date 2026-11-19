@@ -8,8 +8,8 @@ import { AI_QA_CONSENT_SELECT, aiQaNotice, aiQaState, assertAskAllowed, guardPro
 import { AskConsentService } from './ask-consent.service';
 import { answerStep, type AskCitation, type AskLawCitation } from './ask-answer';
 import { checkedScope, inForceRows, keywordGroups, type AskScopePolicy } from './ask-candidates';
+import { carriedKeys, checkedParent, mergeCandidates } from './ask-follow-up';
 import {
-  ASK_MAX_GROUPS,
   AnswerBlock,
   AskRow,
   JoGroup,
@@ -43,9 +43,12 @@ export interface AskResult {
   usage: { used: number; limit: number; userUsed: number; userLimit: number };
 }
 
-/** 질문 응답 — 답과 함께 물을 때 고른 범위(그때의 이름·코드, 비었으면 회사 전체, T-219) */
+/** 질문 응답 — 답과 함께 물을 때 고른 범위(그때의 이름·코드, 비었으면 회사 전체, T-219), 기록 id 와 이어 물은 앞 질문(T-220) */
 export interface AskResponse extends AskResult {
   scope: AskScopePolicy[];
+  /** 이 질문의 기록 — 다음 질문이 이어 물을 때 parentId 로 보낸다 */
+  id: string;
+  parentId: string | null;
 }
 
 /**
@@ -142,9 +145,15 @@ export class AskService {
    * 끊긴 질문은 한도에 세지 않았다(비용은 나간다). 또 확인과 기록 사이가 떨어져 있어 동시에 들어온 질문이
    * 함께 한도를 넘을 수 있었다. 이제 회사 단위 잠금 아래에서 세고 "예약" 행을 먼저 남긴다 — AI 를 부르기
    * 전에 끝난 질문(시행 중인 규정이 없을 때, 그사이 관리자가 껐을 때 등)만 나중에 돌려준다.
-   * 확인 차례는 켜짐·고지(403) → 질문 범위(400, T-219) → 한도(429)이고, 어디서 막히든 기록 행은 남지 않는다.
+   * 확인 차례는 켜짐·고지(403) → 질문 범위(400, T-219) → 이어 물을 앞 질문(400, T-220) → 한도(429)이고, 어디서 막히든 기록 행은 남지 않는다.
    */
-  private async reserve(tenantId: string, userId: string | null, question: string, policyIds: string[] | undefined) {
+  private async reserve(
+    tenantId: string,
+    userId: string | null,
+    question: string,
+    policyIds: string[] | undefined,
+    parentId: string | undefined,
+  ) {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai_qa:${tenantId}`}))`;
       // 켜짐은 한도와 같은 트랜잭션에서 본다 — 꺼진 회사는 기록 행도 남기지 않는다
@@ -152,6 +161,7 @@ export class AskService {
       if (!tenant) throw new NotFoundException('Tenant not found');
       assertAskAllowed(aiQaState(tenant));
       const scope = await checkedScope(tx, tenantId, policyIds);
+      const parent = await checkedParent(tx, tenantId, userId, parentId);
       const { used, userUsed } = await this.usedThisMonth(tx, tenantId, userId);
       if (used >= this.monthlyLimit) {
         throw new HttpException(
@@ -182,10 +192,11 @@ export class AskService {
           aiCalled: true,
           citedArticleIds: [],
           scope: (scope ?? []) as unknown as Prisma.InputJsonValue,
+          parentId: parent?.id ?? null,
         },
         select: { id: true },
       });
-      return { id: row.id, used: used + 1, userUsed: userUsed + (userId ? 1 : 0), scope };
+      return { id: row.id, used: used + 1, userUsed: userUsed + (userId ? 1 : 0), scope, parent };
     });
   }
 
@@ -232,15 +243,15 @@ export class AskService {
     });
   }
 
-  async ask(tenantId: string, userId: string | null, rawQuestion: string, policyIds?: string[]): Promise<AskResponse> {
+  async ask(tenantId: string, userId: string | null, rawQuestion: string, policyIds?: string[], parentId?: string): Promise<AskResponse> {
     const question = rawQuestion.trim();
     const provider = this.provider;
     if (!provider) {
       throw new ServiceUnavailableException('규정 질문은 아직 준비 중입니다. 쓰려면 아스트룸에 문의하세요.');
     }
     // 범위(T-219)는 예약 안에서 한도에 세기 전에 본다 — 잘못 고른 질문은 기록도 한도 차감도 없다
-    const slot = await this.reserve(tenantId, userId, question, policyIds);
-    const withScope = (result: AskResult): AskResponse => ({ ...result, scope: slot.scope ?? [] });
+    const slot = await this.reserve(tenantId, userId, question, policyIds, parentId);
+    const withScope = (result: AskResult): AskResponse => ({ ...result, scope: slot.scope ?? [], id: slot.id, parentId: slot.parent?.id ?? null });
     // 예약 뒤에도 외부로 보내기 직전마다 회사 상태를 다시 본다 — 그사이 관리자가 끄면 보내지 않는다(T-146)
     const guard = guardProvider(provider, async () => {
       const latest = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: AI_QA_CONSENT_SELECT });
@@ -255,7 +266,8 @@ export class AskService {
     });
     try {
       const scopeIds = slot.scope?.map((p) => p.id) ?? null;
-      return withScope(await this.answerQuestion(guard.provider, tenantId, slot.id, question, usages, usage, scopeIds));
+      const carry = slot.parent?.articleIds ?? [];
+      return withScope(await this.answerQuestion(guard.provider, tenantId, slot.id, question, usages, usage, scopeIds, carry));
     } catch (e) {
       const extra = usageOf(e);
       if (extra) usages.push(extra);
@@ -279,8 +291,9 @@ export class AskService {
     usages: AiUsage[],
     usage: (aiCalled: boolean) => AskResult['usage'],
     scope: string[] | null,
+    carryArticleIds: string[],
   ): Promise<AskResult> {
-    // ① 근거 후보 — 목차에서 AI 가 고른 조 + 질문 낱말이 든 조
+    // ① 근거 후보 — 목차에서 AI 가 고른 조 + 이어 물은 앞 답의 근거 조(T-220) + 질문 낱말이 든 조
     const rows = await inForceRows(this.prisma, tenantId, scope);
     const groups = groupRows(rows);
     if (!groups.length) {
@@ -297,11 +310,7 @@ export class AskService {
     const selectedKeys = sel.keys.map((k) => byTocKey.get(k.trim())).filter((k): k is string => !!k);
     const liveKeys = new Set(groups.map((g) => g.key));
     const keywordKeys = await keywordGroups(this.prisma, tenantId, questionKeywords(question), liveKeys, scope);
-    const chosen: string[] = [];
-    for (const k of [...selectedKeys.slice(0, 10), ...keywordKeys]) {
-      if (!chosen.includes(k)) chosen.push(k);
-      if (chosen.length >= ASK_MAX_GROUPS) break;
-    }
+    const chosen = mergeCandidates(carriedKeys(carryArticleIds, rows, liveKeys), selectedKeys, keywordKeys);
     if (!chosen.length) {
       await this.finish(logId, { aiCalled: true, usages, reason: 'no_candidates' });
       return { answerable: false, reason: 'no_candidates', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(true) };

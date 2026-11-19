@@ -69,6 +69,10 @@ export class AskHistoryService {
         message: '지난 질문을 찾을 수 없습니다. 보관 기간(90일)이 지났을 수 있습니다.',
       });
     }
-    return toHistoryDetail(row);
+    // 이어 물은 질문이면 앞 질문(T-220) — 본인 것·보관 기간 안에 남아 있을 때만
+    const parent = row.parentId
+      ? await this.prisma.aiQaLog.findFirst({ where: { ...this.mine(tenantId, userId), id: row.parentId }, select: { id: true, question: true } })
+      : null;
+    return toHistoryDetail(row, parent);
   }
 }

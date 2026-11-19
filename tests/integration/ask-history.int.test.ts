@@ -103,8 +103,8 @@ describe('내 지난 질문 (T-218)', () => {
     // 답하지 못한 결과도 물은 때 받은 것과 같다(답 본문·근거는 그때도 비어 있었다)
     const nb = await item(asker, ids.noBasis);
     expect(nb.body).toMatchObject({ outcome: 'no_basis', snapshot: true });
-    // 고른 범위(T-219)는 결과 안이 아니라 다시 보기의 맨 위 칸이다
-    expect(nb.body.result).toEqual({ ...noBasis.body, usage: undefined, scope: undefined });
+    // 범위(T-219)·기록 id·앞 질문(T-220)은 결과 안이 아니라 응답·다시 보기의 맨 위 칸이다
+    expect(nb.body.result).toEqual({ ...noBasis.body, usage: undefined, scope: undefined, id: undefined, parentId: undefined });
     expect(nb.body.scope).toEqual(noBasis.body.scope);
     expect(nb.body.result.consulted.map((c: any) => c.label)).toContain('제2조(경조금)');
   });

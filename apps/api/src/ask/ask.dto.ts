@@ -33,6 +33,13 @@ export class AskDto {
   @ArrayUnique({ message: '같은 규정을 두 번 고를 수 없습니다.' })
   @IsUUID('4', { each: true, message: '규정 범위는 규정 id 여야 합니다.' })
   policyIds?: string[];
+
+  @ApiPropertyOptional({
+    description: '이어 물을 앞 질문의 기록 id(앞 응답의 id) — 그 답의 근거 조문을 이번 후보로 이어받는다(T-220). 본인의, 답을 냈고 근거(회사 조문)를 남긴 기록만',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: '앞 질문은 기록 id 여야 합니다.' })
+  parentId?: string;
 }
 
 export class AskSettingsDto {

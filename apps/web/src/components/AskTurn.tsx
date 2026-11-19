@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { MessageCircleQuestion } from 'lucide-react';
+import { CornerDownRight, MessageCircleQuestion } from 'lucide-react';
 import type { AskAnswerResult, AskScopePolicy } from '../api/ask';
 import { AskAnswer } from './AskAnswer';
 import { AskScopeLine } from './AskScopeLine';
@@ -15,12 +15,15 @@ export function AskTurnView({
   result,
   canOpenLaws,
   scope = [],
+  followUp = false,
 }: {
   question: string;
   result: AskAnswerResult;
   canOpenLaws: boolean;
   /** 물을 때 고른 범위(T-219) — 비었으면 회사 전체라 따로 적지 않는다 */
   scope?: AskScopePolicy[];
+  /** 앞 질문의 답에 이어 물은 질문인가(T-220) */
+  followUp?: boolean;
 }) {
   const { t } = useI18n();
   // 범위를 골라 물었는데 그 안에 시행 중 조문이 없으면 '회사에 규정이 없다'가 아니라 범위를 넓히라고 한다
@@ -28,6 +31,11 @@ export function AskTurnView({
     result.reason === 'no_regulations' && scope.length ? 'ask.reason.no_regulations_scope' : `ask.reason.${result.reason ?? 'no_basis'}`;
   return (
     <div className="card p-5 space-y-4" data-testid="ask-turn">
+      {followUp && (
+        <p className="flex items-center gap-1 text-[11px] text-navy-600" data-testid="ask-turn-follow-up">
+          <CornerDownRight size={11} /> {t('ask.followUp.marker')}
+        </p>
+      )}
       <div className="flex items-start gap-2">
         <MessageCircleQuestion size={18} className="mt-0.5 shrink-0 text-gray-400" />
         <p className="text-sm font-medium text-gray-900 whitespace-pre-wrap">{question}</p>

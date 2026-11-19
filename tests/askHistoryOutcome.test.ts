@@ -20,6 +20,7 @@ const base = {
   lawCitations: null as unknown,
   consulted: null as unknown,
   scope: [] as unknown,
+  parentId: null as string | null,
 };
 
 describe('결과 종류 (T-218)', () => {
@@ -55,13 +56,21 @@ describe('목록·다시 보기로 바꾸기 (T-218)', () => {
   const citation = { ref: 'R1', articleId: 'a1', policyId: 'p1', policyTitle: '복리후생규정', label: '제2조', content: '경조금 50만원' };
   const consulted = [{ policyId: 'p1', policyTitle: '복리후생규정', number: 2, branchNumber: null, label: '제2조(경조금)' }];
 
-  it('목록에는 id·질문·시각·결과 종류만 — 범위는 다시 보기에만 싣는다 (T-219)', () => {
+  it('목록에는 id·질문·시각·결과 종류와 앞 질문 id 만 — 범위는 다시 보기에만 싣는다 (T-219·T-220)', () => {
     expect(toHistoryItem({ ...base, answerable: true, scope: [{ id: 'p1', title: 'x', code: 'y' }] })).toEqual({
       id: base.id,
       question: base.question,
       createdAt: '2026-11-19T01:02:03.000Z',
       outcome: 'answered',
+      parentId: null,
     });
+    expect(toHistoryItem({ ...base, parentId: 'p-1' }).parentId).toBe('p-1');
+  });
+
+  it('다시 보기의 앞 질문 — 넘겨받은 것만, 없으면 null (T-220)', () => {
+    expect(toHistoryDetail({ ...base, parentId: 'p-1' }, { id: 'p-1', question: '경조휴가는?' }).parent).toEqual({ id: 'p-1', question: '경조휴가는?' });
+    const gone = toHistoryDetail({ ...base, parentId: 'p-1' });
+    expect([gone.parentId, gone.parent]).toEqual(['p-1', null]);
   });
 
   it('범위는 기록에 남긴 물은 때의 이름·코드 그대로 — 모양이 맞지 않는 것은 뺀다 (T-219)', () => {

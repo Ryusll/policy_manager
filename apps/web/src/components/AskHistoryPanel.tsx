@@ -14,10 +14,12 @@ interface PanelProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  /** 답을 기다리는 동안 '새 질문'을 잠근다(T-220) — 답이 오면 비운 화면에 다시 생기므로 */
+  newDisabled?: boolean;
 }
 
 /** 질문 화면 왼쪽 칸 — 넓은 화면에서는 늘 보이고, 좁은 화면에서는 단추로 열고 고르면 닫는다 */
-export function AskHistoryAside({ selectedId, onSelect, onNew }: PanelProps) {
+export function AskHistoryAside({ selectedId, onSelect, onNew, newDisabled }: PanelProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
@@ -34,6 +36,7 @@ export function AskHistoryAside({ selectedId, onSelect, onNew }: PanelProps) {
       <div className={clsx(open ? 'mt-3 block' : 'hidden', 'lg:mt-0 lg:block')}>
         <AskHistoryPanel
           selectedId={selectedId}
+          newDisabled={newDisabled}
           onSelect={(id) => {
             onSelect(id);
             setOpen(false);
@@ -52,7 +55,7 @@ export function AskHistoryAside({ selectedId, onSelect, onNew }: PanelProps) {
  * 질문 화면 왼쪽의 내 지난 질문(T-218, SRS SEARCH-10). 본인 것만, 보관 기간(90일) 안, 최신순으로 기간별로 묶는다.
  * 답하지 못한 질문은 그 사실을 함께 보인다. 고르면 그때의 답을 다시 본다(AI 를 부르지 않아 한도에 세지 않는다).
  */
-export function AskHistoryPanel({ selectedId, onSelect, onNew }: PanelProps) {
+export function AskHistoryPanel({ selectedId, onSelect, onNew, newDisabled = false }: PanelProps) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
   const query = useInfiniteQuery({
@@ -72,7 +75,13 @@ export function AskHistoryPanel({ selectedId, onSelect, onNew }: PanelProps) {
 
   return (
     <nav className="space-y-3" aria-label={t('ask.history.title')} data-testid="ask-history">
-      <button type="button" className="btn-secondary w-full justify-center text-sm" onClick={onNew} data-testid="ask-history-new">
+      <button
+        type="button"
+        className="btn-secondary w-full justify-center text-sm"
+        onClick={onNew}
+        disabled={newDisabled}
+        data-testid="ask-history-new"
+      >
         <SquarePen size={14} /> {t('ask.history.new')}
       </button>
       <p className="px-1 text-xs font-semibold text-gray-500">{t('ask.history.title')}</p>
@@ -109,7 +118,14 @@ export function AskHistoryPanel({ selectedId, onSelect, onNew }: PanelProps) {
                   )}
                   onClick={() => onSelect(item.id)}
                 >
-                  <span className="block truncate">{item.question}</span>
+                  <span className="block truncate">
+                    {item.parentId && (
+                      <span className="mr-1 text-[11px] text-navy-600" data-testid="ask-history-follow-up-mark">
+                        {t('ask.followUp.marker')} ·
+                      </span>
+                    )}
+                    {item.question}
+                  </span>
                   {item.outcome !== 'answered' && (
                     <span className="block text-[11px] text-amber-700" data-testid="ask-history-outcome">
                       {t(`ask.history.outcome.${item.outcome}`)}

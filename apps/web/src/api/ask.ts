@@ -103,6 +103,9 @@ export type AskAnswerResult = Omit<AskResult, 'usage'>;
 /** 질문 응답 — 답과 물을 때 고른 범위(그때의 이름·코드, 비었으면 회사 전체, T-219) */
 export interface AskResponse extends AskResult {
   scope: AskScopePolicy[];
+  /** 이 질문의 기록 — 이어 물을 때 다음 질문의 parentId(T-220) */
+  id: string;
+  parentId: string | null;
 }
 
 /** 지난 질문의 결과 종류(T-218). failed 는 오류로 답을 받지 못함, unfinished 는 처리 중이었거나 도중에 끊김 */
@@ -120,6 +123,8 @@ export interface AskHistoryItem {
   question: string;
   createdAt: string;
   outcome: AskOutcome;
+  /** 이어 물은 질문이면 앞 질문의 기록 id(T-220) */
+  parentId: string | null;
 }
 
 export interface AskHistoryPage {
@@ -131,6 +136,8 @@ export interface AskHistoryPage {
 export interface AskHistoryDetail extends AskHistoryItem {
   /** 물을 때 고른 범위(T-219) — 그때의 이름·코드 그대로, 비었으면 회사 전체에서 물었다 */
   scope: AskScopePolicy[];
+  /** 앞 질문(T-220) — 이어 물은 질문이 아니거나 앞 질문이 보관 기간을 넘겨 지워졌으면 null */
+  parent: { id: string; question: string } | null;
   /** 물은 때의 근거를 남긴 기록인가 — 아니면 답 본문만 있다 */
   snapshot: boolean;
   /** 질문 화면과 같은 모양의 답. 오류·처리 중이던 질문은 null */
@@ -143,9 +150,14 @@ export const askApi = {
   history: (cursor?: string | null): Promise<AskHistoryPage> =>
     client.get('/ask/history', { params: cursor ? { cursor } : {} }).then((r) => r.data),
   historyItem: (id: string): Promise<AskHistoryDetail> => client.get(`/ask/history/${id}`).then((r) => r.data),
-  /** policyIds(T-219) — 고른 규정 안에서만 찾는다. 비우면 회사 전체 */
-  ask: (question: string, policyIds: string[] = []): Promise<AskResponse> =>
-    client.post('/ask', { question, ...(policyIds.length ? { policyIds } : {}) }).then((r) => r.data),
+  /**
+   * policyIds(T-219) — 고른 규정 안에서만 찾는다. 비우면 회사 전체.
+   * parentId(T-220) — 앞 질문의 답에 이어 묻는다(그 답의 근거 조문을 이어받는다).
+   */
+  ask: (question: string, policyIds: string[] = [], parentId?: string | null): Promise<AskResponse> =>
+    client
+      .post('/ask', { question, ...(policyIds.length ? { policyIds } : {}), ...(parentId ? { parentId } : {}) })
+      .then((r) => r.data),
   /** 켤 때는 관리자가 확인한 고지 판을 함께 보낸다 — 지금 판이 아니면 400 AI_QA_NOTICE_REQUIRED */
   setEnabled: (enabled: boolean, noticeVersion?: number): Promise<AskStatus> =>
     client.patch('/ask/settings', { enabled, ...(noticeVersion ? { noticeVersion } : {}) }).then((r) => r.data),

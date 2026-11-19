@@ -1415,6 +1415,8 @@ model AiQaLog {
   consulted        Json?
   /// 묻는 사람이 고른 질문 범위 — 물은 때의 규정 [{ id, title, code }], 비었으면 회사 전체(T-219, SRS SEARCH-11). 지난 질문에 그대로 보인다
   scope            Json     @default("[]")
+  /// 이어 물은 앞 질문의 기록 id(T-220, SRS SEARCH-12) — 그 답의 근거 조문을 이어받았다. 파기는 행마다라 앞 질문이 먼저 지워질 수 있어 FK 를 두지 않는다
+  parentId         String?  @map("parent_id")
   createdAt        DateTime @default(now()) @map("created_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

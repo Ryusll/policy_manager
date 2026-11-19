@@ -745,6 +745,14 @@ export const messages: Record<Locale, Msg> = {
     'ask.scope.loading': '규정 목록을 불러오는 중입니다.',
     'ask.scope.loadError': '규정 목록을 불러오지 못했습니다.',
     'ask.reason.no_regulations_scope': '고른 규정에 지금 시행 중인 조문이 없어 답할 수 없습니다. 범위를 넓혀 다시 물어 보세요.',
+    // T-220: 이어서 묻기(SEARCH-12)
+    'ask.followUp.chip': '이어서 묻기: {question}',
+    'ask.followUp.clear': '이어서 묻지 않기',
+    'ask.followUp.invalid': '이어서 물을 앞 질문을 찾을 수 없습니다. 새 질문으로 물어 주세요.',
+    'ask.followUp.button': '이 답에 이어서 묻기',
+    'ask.followUp.marker': '이어서 물음',
+    'ask.followUp.parent': '앞 질문: {question}',
+    'ask.followUp.parentGone': '앞 질문은 보관 기간이 지나 볼 수 없습니다.',
   },
   en: {
     ...dashboardMessages.en,
@@ -1469,5 +1477,12 @@ export const messages: Record<Locale, Msg> = {
     'ask.scope.loading': 'Loading regulations…',
     'ask.scope.loadError': 'Could not load the regulations.',
     'ask.reason.no_regulations_scope': 'The regulations you picked have no article in force, so there is nothing to answer from. Widen the scope and ask again.',
+    'ask.followUp.chip': 'Following up: {question}',
+    'ask.followUp.clear': "Don't follow up",
+    'ask.followUp.invalid': 'The earlier question to follow up on is no longer available. Please ask as a new question.',
+    'ask.followUp.button': 'Follow up on this answer',
+    'ask.followUp.marker': 'Follow-up',
+    'ask.followUp.parent': 'Earlier question: {question}',
+    'ask.followUp.parentGone': 'The earlier question is past the retention period and can no longer be viewed.',
   },
 };

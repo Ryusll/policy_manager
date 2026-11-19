@@ -125,6 +125,7 @@ describe('질문 화면의 문구는 사전에 있다 (T-217)', () => {
     'apps/web/src/components/AskScopePicker.tsx',
     'apps/web/src/components/AskHeaderActions.tsx',
     'apps/web/src/components/AskScopeLine.tsx',
+    'apps/web/src/components/AskFollowUpChip.tsx',
   ];
   const read = (rel: string) => readFileSync(join(__dirname, '..', rel), 'utf8');
   const withoutComments = (code: string) => code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');

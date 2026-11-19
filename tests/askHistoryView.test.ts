@@ -40,16 +40,22 @@ const detail = (snapshot: boolean) => ({
   },
 });
 
-function renderWith(client: QueryClient) {
+type ViewProps = Partial<Parameters<typeof AskHistoryView>[0]>;
+
+function renderWith(client: QueryClient, props: ViewProps = {}) {
   return renderToStaticMarkup(
-    createElement(QueryClientProvider, { client }, createElement(MemoryRouter, null, createElement(AskHistoryView, { id: 'h-1', canOpenLaws: false }))),
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(MemoryRouter, null, createElement(AskHistoryView, { id: 'h-1', canOpenLaws: false, ...props })),
+    ),
   );
 }
 
-function render(data: unknown) {
+function render(data: unknown, props: ViewProps = {}) {
   const client = new QueryClient();
   client.setQueryData([...ASK_HISTORY_KEY, 'h-1'], data);
-  return renderWith(client);
+  return renderWith(client, props);
 }
 
 /** 불러오기에 실패한 상태로 그린다 — 다시 부르지 않게(retryOnMount 끔) 해 오류 화면 그대로 본다 */
@@ -105,6 +111,26 @@ describe('지난 질문 다시 보기 화면 (T-218)', () => {
       expect(html).toContain('data-testid="ask-turn-scope"');
       expect(html).toContain('FN-01 여비 규정');
     }
+  });
+
+  it('이어 물은 질문은 앞 질문 줄과 표시, 앞 질문이 지워졌으면 그렇다고 (T-220)', () => {
+    const withParent = render({ ...detail(true), parentId: 'p-0', parent: { id: 'p-0', question: '경조휴가는 며칠인가요?' } });
+    expect(withParent).toContain('앞 질문: 경조휴가는 며칠인가요?');
+    expect(withParent).toContain('data-testid="ask-turn-follow-up"');
+    expect(render({ ...detail(true), parentId: 'p-0', parent: null })).toContain('앞 질문은 보관 기간이 지나 볼 수 없습니다.');
+    const plain = render({ ...detail(true), parentId: null, parent: null });
+    expect(plain).not.toContain('ask-history-parent');
+    expect(plain).not.toContain('ask-turn-follow-up');
+  });
+
+  it('답을 냈고 근거를 남긴 기록에만 이어서 묻기 단추 — 보내는 중이면 잠근다 (T-220)', () => {
+    const onFollowUp = () => {};
+    expect(render(detail(true), { onFollowUp })).toMatch(/<button[^>]*data-testid="ask-history-follow-up"/);
+    expect(render(detail(true), { onFollowUp, followUpDisabled: true })).toMatch(/<button[^>]*disabled=""[^>]*data-testid="ask-history-follow-up"/);
+    // 근거를 남기기 전 옛 기록·답을 받지 못한 기록·단추를 넘기지 않은 화면에는 없다
+    expect(render(detail(false), { onFollowUp })).not.toContain('ask-history-follow-up');
+    expect(render({ ...detail(true), outcome: 'failed', result: null }, { onFollowUp })).not.toContain('ask-history-follow-up');
+    expect(render(detail(true))).not.toContain('ask-history-follow-up');
   });
 
   it('답을 받지 못한 질문: 질문과 그 사실만', () => {
