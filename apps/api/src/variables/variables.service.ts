@@ -537,7 +537,7 @@ export class VariablesService {
     if (failures.length) {
       throw new BadRequestException(
         `${toDateOnlyString(date)} 기준으로 값을 정할 수 없는 변수 표식이 있습니다 — ${[...new Set(failures)].join(', ')}. ` +
-          '변수 관리에서 값과 유효기간을 확인하세요.',
+          '관리 > 공통 기준값에서 값과 유효기간을 확인하세요.',
       );
     }
     const replaced = replaceSpans(

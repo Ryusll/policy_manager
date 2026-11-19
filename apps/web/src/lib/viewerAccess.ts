@@ -1,7 +1,8 @@
 /**
  * 화면 경로 접근 판정 — 한 곳에 둔다(SRS AUTH-4, T-172).
  *
- * 주소로 들어갈 수 있는 것(`App.tsx` 의 `PrivateRoute`), 메뉴에 보이는 것(`Layout`), 화면 안 바로가기(규정 질문 답의
+ * 주소로 들어갈 수 있는 것(`App.tsx` 의 `PrivateRoute`), 메뉴에 보이는 것(`lib/routeSections` 의 navItemsFor — PrivateRoute 와 같은
+ * privateRouteRedirect 를 부른다, T-214), 화면 안 바로가기(규정 질문 답의
  * 법령 링크)가 이 파일의 함수를 함께 부른다. 두 벌로 두었다가 '규정 질문'이 메뉴에는 보이는데 누르면 통합검색으로
  * 되돌아갔다(T-172). 화면에서 가리는 것은 권한이 아니다 — 권한은 서버가 따로 막는다.
  *

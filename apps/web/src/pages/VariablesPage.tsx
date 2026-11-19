@@ -7,7 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 import VariableValuesPanel from '../components/VariableValuesPanel';
 
 /**
- * 변수 관리 — 여러 조문에 함께 쓰는 가변 항목(담당 부서·직위·기준값 등)과 그 값의 유효기간 (T-109, 특허 도 9).
+ * 공통 기준값(변수 — 화면 이름은 T-214 에서 바꿨다) — 여러 조문에 함께 쓰는 가변 항목(담당 부서·직위·기준값 등)과 그 값의 유효기간 (T-109, 특허 도 9).
  * 행을 펼치면 값별 유효기간과 이 변수가 걸린 조문(지금 시행 중인 본문의 위치)이 보인다.
  */
 export default function VariablesPage() {

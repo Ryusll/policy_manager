@@ -19,6 +19,7 @@ import {
   routerPath,
   viewerCanOpen,
 } from '../apps/web/src/lib/viewerAccess';
+import { ROUTE_SECTIONS, navItemsFor } from '../apps/web/src/lib/routeSections';
 
 const src = (rel: string) => readFileSync(join(__dirname, '..', rel), 'utf8');
 
@@ -129,16 +130,14 @@ describe('라우트 표와 허용 목록이 맞는다 (T-172)', () => {
   });
 
   it('상단 메뉴 가운데 열람자에게 남는 것은 통합검색과 규정 질문뿐이다', () => {
-    // 메뉴 정의(navDefs)의 경로를 소스에서 그대로 읽는다 — 베껴 둔 목록은 메뉴가 바뀌면 어긋난다
-    const layout = src('apps/web/src/components/Layout.tsx');
-    const start = layout.indexOf('const navDefs = [');
-    const end = layout.indexOf('] as const;', start);
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    const paths = [...layout.slice(start, end).matchAll(/path: '([^']+)'/g)].map((m) => m[1]);
+    // 메뉴는 경로 표(ROUTE_SECTIONS 의 nav 칸)에서 나온다(T-214) — 베껴 둔 목록은 메뉴가 바뀌면 어긋난다
+    const paths = ROUTE_SECTIONS.filter((s) => s.nav).map((s) => (s.segment ? `/${s.segment}` : '/'));
     expect(paths.length).toBeGreaterThanOrEqual(10);
     expect(paths.filter((p) => roleCanOpen('viewer', p))).toEqual(['/search', '/ask']);
     expect(paths.filter((p) => roleCanOpen('editor', p))).toEqual(paths);
+    // 실제 메뉴 함수도 — 모든 노출 조건을 켠 열람자에게 남는 것은 둘뿐이다
+    const viewer = navItemsFor({ role: 'viewer', platformRole: 'global_admin', canUseApi: true, askConfigured: true, askEnabled: true });
+    expect([...viewer.main, ...viewer.admin].map((i) => i.path)).toEqual(['/search', '/ask']);
   });
 });
 
@@ -151,10 +150,15 @@ describe('경로·메뉴·바로가기가 같은 판정을 부른다 (T-172)', (
     expect(app).not.toMatch(/role === 'viewer'/);
   });
 
-  it('상단 메뉴의 역할 필터는 roleCanOpen 을 부른다', () => {
-    const layout = src('apps/web/src/components/Layout.tsx');
-    expect(layout).toContain('.filter((item) => roleCanOpen(user?.role, item.path))');
-    expect(layout).not.toMatch(/item\.path === '\/search'/);
+  it('상단 메뉴의 역할 필터는 PrivateRoute 와 같은 판정을 부른다', () => {
+    // 메뉴 항목은 경로 표의 navItemsFor 가 PrivateRoute 의 privateRouteRedirect 로 거른다(T-214) — 메뉴를 그리는 곳은 역할을 따로 판정하지 않는다
+    expect(src('apps/web/src/lib/routeSections.ts')).toContain('if (privateRouteRedirect({ role: c.role, platformRole: c.platformRole }, path) !== null) return [];');
+    const nav = src('apps/web/src/components/TopNav.tsx');
+    expect(nav).toContain('const { main, admin } = navItemsFor(ctx);');
+    for (const file of ['apps/web/src/components/TopNav.tsx', 'apps/web/src/components/Layout.tsx']) {
+      const text = src(file);
+      expect(text, file).not.toMatch(/item\.path === '\/search'|role === 'viewer'|roleCanOpen\(/);
+    }
   });
 
   it('규정 질문 답을 그리면 열람자에게는 법령 링크가 없고 편집자에게는 있다', () => {

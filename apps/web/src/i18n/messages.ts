@@ -15,12 +15,16 @@ export const messages: Record<Locale, Msg> = {
     'layout.nav.amendments': '개정 검토',
     'layout.nav.search': '통합검색',
     'layout.nav.ask': '규정 질문',
-    'layout.nav.variables': '변수 관리',
+    'layout.nav.variables': '공통 기준값',
     'layout.nav.settings': '설정',
     'layout.nav.integrations': 'API 연동',
     'layout.nav.auditLogs': '감사 로그',
     'layout.nav.about': '회사 소개',
     'layout.nav.admin': '통합 관리',
+    // 상단 메뉴(T-214) — 회사 단위 관리 화면을 모은 묶음과 메뉴 영역 이름(화면 읽기 프로그램용)
+    'layout.nav.adminGroup': '관리',
+    'layout.nav.label': '주 메뉴',
+    'layout.nav.currentGroup': '(지금 화면이 이 묶음 안에 있음)',
     'layout.langLabel': '언어',
     'dashboard.quickSearch': '통합검색으로 이동',
     'dashboard.continueWork': '이어서 작업',
@@ -177,8 +181,9 @@ export const messages: Record<Locale, Msg> = {
     'search.chapter': '제{ch}장',
     'search.article': '제{a}조',
 
-    'variables.title': '변수 관리',
-    'variables.subtitle': '규정 내용에서 사용되는 템플릿 변수를 관리합니다.',
+    'variables.title': '공통 기준값',
+    'variables.subtitle':
+      '회사명·대표이사명처럼 여러 규정에 함께 쓰는 값(변수)을 관리합니다. 조문 본문의 {{KEY}} 표식과 규정 화면의 변수 연결이 이 값을 씁니다.',
     'variables.add': '변수 등록',
     'variables.createTitle': '신규 변수 등록',
     'variables.key': '변수 키',
@@ -247,7 +252,7 @@ export const messages: Record<Locale, Msg> = {
     // 첨부 한도는 플랜과 무관하다(파일당 50MB)
     'plan.f4': '첨부파일 (파일당 50MB)',
     'plan.f5': '통합검색',
-    'plan.f6': '변수 관리',
+    'plan.f6': '공통 기준값',
     'plan.f7': 'Excel/PDF 내보내기',
     'plan.f8': 'API 연동',
     'plan.ft1': '회사 템플릿 생성/적용',
@@ -412,9 +417,9 @@ export const messages: Record<Locale, Msg> = {
     'tour.step3.title': '통합검색',
     'tour.step3.desc':
       '시행중인 규정의 전체 내용을 키워드로 검색합니다. 조문 단위까지 검색 결과를 확인할 수 있습니다.',
-    'tour.step4.title': '변수 관리',
+    'tour.step4.title': '관리',
     'tour.step4.desc':
-      '{{COMPANY_NAME}} 처럼 조문에서 공통으로 쓰이는 값을 변수로 등록해두면, 일괄 변경이 가능합니다.',
+      '공통 기준값·설정처럼 회사 단위로 관리하는 화면이 여기에 모여 있습니다. 공통 기준값에 {{COMPANY_NAME}} 처럼 여러 규정에 함께 쓰는 값을 등록해 두면 한 곳에서 바꿀 수 있습니다.',
     'tour.step5.title': '사용자 정보 및 플랜',
     'tour.step5.desc':
       '로그인한 계정 정보와 현재 요금제를 확인할 수 있습니다. 플랜 배지를 클릭하면 요금제를 비교할 수 있습니다(변경은 아스트룸에 문의).',
@@ -752,12 +757,15 @@ export const messages: Record<Locale, Msg> = {
     'layout.nav.amendments': 'Amendments',
     'layout.nav.search': 'Search',
     'layout.nav.ask': 'Ask',
-    'layout.nav.variables': 'Variables',
+    'layout.nav.variables': 'Shared values',
     'layout.nav.settings': 'Settings',
     'layout.nav.integrations': 'API Integration',
     'layout.nav.auditLogs': 'Audit Log',
     'layout.nav.about': 'About',
     'layout.nav.admin': 'Platform admin',
+    'layout.nav.adminGroup': 'Manage',
+    'layout.nav.label': 'Main menu',
+    'layout.nav.currentGroup': '(current page is in this group)',
     'layout.langLabel': 'Language',
     'dashboard.quickSearch': 'Go to search',
     'dashboard.continueWork': 'Continue working',
@@ -911,8 +919,9 @@ export const messages: Record<Locale, Msg> = {
     'search.chapter': 'Ch.{ch}',
     'search.article': 'Art.{a}',
 
-    'variables.title': 'Variables',
-    'variables.subtitle': 'Manage template variables used in policy text.',
+    'variables.title': 'Shared values',
+    'variables.subtitle':
+      'Values used across many policies, such as the company name or CEO name (variables). {{KEY}} markers in article text and variable links on the policy screen use these values.',
     'variables.add': 'New variable',
     'variables.createTitle': 'Create variable',
     'variables.key': 'Key',
@@ -977,7 +986,7 @@ export const messages: Record<Locale, Msg> = {
     'plan.f3': 'Article versioning',
     'plan.f4': 'Attachments (50MB per file)',
     'plan.f5': 'Full-text search',
-    'plan.f6': 'Variables',
+    'plan.f6': 'Shared values',
     'plan.f7': 'Excel/PDF export',
     'plan.f8': 'API access',
     'plan.ft1': 'Company template creation/apply',
@@ -1141,9 +1150,9 @@ export const messages: Record<Locale, Msg> = {
     'tour.step3.title': 'Search',
     'tour.step3.desc':
       'Keyword search across active policy text, down to article level.',
-    'tour.step4.title': 'Variables',
+    'tour.step4.title': 'Manage',
     'tour.step4.desc':
-      'Register shared values like {{COMPANY_NAME}} so you can update them in one place.',
+      'Company-wide screens such as Shared values and Settings live here. Register values used across many policies, like {{COMPANY_NAME}}, under Shared values so you can update them in one place.',
     'tour.step5.title': 'Account & plan',
     'tour.step5.desc':
       'Your profile and current plan. Click the plan badge to compare plans (contact Astrum to change).',

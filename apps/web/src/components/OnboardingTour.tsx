@@ -16,7 +16,8 @@ const STEP_DEFS: Step[] = [
   { targetId: 'nav-dashboard', titleKey: 'tour.step1.title', descKey: 'tour.step1.desc', position: 'right', padding: 0 },
   { targetId: 'nav-policies', titleKey: 'tour.step2.title', descKey: 'tour.step2.desc', position: 'right', padding: 0 },
   { targetId: 'nav-search', titleKey: 'tour.step3.title', descKey: 'tour.step3.desc', position: 'right', padding: 0 },
-  { targetId: 'nav-variables', titleKey: 'tour.step4.title', descKey: 'tour.step4.desc', position: 'right', padding: 0 },
+  // 회사 단위 관리 화면(공통 기준값·설정 …)은 상단 메뉴의 '관리' 묶음에 있다(T-214, components/TopNav)
+  { targetId: 'nav-admin-group', titleKey: 'tour.step4.title', descKey: 'tour.step4.desc', position: 'right', padding: 0 },
   {
     targetId: 'tour-user-info',
     titleKey: 'tour.step5.title',

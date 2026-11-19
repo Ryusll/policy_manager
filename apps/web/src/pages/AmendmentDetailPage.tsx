@@ -25,7 +25,7 @@ import EvidenceSource from '../components/EvidenceSource';
 import EffectiveNotesLine from '../components/EffectiveNotesLine';
 import LawRevisionReason from '../components/LawRevisionReason';
 import { formatArticleAnchor } from '../lib/articleAnchor';
-import { articlePositionLabel } from '../lib/articleHeading';
+import { amendmentTargetLabel } from '../lib/amendmentTarget';
 import { serviceToday } from '../lib/serviceDate';
 import { versionDates } from '../lib/versionDates';
 import { toast } from '../stores/toastStore';
@@ -156,8 +156,8 @@ function Header({ data }: { data: AmendmentDetail }) {
       </Link>
       <h1 className="text-base font-bold text-gray-800 flex flex-wrap items-center gap-2">
         <Link to={`/policies/${data.policy.id}#${formatArticleAnchor(data.article)}`} className="hover:underline">
-          {/* 조면 '제3조(목적)', 항이면 '제3조제2항(부제)' — 조 머리 표기(T-211) */}
-          {data.policy.title} {articlePositionLabel(data.article, data.article.title, formatArticleAnchor(data.article))}
+          {/* 조면 '제3조(목적)', 항이면 '제3조제2항(부제)' — 조 머리 표기(T-211), 경로 표시와 같은 함수(T-214) */}
+          {amendmentTargetLabel(data.policy.title, data.article)}
         </Link>
         <StateBadge state={data.reviewState} />
       </h1>

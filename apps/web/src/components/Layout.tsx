@@ -1,12 +1,11 @@
-import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
-import { askApi } from '../api/ask';
-import { ASK_STATUS_KEY } from '../hooks/useAskStatus';
 import TenantNameLabel from './TenantNameLabel';
-import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, Shield, ScrollText, Scale, FileDiff, MessageCircleQuestion } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 import UserMenu from './UserMenu';
+import { DesktopNav, MobileNav } from './TopNav';
 import Breadcrumbs from './Breadcrumbs';
 import { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
@@ -17,24 +16,6 @@ import { useI18n } from '../i18n/useI18n';
 import { AppBrandLockup } from './AppBrandLockup';
 import AppFooterBranding from './AppFooterBranding';
 import NotificationBell from './NotificationBell';
-import { canUseApiIntegration } from '../lib/planFeatures';
-import { roleCanOpen } from '../lib/viewerAccess';
-import { useQuery } from '@tanstack/react-query';
-import AmendmentsNavBadge from './AmendmentsNavBadge';
-
-const navDefs = [
-  { path: '/', labelKey: 'layout.nav.dashboard', icon: LayoutDashboard, id: 'nav-dashboard' },
-  { path: '/policies', labelKey: 'layout.nav.policies', icon: FileText, id: 'nav-policies' },
-  { path: '/laws', labelKey: 'layout.nav.laws', icon: Scale, id: 'nav-laws' },
-  { path: '/amendments', labelKey: 'layout.nav.amendments', icon: FileDiff, id: 'nav-amendments' },
-  { path: '/search', labelKey: 'layout.nav.search', icon: Search, id: 'nav-search' },
-  { path: '/ask', labelKey: 'layout.nav.ask', icon: MessageCircleQuestion, id: 'nav-ask' },
-  { path: '/variables', labelKey: 'layout.nav.variables', icon: Variable, id: 'nav-variables' },
-  { path: '/settings', labelKey: 'layout.nav.settings', icon: Settings, id: 'nav-settings' },
-  { path: '/integrations', labelKey: 'layout.nav.integrations', icon: PlugZap, id: 'nav-integrations' },
-  { path: '/audit-logs', labelKey: 'layout.nav.auditLogs', icon: ScrollText, id: 'nav-audit-logs' },
-  { path: '/admin', labelKey: 'layout.nav.admin', icon: Shield, id: 'nav-platform-admin' },
-] as const;
 
 type PlanTier = 'starter' | 'pro' | 'enterprise';
 
@@ -47,35 +28,10 @@ export default function Layout() {
   const { user, logout } = useAuthStore();
   useTenantBrandingSync();
   const navigate = useNavigate();
-  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showTour, setShowTour] = useState(false);
-
-  // 규정 질문(T-130) 메뉴는 서버에 AI 가 설정돼 있고 회사가 켜 둔 때만 — 꺼 두었으면 다시 켤 수 있는 관리자에게만
-  const { data: askStatus } = useQuery({
-    queryKey: ASK_STATUS_KEY,
-    queryFn: askApi.status,
-    enabled: !!user,
-    staleTime: 5 * 60_000,
-  });
-  const askConfigured = !!askStatus?.configured;
-  const askEnabled = !!askStatus?.enabled;
-
-  const navItems = useMemo(() => {
-    const isEnterprise = canUseApiIntegration(user?.plan);
-    const isAdmin = user?.role === 'admin';
-    return navDefs
-      .filter((item) => (item.path === '/integrations' ? isEnterprise : true))
-      .filter((item) => (item.path === '/admin' ? user?.platformRole === 'global_admin' : true))
-      // 감사 로그에는 다른 구성원의 활동이 담긴다 — 회사 관리자만 본다
-      .filter((item) => (item.path === '/audit-logs' ? isAdmin : true))
-      .filter((item) => (item.path === '/ask' ? askConfigured && (askEnabled || isAdmin) : true))
-      // 들어갈 수 있는 화면의 메뉴만 — 열람자(직원)는 통합검색과 규정 질문(PrivateRoute 와 같은 판정, T-172)
-      .filter((item) => roleCanOpen(user?.role, item.path))
-      .map((item) => ({ ...item, label: t(item.labelKey) }));
-  }, [t, locale, user?.plan, user?.role, user?.platformRole, askConfigured, askEnabled]);
 
   const planLabel = useMemo(
     () => ({
@@ -168,29 +124,8 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* 데스크탑 네비게이션 */}
-        <nav className="hidden lg:flex px-4 bg-navy-800">
-          {navItems.map(({ path, label, icon: Icon, id }) => {
-            const active = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
-            return (
-              <Link
-                key={path}
-                to={path}
-                id={id}
-                className={clsx(
-                  'flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors',
-                  active
-                    ? 'border-gold-500 text-white'
-                    : 'border-transparent text-navy-300 hover:text-white hover:border-navy-400',
-                )}
-              >
-                <Icon size={15} />
-                {label}
-                {path === '/amendments' && <AmendmentsNavBadge />}
-              </Link>
-            );
-          })}
-        </nav>
+        {/* 데스크탑 네비게이션 — 업무 메뉴와 '관리' 묶음(T-214, components/TopNav) */}
+        <DesktopNav />
       </header>
 
       <div className="flex flex-1">
@@ -203,29 +138,7 @@ export default function Layout() {
           )}
           style={{ top: '48px' }}
         >
-          <nav className="flex-1 py-2">
-            {navItems.map(({ path, label, icon: Icon, id }) => {
-              const active = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
-              return (
-                <Link
-                  key={path}
-                  to={path}
-                  id={id + '-mobile'}
-                  onClick={() => setSidebarOpen(false)}
-                  className={clsx(
-                    'flex items-center gap-3 px-4 py-3 text-sm transition-colors',
-                    active
-                      ? 'bg-navy-700 text-white border-l-2 border-gold-500'
-                      : 'text-navy-300 hover:bg-navy-700 hover:text-white',
-                  )}
-                >
-                  <Icon size={16} />
-                  {label}
-                  {path === '/amendments' && <AmendmentsNavBadge />}
-                </Link>
-              );
-            })}
-          </nav>
+          <MobileNav onNavigate={() => setSidebarOpen(false)} />
           <div className="p-4 border-t border-navy-700">
             <button
               onClick={() => { setSidebarOpen(false); setShowPlanModal(true); }}

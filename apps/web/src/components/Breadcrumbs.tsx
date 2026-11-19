@@ -7,7 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 import { breadcrumbFor } from '../lib/routeSections';
 import { roleCanOpen } from '../lib/viewerAccess';
 import { amendmentDetailQuery, lawDetailQuery } from '../api/detailQueries';
-import { formatArticleAnchor } from '../lib/articleAnchor';
+import { amendmentTargetLabel } from '../lib/amendmentTarget';
 
 /*
  * 상단 경로 표시(브레드크럼) — T-212, SRS NFR-9. 어떤 경로에 무엇을 그릴지는 lib/routeSections.
@@ -27,8 +27,8 @@ function AmendmentName({ id }: { id: string }) {
   const { t } = useI18n();
   const { data } = useQuery({ ...amendmentDetailQuery(id), enabled: false });
   if (!data) return <>{t('layout.breadcrumb.detail')}</>;
-  // 개정 후보 상세 머리와 같은 표기(규정 제목 + 조문)
-  return <>{`${data.policy.title} ${formatArticleAnchor(data.article)}`}</>;
+  // 개정 후보 상세 머리와 같은 함수(규정 제목 + 조 머리 표기 '제3조(목적)', T-214)
+  return <>{amendmentTargetLabel(data.policy.title, data.article)}</>;
 }
 
 export default function Breadcrumbs() {
