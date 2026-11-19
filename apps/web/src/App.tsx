@@ -22,6 +22,7 @@ import AmendmentsPage from './pages/AmendmentsPage';
 import AmendmentDetailPage from './pages/AmendmentDetailPage';
 import ToastHost from './components/ui/ToastHost';
 import ForcePasswordChangePage from './pages/ForcePasswordChangePage';
+import { privateRouteRedirect } from './lib/viewerAccess';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -31,21 +32,9 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   // 남이 정해 준 비밀번호를 바꾸기 전에는 어떤 화면도 열지 않는다(서버도 같은 상태에서 막는다)
   if (user?.mustChangePassword) return <ForcePasswordChangePage />;
 
-  if (user?.role === 'viewer') {
-    // 규정 상세는 열람할 수 있지만 가져오기·재파싱 검토(T-110)는 쓰기 화면이라 막는다
-    const writeOnly = /^\/policies\/(import|[^/]+\/reparse)(\/|$)/.test(location.pathname);
-    const allowed =
-      location.pathname.startsWith('/search') ||
-      (location.pathname.startsWith('/policies/') && !writeOnly) ||
-      location.pathname.startsWith('/about');
-    if (!allowed) return <Navigate to="/search" replace />;
-  }
-  if (
-    (location.pathname.startsWith('/platform-admin') || location.pathname.startsWith('/admin')) &&
-    user?.platformRole !== 'global_admin'
-  ) {
-    return <Navigate to="/" replace />;
-  }
+  // 열람자 허용 화면·통합 관리 화면 판정은 메뉴(Layout)와 같은 곳에서 한다 — lib/viewerAccess (T-172)
+  const redirect = privateRouteRedirect(user, location.pathname);
+  if (redirect) return <Navigate to={redirect} replace />;
   return <>{children}</>;
 }
 

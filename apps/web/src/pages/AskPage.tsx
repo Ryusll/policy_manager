@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircleQuestion, Send, AlertTriangle } from 'lucide-react';
+import { MessageCircleQuestion, Send } from 'lucide-react';
 import { askApi, AiQaNotice, AskResult } from '../api/ask';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
-import { AskConsentDialog, AskNoticeFooter, AskOffNotice } from '../components/AskNotice';
+import { AskConsentDialog, AskNotConfigured, AskNoticeFooter, AskOffNotice } from '../components/AskNotice';
 import { AskAnswer } from '../components/AskAnswer';
 import { useI18n } from '../i18n/useI18n';
 import { articleHash } from '../lib/articleAnchor';
+import { roleCanOpen } from '../lib/viewerAccess';
 
 /**
  * T-130 규정 질문 — 직원이 말로 물으면 지금 시행 중인 사내 규정만 근거로 AI 가 답한다(D-09 결정).
@@ -80,7 +81,6 @@ function TurnView({ turn, canOpenLaws }: { turn: Turn; canOpenLaws: boolean }) {
 export default function AskPage() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
-  const isPlatformAdmin = (user as { platformRole?: string } | null)?.platformRole === 'global_admin';
   const qc = useQueryClient();
   const { t } = useI18n();
   const [question, setQuestion] = useState('');
@@ -168,18 +168,7 @@ export default function AskPage() {
 
       {isLoading && <LoadingBlock />}
 
-      {status && !status.configured && (
-        <div className="card p-4 border-amber-200 bg-amber-50 text-sm text-amber-900 flex gap-2">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium">규정 질문(AI)은 아직 준비 중입니다.</p>
-            <p className="text-xs mt-1">
-              {/* 서버 키는 고객사가 넣을 수 없다 — 운영자(플랫폼 관리자)에게만 설정 방법을 보인다 */}
-              {isPlatformAdmin ? t('ask.notConfigured.platformHint') : '쓰려면 아스트룸에 문의하세요.'}
-            </p>
-          </div>
-        </div>
-      )}
+      {status && !status.configured && <AskNotConfigured role={user?.role} platformRole={user?.platformRole} />}
 
       {status?.configured && !status.enabled && <AskOffNotice needsConsent={status.needsConsent} isAdmin={isAdmin} />}
 
@@ -239,7 +228,7 @@ export default function AskPage() {
       )}
 
       {turns.map((turn, i) => (
-        <TurnView key={turns.length - i} turn={turn} canOpenLaws={user?.role === 'admin' || user?.role === 'editor'} />
+        <TurnView key={turns.length - i} turn={turn} canOpenLaws={roleCanOpen(user?.role, '/laws')} />
       ))}
     </div>
   );

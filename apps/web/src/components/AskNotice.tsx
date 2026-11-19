@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import type { AiQaNotice } from '../api/ask';
 import { useI18n } from '../i18n/useI18n';
 
@@ -113,6 +114,29 @@ export function AskOffNotice({ needsConsent, isAdmin }: { needsConsent: boolean;
       <p className="text-xs mt-1">
         {isAdmin ? (needsConsent ? t('ask.off.staleAdminHint') : t('ask.off.adminHint')) : t('ask.off.staffHint')}
       </p>
+    </div>
+  );
+}
+
+/**
+ * 서버에 AI 제공사가 설정되지 않았을 때의 안내. 설정은 운영자(아스트룸) 몫이라 보는 사람마다 할 일을 다르게 적는다 —
+ * 플랫폼 관리자에게는 설정 방법, 회사 관리자에게는 아스트룸 문의, 직원에게는 회사 관리자 문의(T-172: 열람자도 이 화면에 온다)
+ */
+export function AskNotConfigured({ role, platformRole }: { role?: string | null; platformRole?: string | null }) {
+  const { t } = useI18n();
+  const hint =
+    platformRole === 'global_admin'
+      ? t('ask.notConfigured.platformHint')
+      : role === 'admin'
+        ? t('ask.notConfigured.adminHint')
+        : t('ask.notConfigured.staffHint');
+  return (
+    <div className="card p-4 border-amber-200 bg-amber-50 text-sm text-amber-900 flex gap-2" data-testid="ask-not-configured">
+      <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+      <div>
+        <p className="font-medium">{t('ask.notConfigured.title')}</p>
+        <p className="text-xs mt-1">{hint}</p>
+      </div>
     </div>
   );
 }

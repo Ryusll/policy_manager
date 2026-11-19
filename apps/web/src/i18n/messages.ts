@@ -615,6 +615,10 @@ export const messages: Record<Locale, Msg> = {
     'ask.verdict.gap': '보완 필요',
     'ask.verdict.check': '추가 확인 필요',
     'ask.verdict.na': '해당 없음',
+    // T-172: 서버에 AI 가 없을 때 — 보는 사람마다 할 일이 다르다(직원도 이 화면에 온다)
+    'ask.notConfigured.title': '규정 질문(AI)은 아직 준비 중입니다.',
+    'ask.notConfigured.adminHint': '쓰려면 아스트룸에 문의하세요.',
+    'ask.notConfigured.staffHint': '쓰려면 회사 관리자에게 문의하세요.',
   },
   en: {
     'layout.appTitle': 'Veda',
@@ -1218,5 +1222,8 @@ export const messages: Record<Locale, Msg> = {
     'ask.verdict.gap': 'Needs work',
     'ask.verdict.check': 'Needs checking',
     'ask.verdict.na': 'Not applicable',
+    'ask.notConfigured.title': 'Regulation Q&A (AI) is not available yet.',
+    'ask.notConfigured.adminHint': 'Contact Astrum to start using it.',
+    'ask.notConfigured.staffHint': 'Ask your company administrator to start using it.',
   },
 };

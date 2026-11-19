@@ -16,6 +16,7 @@ import { AppBrandLockup } from './AppBrandLockup';
 import AppFooterBranding from './AppFooterBranding';
 import NotificationBell from './NotificationBell';
 import { canUseApiIntegration } from '../lib/planFeatures';
+import { roleCanOpen } from '../lib/viewerAccess';
 import { useQuery } from '@tanstack/react-query';
 import AmendmentsNavBadge from './AmendmentsNavBadge';
 
@@ -62,7 +63,6 @@ export default function Layout() {
 
   const navItems = useMemo(() => {
     const isEnterprise = canUseApiIntegration(user?.plan);
-    const isViewer = user?.role === 'viewer';
     const isAdmin = user?.role === 'admin';
     return navDefs
       .filter((item) => (item.path === '/integrations' ? isEnterprise : true))
@@ -70,11 +70,8 @@ export default function Layout() {
       // 감사 로그에는 다른 구성원의 활동이 담긴다 — 회사 관리자만 본다
       .filter((item) => (item.path === '/audit-logs' ? isAdmin : true))
       .filter((item) => (item.path === '/ask' ? askConfigured && (askEnabled || isAdmin) : true))
-      .filter((item) => {
-        if (!isViewer) return true;
-        // 열람자(직원)는 찾아보기만 — 통합검색과 규정 질문
-        return item.path === '/search' || item.path === '/ask';
-      })
+      // 들어갈 수 있는 화면의 메뉴만 — 열람자(직원)는 통합검색과 규정 질문(PrivateRoute 와 같은 판정, T-172)
+      .filter((item) => roleCanOpen(user?.role, item.path))
       .map((item) => ({ ...item, label: t(item.labelKey) }));
   }, [t, locale, user?.plan, user?.role, user?.platformRole, askConfigured, askEnabled]);
 
