@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { askApi, type AiQaNotice, type AskResult, type AskStatus } from '../api/ask';
 import { useAuthStore } from '../stores/authStore';
@@ -10,9 +9,12 @@ import { AskConsentDialog, AskNotConfigured, AskOffNotice } from '../components/
 import { AskComposer } from '../components/AskComposer';
 import { AskExamples } from '../components/AskExamples';
 import { AskTurnView } from '../components/AskTurn';
+import { AskHistoryAside, ASK_HISTORY_KEY } from '../components/AskHistoryPanel';
+import { AskHistoryView } from '../components/AskHistoryView';
 import { useI18n } from '../i18n/useI18n';
 import { ASK_STATUS_KEY, useAskStatus } from '../hooks/useAskStatus';
-import { canAskNow, decideIncomingQuestion, incomingQuestion, normalizeQuestion } from '../lib/askQuestion';
+import { useIncomingQuestion } from '../hooks/useIncomingQuestion';
+import { canAskNow, normalizeQuestion } from '../lib/askQuestion';
 import { roleCanOpen } from '../lib/viewerAccess';
 
 /**
@@ -21,6 +23,7 @@ import { roleCanOpen } from '../lib/viewerAccess';
  * 화면은 질문부터 하게 짠다(T-217, SRS SEARCH-9): 아직 물은 것이 없으면 가운데 큰 입력 카드와 예시 질문,
  * 답이 생기면 입력 카드가 위로 올라가고 답이 아래에 쌓인다. 대시보드 입구가 넘긴 질문은 한 번만 보내고,
  * 주소(`?q=`)로 온 질문은 입력칸에 채우기만 한다(`lib/askQuestion` 의 `incomingQuestion`).
+ * 왼쪽에는 내 지난 질문(T-218, SEARCH-10) — 고르면 그때의 답을 그대로 다시 보이고, 새로 물으면 고른 것이 풀린다.
  */
 
 interface Turn {
@@ -40,15 +43,13 @@ export default function AskPage() {
   const isAdmin = user?.role === 'admin';
   const qc = useQueryClient();
   const { t } = useI18n();
-  const location = useLocation();
-  const navigate = useNavigate();
   const [question, setQuestion] = useState('');
   // 켜기 전 외부 전송 고지 확인 창(T-146) — 연 순간의 고지를 고정해 그 판으로 보낸다(그사이 판이 바뀌면 서버가 거절)
   const [consentNotice, setConsentNotice] = useState<AiQaNotice | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
+  // 다시 보는 지난 질문(T-218)
+  const [historyId, setHistoryId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  // 넘겨받은 질문을 이미 처리한 이동(location.key) — 같은 이동을 두 번 처리하지 않는다
-  const handledKey = useRef<string | null>(null);
 
   const { data: status, isLoading, isError: statusFailed, refetch: refetchStatus } = useAskStatus();
   const canAsk = canAskNow(status);
@@ -65,8 +66,24 @@ export default function AskPage() {
     },
     // 그사이 꺼졌거나 고지가 바뀌었으면(403) 상태를 다시 받아 폼 대신 안내를 보인다
     onError: () => qc.invalidateQueries({ queryKey: ASK_STATUS_KEY }),
+    // 답했든 못 했든 질문은 기록에 남는다 — 목록을 다시 받고, 기다리는 동안 지난 질문을 열었으면 이번 결과로 돌아온다
+    onSettled: () => {
+      setHistoryId(null);
+      void qc.invalidateQueries({ queryKey: ASK_HISTORY_KEY });
+    },
   });
   const { mutate: askQuestion, isPending: asking } = askMutation;
+  const ask = (q: string) => {
+    setHistoryId(null);
+    askQuestion(q);
+  };
+  // 지난 질문을 고르면 바로 전 질문의 오류 안내는 거둔다 — 보내는 중이면 그대로 두고, 결과가 오면 그 결과로 돌아온다
+  const selectHistory = (id: string) => {
+    setHistoryId(id);
+    if (!asking) askMutation.reset();
+  };
+  // 답의 법령 칩이 가는 곳은 법령 상세 — 그 화면을 열 수 있는 역할에게만 링크로 보인다(T-172 판정)
+  const canOpenLaws = roleCanOpen(user?.role, '/laws/:id');
 
   // 켤 때는 확인 창에서 본 고지 판을 함께 보낸다 — 끄기는 확인 없이(T-146)
   const toggleMutation = useMutation({
@@ -85,36 +102,24 @@ export default function AskPage() {
     },
   });
 
-  // 넘겨받은 질문 — 대시보드 입구(라우터 state)는 한 번만 보내고, 주소의 `?q=` 는 채우기만 한다. 처리하면 바로 지운다
-  const { text: incomingText, autoSend } = incomingQuestion(location.state, location.search);
-  useEffect(() => {
-    const action = decideIncomingQuestion({
-      text: incomingText,
-      autoSend,
-      handled: handledKey.current === location.key,
-      statusReady: !!status,
-      canAsk,
-      pending: asking,
-    });
-    if (action.kind === 'none' || action.kind === 'wait') return;
-    // 개발 모드(StrictMode)는 효과를 돌렸다 되돌린 뒤 다시 돌린다 — 그 사이에 보내면 보내는 중 표시를 잃으므로 한 박자 미룬다
-    const timer = window.setTimeout(() => {
-      handledKey.current = location.key;
-      const params = new URLSearchParams(location.search);
-      params.delete('q');
-      const search = params.toString();
-      navigate({ pathname: location.pathname, search: search ? `?${search}` : '', hash: location.hash }, { replace: true, state: null });
-      if (action.kind === 'fill') setQuestion(action.question);
-      if (action.kind === 'send') {
-        // 보내지 못하면(그사이 꺼짐 등) 질문을 입력칸에 돌려준다
-        askQuestion(action.question, { onError: () => setQuestion((current) => current || action.question) });
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [incomingText, autoSend, location.key, location.pathname, location.search, location.hash, status, canAsk, asking, askQuestion, navigate]);
+  // 넘겨받은 질문(T-217) — 대시보드 입구는 한 번만 보내고, 주소의 `?q=` 는 채우기만 한다(hooks/useIncomingQuestion)
+  const fillIncoming = useCallback((q: string) => setQuestion(q), []);
+  const sendIncoming = useCallback(
+    // 보내지 못하면(그사이 꺼짐 등) 질문을 입력칸에 돌려준다
+    (q: string) => askQuestion(q, { onError: () => setQuestion((current) => current || q) }),
+    [askQuestion],
+  );
+  useIncomingQuestion({ statusReady: !!status, canAsk, pending: asking, fill: fillIncoming, send: sendIncoming });
 
-  // 아직 받은 답이 없으면 가운데 큰 입력 카드(첫 질문이 실패해도 그대로) — 보내는 순간 위쪽 모양으로 바꾼다
-  const hero = turns.length === 0 && !asking;
+  // 아직 받은 답이 없으면 가운데 큰 입력 카드(첫 질문이 실패해도 그대로) — 보내는 순간·지난 질문을 고르면 위쪽 모양으로
+  const hero = turns.length === 0 && !asking && !historyId;
+  // 새 질문 — 고른 지난 질문과 이번에 받은 답을 비우고 처음 화면으로(지난 답은 목록에 남는다)
+  const startOver = () => {
+    setHistoryId(null);
+    setTurns([]);
+    setQuestion('');
+    askMutation.reset();
+  };
 
   return (
     <div className="page-shell">
@@ -179,41 +184,45 @@ export default function AskPage() {
       )}
 
       {canAsk && status && (
-        <AskComposer
-          variant={hero ? 'hero' : 'compact'}
-          value={question}
-          onChange={setQuestion}
-          onSubmit={() => askQuestion(normalizeQuestion(question))}
-          pending={asking}
-          notice={status.notice}
-          inputRef={inputRef}
-        >
-          <AskExamples
-            role={user?.role}
-            onPick={(text) => {
-              setQuestion(text);
-              inputRef.current?.focus();
-            }}
-          />
-        </AskComposer>
-      )}
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+          <AskHistoryAside selectedId={historyId} onSelect={selectHistory} onNew={startOver} />
 
-      {asking && <div className="card p-4 text-sm text-gray-600">{t('ask.pending')}</div>}
-      {askMutation.isError && (
-        <div className="card p-4 text-sm text-red-700 bg-red-50 border-red-200" data-testid="ask-error">
-          {serverMessage(askMutation.error) ?? t('ask.error.generic')}
+          <div className="min-w-0 flex-1 space-y-5">
+            <AskComposer
+              variant={hero ? 'hero' : 'compact'}
+              value={question}
+              onChange={setQuestion}
+              onSubmit={() => ask(normalizeQuestion(question))}
+              pending={asking}
+              notice={status.notice}
+              inputRef={inputRef}
+            >
+              <AskExamples
+                role={user?.role}
+                onPick={(text) => {
+                  setQuestion(text);
+                  inputRef.current?.focus();
+                }}
+              />
+            </AskComposer>
+
+            {asking && <div className="card p-4 text-sm text-gray-600">{t('ask.pending')}</div>}
+            {askMutation.isError && (
+              <div className="card p-4 text-sm text-red-700 bg-red-50 border-red-200" data-testid="ask-error">
+                {serverMessage(askMutation.error) ?? t('ask.error.generic')}
+              </div>
+            )}
+
+            {historyId ? (
+              <AskHistoryView id={historyId} canOpenLaws={canOpenLaws} />
+            ) : (
+              turns.map((turn, i) => (
+                <AskTurnView key={turns.length - i} question={turn.question} result={turn.result} canOpenLaws={canOpenLaws} />
+              ))
+            )}
+          </div>
         </div>
       )}
-
-      {turns.map((turn, i) => (
-        <AskTurnView
-          key={turns.length - i}
-          question={turn.question}
-          result={turn.result}
-          // 답의 법령 칩이 가는 곳은 법령 상세 — 그 화면을 열 수 있는 역할에게만 링크로 보인다(T-172 판정)
-          canOpenLaws={roleCanOpen(user?.role, '/laws/:id')}
-        />
-      ))}
     </div>
   );
 }

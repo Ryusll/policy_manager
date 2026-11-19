@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BookOpen, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Scale } from 'lucide-react';
-import type { AskBlock, AskCitation, AskLawCitation, AskResult, AskReviewRow, AskVerdict } from '../api/ask';
+import type { AskAnswerResult, AskBlock, AskCitation, AskLawCitation, AskResult, AskReviewRow, AskVerdict } from '../api/ask';
 import { useI18n } from '../i18n/useI18n';
 import { articleHash } from '../lib/articleAnchor';
 import { renderInline } from '../lib/inlineBold';
@@ -258,7 +258,7 @@ function LawCitations({ laws, canOpenLaws }: { laws: AskLawCitation[]; canOpenLa
 }
 
 /** 답할 수 있었던 결과의 본문 — 검토 보고서 모양. `canOpenLaws` — 법령 화면에 들어갈 수 있는 역할(관리자·편집자) */
-export function AskAnswer({ result, canOpenLaws = false }: { result: AskResult; canOpenLaws?: boolean }) {
+export function AskAnswer({ result, canOpenLaws = false }: { result: AskAnswerResult; canOpenLaws?: boolean }) {
   const { t } = useI18n();
   return (
     <div className="space-y-4" data-testid="ask-answer">
@@ -269,7 +269,7 @@ export function AskAnswer({ result, canOpenLaws = false }: { result: AskResult; 
         ))}
       </div>
       <p className="text-[11px] text-gray-500">{t('ask.answer.opinion')}</p>
-      <Citations citations={result.citations} />
+      {result.citations.length > 0 && <Citations citations={result.citations} />}
       <LawCitations laws={result.lawCitations ?? []} canOpenLaws={canOpenLaws} />
     </div>
   );

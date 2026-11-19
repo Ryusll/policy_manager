@@ -97,8 +97,38 @@ export interface AskStatus {
   userLimit: number;
 }
 
+/** 답을 그리는 데 쓰는 칸(사용량 빼고) — 질문 응답과 지난 질문 다시 보기가 같은 모양이다 */
+export type AskAnswerResult = Omit<AskResult, 'usage'>;
+
+/** 지난 질문의 결과 종류(T-218). failed 는 오류로 답을 받지 못함, unfinished 는 처리 중이었거나 도중에 끊김 */
+export type AskOutcome = 'answered' | NonNullable<AskResult['reason']> | 'failed' | 'unfinished';
+
+export interface AskHistoryItem {
+  id: string;
+  question: string;
+  createdAt: string;
+  outcome: AskOutcome;
+}
+
+export interface AskHistoryPage {
+  items: AskHistoryItem[];
+  /** 다음 쪽을 받을 때 넘긴다 — 없으면 끝 */
+  nextCursor: string | null;
+}
+
+export interface AskHistoryDetail extends AskHistoryItem {
+  /** 물은 때의 근거를 남긴 기록인가 — 아니면 답 본문만 있다 */
+  snapshot: boolean;
+  /** 질문 화면과 같은 모양의 답. 오류·처리 중이던 질문은 null */
+  result: AskAnswerResult | null;
+}
+
 export const askApi = {
   status: (): Promise<AskStatus> => client.get('/ask/status').then((r) => r.data),
+  /** 내 지난 질문(T-218) — 최신순, 보관 기간(90일) 안 */
+  history: (cursor?: string | null): Promise<AskHistoryPage> =>
+    client.get('/ask/history', { params: cursor ? { cursor } : {} }).then((r) => r.data),
+  historyItem: (id: string): Promise<AskHistoryDetail> => client.get(`/ask/history/${id}`).then((r) => r.data),
   ask: (question: string): Promise<AskResult> => client.post('/ask', { question }).then((r) => r.data),
   /** 켤 때는 관리자가 확인한 고지 판을 함께 보낸다 — 지금 판이 아니면 400 AI_QA_NOTICE_REQUIRED */
   setEnabled: (enabled: boolean, noticeVersion?: number): Promise<AskStatus> =>

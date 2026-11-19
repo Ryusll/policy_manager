@@ -251,7 +251,11 @@ export class AskService {
     });
   }
 
-  /** 예약 행을 결과로 채운다. AI 를 한 번도 부르지 않았으면 한도에서 돌려준다(`aiCalled: false`) */
+  /**
+   * 예약 행을 결과로 채운다. AI 를 한 번도 부르지 않았으면 한도에서 돌려준다(`aiCalled: false`).
+   * 답하지 못한 까닭과 물은 때의 근거(조문 원문·법령 근거·살펴본 조문)도 남긴다 — 지난 질문을 그때 그대로 다시 보인다(T-218).
+   * 근거 칸은 마무리할 때 늘 채운다(답하지 못했으면 빈 목록) — 비어 있는 칸은 T-218 전 기록이나 처리 중이던 기록뿐이다.
+   */
   private async finish(
     logId: string,
     data: {
@@ -262,9 +266,13 @@ export class AskService {
       contextRowCount?: number;
       usages: AiUsage[];
       failure?: string;
+      reason?: AskReason;
+      snapshot?: Pick<AskResult, 'citations' | 'lawCitations' | 'consulted'>;
     },
   ) {
     const sum = (k: keyof Omit<AiUsage, 'model'>) => data.usages.reduce((n, u) => n + u[k], 0);
+    const snapshot = data.snapshot ?? { citations: [], lawCitations: [], consulted: [] };
+    const json = (v: unknown) => v as Prisma.InputJsonValue;
     await this.prisma.aiQaLog.update({
       where: { id: logId },
       data: {
@@ -278,6 +286,10 @@ export class AskService {
         outputTokens: sum('outputTokens'),
         cacheReadTokens: sum('cacheReadTokens'),
         failure: data.failure ?? null,
+        reason: data.reason ?? null,
+        citations: json(snapshot.citations),
+        lawCitations: json(snapshot.lawCitations),
+        consulted: json(snapshot.consulted),
       },
     });
   }
@@ -307,7 +319,7 @@ export class AskService {
       const extra = usageOf(e);
       if (extra) usages.push(extra);
       if (e instanceof AskRefusedError) {
-        await this.finish(slot.id, { aiCalled: true, usages, failure: `refused:${e.message}` });
+        await this.finish(slot.id, { aiCalled: true, usages, failure: `refused:${e.message}`, reason: 'refused' });
         return { answerable: false, reason: 'refused', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(true) };
       }
       // AI 를 부르기 시작했으면 실패해도 비용이 났을 수 있다 — 예약을 그대로 두어 한도에 센다.
@@ -331,7 +343,7 @@ export class AskService {
     const groups = groupRows(rows);
     if (!groups.length) {
       // AI 를 부르지 않았다 — 한도에서 돌려준다
-      await this.finish(logId, { aiCalled: false, usages });
+      await this.finish(logId, { aiCalled: false, usages, reason: 'no_regulations' });
       return { answerable: false, reason: 'no_regulations', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(false) };
     }
     const toc = buildToc(groups, TOC_MAX_CHARS);
@@ -349,7 +361,7 @@ export class AskService {
       if (chosen.length >= ASK_MAX_GROUPS) break;
     }
     if (!chosen.length) {
-      await this.finish(logId, { aiCalled: true, usages });
+      await this.finish(logId, { aiCalled: true, usages, reason: 'no_candidates' });
       return { answerable: false, reason: 'no_candidates', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(true) };
     }
 
@@ -382,7 +394,14 @@ export class AskService {
     } catch (e) {
       if (e instanceof AskRefusedError) {
         if (e.usage) usages.push(e.usage);
-        await this.finish(logId, { aiCalled: true, usages, contextRowCount: ctx.refs.length, failure: `refused:${e.message}` });
+        await this.finish(logId, {
+          aiCalled: true,
+          usages,
+          contextRowCount: ctx.refs.length,
+          failure: `refused:${e.message}`,
+          reason: 'refused',
+          snapshot: { citations: [], lawCitations: [], consulted },
+        });
         return { answerable: false, reason: 'refused', blocks: [], citations: [], lawCitations: [], consulted, usage: usage(true) };
       }
       throw e;
@@ -396,6 +415,8 @@ export class AskService {
       citedArticleIds: citations.map((c) => c.articleId),
       contextRowCount: ctx.refs.length,
       usages,
+      ...(checked.answerable ? {} : { reason: 'no_basis' as const }),
+      snapshot: { citations, lawCitations, consulted },
     });
     return {
       answerable: checked.answerable,

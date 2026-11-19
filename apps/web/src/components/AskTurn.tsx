@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { MessageCircleQuestion } from 'lucide-react';
-import type { AskResult } from '../api/ask';
+import type { AskAnswerResult } from '../api/ask';
 import { AskAnswer } from './AskAnswer';
 import { useI18n } from '../i18n/useI18n';
 import { articleHash } from '../lib/articleAnchor';
@@ -15,7 +15,7 @@ export function AskTurnView({
   canOpenLaws,
 }: {
   question: string;
-  result: AskResult;
+  result: AskAnswerResult;
   canOpenLaws: boolean;
 }) {
   const { t } = useI18n();

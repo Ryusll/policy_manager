@@ -178,7 +178,8 @@ describe('경로·메뉴·바로가기가 같은 판정을 부른다 (T-172)', (
 
   it('규정 질문 답의 법령 링크도 같은 판정을 쓴다 — 링크가 가는 법령 상세로 판정한다', () => {
     const page = src('apps/web/src/pages/AskPage.tsx');
-    expect(page).toContain("canOpenLaws={roleCanOpen(user?.role, '/laws/:id')}");
+    expect(page).toContain("const canOpenLaws = roleCanOpen(user?.role, '/laws/:id');");
+    expect(page).toContain('canOpenLaws={canOpenLaws}');
     expect(page).not.toMatch(/role === 'editor'/);
     expect(roleCanOpen('viewer', '/laws/:id')).toBe(false);
     expect(roleCanOpen('editor', '/laws/:id')).toBe(true);

@@ -120,6 +120,8 @@ describe('질문 화면의 문구는 사전에 있다 (T-217)', () => {
     'apps/web/src/components/AskTurn.tsx',
     'apps/web/src/components/DashboardAskEntry.tsx',
     'apps/web/src/components/TenantNameLabel.tsx',
+    'apps/web/src/components/AskHistoryPanel.tsx',
+    'apps/web/src/components/AskHistoryView.tsx',
   ];
   const read = (rel: string) => readFileSync(join(__dirname, '..', rel), 'utf8');
   const withoutComments = (code: string) => code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
@@ -130,6 +132,10 @@ describe('질문 화면의 문구는 사전에 있다 (T-217)', () => {
     for (const reason of ['no_regulations', 'no_candidates', 'no_basis', 'refused']) keys.add(`ask.reason.${reason}`);
     for (const group of ['manager', 'staff']) keys.add(`ask.examples.tab.${group}`);
     for (const key of [...ASK_EXAMPLE_KEYS.manager, ...ASK_EXAMPLE_KEYS.staff]) keys.add(key);
+    // 지난 질문(T-218): 기간·결과 종류·오류 갈래
+    for (const kind of ['today', 'yesterday', 'week', 'month']) keys.add(`ask.history.period.${kind}`);
+    for (const outcome of ['no_regulations', 'no_candidates', 'no_basis', 'refused', 'failed', 'unfinished']) keys.add(`ask.history.outcome.${outcome}`);
+    for (const outcome of ['failed', 'unfinished']) keys.add(`ask.history.detail.${outcome}`);
     expect(keys.size).toBeGreaterThan(30);
     expect([...keys].filter((k) => !ko[k])).toEqual([]);
     expect([...keys].filter((k) => !en[k])).toEqual([]);
