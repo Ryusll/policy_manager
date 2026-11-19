@@ -7,7 +7,11 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
+import { AskTurnView } from '../apps/web/src/components/AskTurn';
 import {
   VIEWER_HOME,
   privateRouteRedirect,
@@ -153,9 +157,30 @@ describe('경로·메뉴·바로가기가 같은 판정을 부른다 (T-172)', (
     expect(layout).not.toMatch(/item\.path === '\/search'/);
   });
 
-  it('규정 질문 답의 법령 링크도 같은 판정을 쓴다', () => {
+  it('규정 질문 답을 그리면 열람자에게는 법령 링크가 없고 편집자에게는 있다', () => {
+    const result = {
+      answerable: true,
+      blocks: [{ type: 'paragraph', text: '연차휴가는 15일입니다.' }],
+      citations: [],
+      lawCitations: [
+        { ref: 'L1', lawId: 'law-1', lawName: '근로기준법', lawArticleId: 'la-1', label: '제60조', title: '연차 유급휴가', content: '1년간 80퍼센트 이상 출근한 근로자에게 15일의 유급휴가를 주어야 한다.', scheduledOn: null },
+      ],
+      consulted: [],
+      usage: { used: 1, limit: 15, userUsed: 1, userLimit: 12 },
+    };
+    const render = (role: string) =>
+      renderToStaticMarkup(
+        createElement(MemoryRouter, null, createElement(AskTurnView, { question: '연차휴가', result: result as never, canOpenLaws: roleCanOpen(role, '/laws/:id') })),
+      );
+    expect(render('viewer')).not.toContain('href="/laws/');
+    expect(render('editor')).toContain('href="/laws/law-1');
+  });
+
+  it('규정 질문 답의 법령 링크도 같은 판정을 쓴다 — 링크가 가는 법령 상세로 판정한다', () => {
     const page = src('apps/web/src/pages/AskPage.tsx');
-    expect(page).toContain("roleCanOpen(user?.role, '/laws')");
+    expect(page).toContain("canOpenLaws={roleCanOpen(user?.role, '/laws/:id')}");
     expect(page).not.toMatch(/role === 'editor'/);
+    expect(roleCanOpen('viewer', '/laws/:id')).toBe(false);
+    expect(roleCanOpen('editor', '/laws/:id')).toBe(true);
   });
 });

@@ -3,6 +3,8 @@ import { useAuthStore } from '../stores/authStore';
 import { useTenantBrandingSync } from '../hooks/useTenantBrandingSync';
 import { authApi } from '../api/auth';
 import { askApi } from '../api/ask';
+import { ASK_STATUS_KEY } from '../hooks/useAskStatus';
+import TenantNameLabel from './TenantNameLabel';
 import { LayoutDashboard, FileText, Search, Variable, Settings, PlugZap, Menu, X, Shield, ScrollText, Scale, FileDiff, MessageCircleQuestion } from 'lucide-react';
 import UserMenu from './UserMenu';
 import Breadcrumbs from './Breadcrumbs';
@@ -53,7 +55,7 @@ export default function Layout() {
 
   // 규정 질문(T-130) 메뉴는 서버에 AI 가 설정돼 있고 회사가 켜 둔 때만 — 꺼 두었으면 다시 켤 수 있는 관리자에게만
   const { data: askStatus } = useQuery({
-    queryKey: ['ask-status'],
+    queryKey: ASK_STATUS_KEY,
     queryFn: askApi.status,
     enabled: !!user,
     staleTime: 5 * 60_000,
@@ -93,7 +95,7 @@ export default function Layout() {
 
   // 관리자가 이름·이메일·역할을 바꿨다면 저장소에 남은 값은 지난 로그인 때의 것이다.
   // 화면을 열 때 한 번 서버 값으로 맞춘다. 권한 자체는 서버가 요청마다 DB 에서 다시 읽으므로
-  // 이미 최신이고, 여기서 맞추는 것은 화면에 보이는 이름과 메뉴 노출이다.
+  // 이미 최신이고, 여기서 맞추는 것은 화면에 보이는 이름·회사 이름(상단바, T-217)과 메뉴 노출이다.
   useEffect(() => {
     let cancelled = false;
     authApi
@@ -103,10 +105,12 @@ export default function Layout() {
         const current = useAuthStore.getState().user;
         if (!current || current.id !== fresh.id) return;
         const mustChangePassword = fresh.mustChangePassword === true;
+        const tenantName = typeof fresh.tenantName === 'string' ? fresh.tenantName : current.tenantName;
         if (
           current.name === fresh.name &&
           current.email === fresh.email &&
           current.role === fresh.role &&
+          current.tenantName === tenantName &&
           (current.mustChangePassword === true) === mustChangePassword
         ) {
           return;
@@ -116,6 +120,7 @@ export default function Layout() {
           name: fresh.name,
           email: fresh.email,
           role: fresh.role,
+          tenantName,
           mustChangePassword,
         });
       })
@@ -140,7 +145,7 @@ export default function Layout() {
       <header className="bg-navy-900 text-white">
         <div className="bg-navy-900 border-b border-navy-700">
           <div className="flex items-center justify-between px-4 h-12">
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <button
                 className="p-1.5 rounded hover:bg-navy-700 lg:hidden"
                 onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -148,6 +153,7 @@ export default function Layout() {
                 {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
               </button>
               <AppBrandLockup variant="app" />
+              <TenantNameLabel />
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3 text-sm flex-shrink-0" id="tour-user-info">

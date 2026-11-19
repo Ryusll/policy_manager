@@ -1,81 +1,38 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircleQuestion, Send } from 'lucide-react';
-import { askApi, AiQaNotice, AskResult } from '../api/ask';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { askApi, type AiQaNotice, type AskResult, type AskStatus } from '../api/ask';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
-import { AskConsentDialog, AskNotConfigured, AskNoticeFooter, AskOffNotice } from '../components/AskNotice';
-import { AskAnswer } from '../components/AskAnswer';
+import { AskConsentDialog, AskNotConfigured, AskOffNotice } from '../components/AskNotice';
+import { AskComposer } from '../components/AskComposer';
+import { AskExamples } from '../components/AskExamples';
+import { AskTurnView } from '../components/AskTurn';
 import { useI18n } from '../i18n/useI18n';
-import { articleHash } from '../lib/articleAnchor';
+import { ASK_STATUS_KEY, useAskStatus } from '../hooks/useAskStatus';
+import { canAskNow, decideIncomingQuestion, incomingQuestion, normalizeQuestion } from '../lib/askQuestion';
 import { roleCanOpen } from '../lib/viewerAccess';
 
 /**
  * T-130 규정 질문 — 직원이 말로 물으면 지금 시행 중인 사내 규정만 근거로 AI 가 답한다(D-09 결정).
  *
- * 답 아래에는 AI 가 옮긴 글이 아니라 **DB 의 시행 중 본문**을 근거로 보여 준다 — 직원이 답을 그대로
- * 믿지 않고 근거를 바로 확인할 수 있어야 한다. 근거가 없으면 답 대신 살펴본 조문을 보여 준다.
+ * 화면은 질문부터 하게 짠다(T-217, SRS SEARCH-9): 아직 물은 것이 없으면 가운데 큰 입력 카드와 예시 질문,
+ * 답이 생기면 입력 카드가 위로 올라가고 답이 아래에 쌓인다. 대시보드 입구가 넘긴 질문은 한 번만 보내고,
+ * 주소(`?q=`)로 온 질문은 입력칸에 채우기만 한다(`lib/askQuestion` 의 `incomingQuestion`).
  */
-
-const EXAMPLES = ['결혼하면 경조금은 얼마인가요?', '연차휴가는 며칠까지 쓸 수 있나요?', '출장비는 어떻게 정산하나요?'];
-
-const REASON_TEXT: Record<NonNullable<AskResult['reason']>, string> = {
-  no_regulations: '아직 시행 중인 규정이 없어 답할 수 없습니다.',
-  no_candidates: '질문과 관련된 조문을 찾지 못했습니다. 다른 표현으로 묻거나 통합검색을 써 보세요.',
-  no_basis: '살펴본 조문에서 답의 근거를 찾지 못했습니다. 아래 조문을 직접 확인해 보세요.',
-  refused: '이 질문에는 답할 수 없습니다.',
-};
 
 interface Turn {
   question: string;
   result: AskResult;
 }
 
-function errorMessage(err: unknown): string {
+/** 서버가 준 오류 문구(사용자가 할 일이 적혀 있다) — 없거나 서버 기본 문구면 null */
+function serverMessage(err: unknown): string | null {
   const data = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data;
   const msg = Array.isArray(data?.message) ? data?.message[0] : data?.message;
-  return msg || '답을 받지 못했습니다. 잠시 후 다시 물어 주세요.';
-}
-
-function TurnView({ turn, canOpenLaws }: { turn: Turn; canOpenLaws: boolean }) {
-  const { question, result } = turn;
-  return (
-    <div className="card p-5 space-y-4" data-testid="ask-turn">
-      <div className="flex items-start gap-2">
-        <MessageCircleQuestion size={18} className="mt-0.5 shrink-0 text-gray-400" />
-        <p className="text-sm font-medium text-gray-900 whitespace-pre-wrap">{question}</p>
-      </div>
-
-      {result.answerable ? (
-        <AskAnswer result={result} canOpenLaws={canOpenLaws} />
-      ) : (
-        <div className="space-y-2">
-          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-            {REASON_TEXT[result.reason ?? 'no_basis']}
-          </p>
-          {result.reason === 'no_candidates' && (
-            <Link to={`/search?q=${encodeURIComponent(question)}`} className="text-xs text-navy-700 hover:underline">
-              통합검색에서 찾아보기 →
-            </Link>
-          )}
-          {result.consulted.length > 0 && (
-            <ul className="text-xs text-gray-700 space-y-1">
-              {result.consulted.map((c) => (
-                <li key={`${c.policyId}-${c.number}-${c.branchNumber ?? 0}`}>
-                  <Link to={`/policies/${c.policyId}${articleHash(c)}`} className="hover:underline">
-                    {c.policyTitle} · {c.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return msg && msg !== 'Internal server error' ? msg : null;
 }
 
 export default function AskPage() {
@@ -83,62 +40,92 @@ export default function AskPage() {
   const isAdmin = user?.role === 'admin';
   const qc = useQueryClient();
   const { t } = useI18n();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [question, setQuestion] = useState('');
   // 켜기 전 외부 전송 고지 확인 창(T-146) — 연 순간의 고지를 고정해 그 판으로 보낸다(그사이 판이 바뀌면 서버가 거절)
   const [consentNotice, setConsentNotice] = useState<AiQaNotice | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 넘겨받은 질문을 이미 처리한 이동(location.key) — 같은 이동을 두 번 처리하지 않는다
+  const handledKey = useRef<string | null>(null);
 
-  const { data: status, isLoading } = useQuery({ queryKey: ['ask-status'], queryFn: askApi.status });
+  const { data: status, isLoading, isError: statusFailed, refetch: refetchStatus } = useAskStatus();
+  const canAsk = canAskNow(status);
 
   const askMutation = useMutation({
     mutationFn: (q: string) => askApi.ask(q),
     onSuccess: (result, q) => {
       setTurns((prev) => [{ question: q, result }, ...prev].slice(0, 10));
-      setQuestion('');
-      qc.setQueryData(['ask-status'], (s: typeof status) =>
+      // 기다리는 동안 새로 쓴 질문은 남긴다 — 보낸 글 그대로일 때만 비운다
+      setQuestion((current) => (normalizeQuestion(current) === q ? '' : current));
+      qc.setQueryData<AskStatus>(ASK_STATUS_KEY, (s) =>
         s ? { ...s, used: result.usage.used, userUsed: result.usage.userUsed } : s,
       );
     },
     // 그사이 꺼졌거나 고지가 바뀌었으면(403) 상태를 다시 받아 폼 대신 안내를 보인다
-    onError: () => qc.invalidateQueries({ queryKey: ['ask-status'] }),
+    onError: () => qc.invalidateQueries({ queryKey: ASK_STATUS_KEY }),
   });
+  const { mutate: askQuestion, isPending: asking } = askMutation;
 
   // 켤 때는 확인 창에서 본 고지 판을 함께 보낸다 — 끄기는 확인 없이(T-146)
   const toggleMutation = useMutation({
     mutationFn: (v: { enabled: boolean; noticeVersion?: number }) => askApi.setEnabled(v.enabled, v.noticeVersion),
     onSuccess: (s) => {
       setConsentNotice(null);
-      qc.setQueryData(['ask-status'], s);
-      qc.invalidateQueries({ queryKey: ['ask-status'] });
+      qc.setQueryData(ASK_STATUS_KEY, s);
+      qc.invalidateQueries({ queryKey: ASK_STATUS_KEY });
       toast(s.enabled ? t('ask.toggle.doneOn') : t('ask.toggle.doneOff'), 'success');
     },
     onError: (e) => {
       // 고지가 그사이 바뀌었으면 창을 닫고(확인란도 풀린다) 새 고지를 받아 다시 열게 한다
       setConsentNotice(null);
-      qc.invalidateQueries({ queryKey: ['ask-status'] });
-      toast(errorMessage(e), 'error');
+      qc.invalidateQueries({ queryKey: ASK_STATUS_KEY });
+      toast(serverMessage(e) ?? t('ask.error.generic'), 'error');
     },
   });
 
-  const submit = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const q = question.trim();
-    if (q.length < 2 || askMutation.isPending) return;
-    askMutation.mutate(q);
-  };
+  // 넘겨받은 질문 — 대시보드 입구(라우터 state)는 한 번만 보내고, 주소의 `?q=` 는 채우기만 한다. 처리하면 바로 지운다
+  const { text: incomingText, autoSend } = incomingQuestion(location.state, location.search);
+  useEffect(() => {
+    const action = decideIncomingQuestion({
+      text: incomingText,
+      autoSend,
+      handled: handledKey.current === location.key,
+      statusReady: !!status,
+      canAsk,
+      pending: asking,
+    });
+    if (action.kind === 'none' || action.kind === 'wait') return;
+    // 개발 모드(StrictMode)는 효과를 돌렸다 되돌린 뒤 다시 돌린다 — 그 사이에 보내면 보내는 중 표시를 잃으므로 한 박자 미룬다
+    const timer = window.setTimeout(() => {
+      handledKey.current = location.key;
+      const params = new URLSearchParams(location.search);
+      params.delete('q');
+      const search = params.toString();
+      navigate({ pathname: location.pathname, search: search ? `?${search}` : '', hash: location.hash }, { replace: true, state: null });
+      if (action.kind === 'fill') setQuestion(action.question);
+      if (action.kind === 'send') {
+        // 보내지 못하면(그사이 꺼짐 등) 질문을 입력칸에 돌려준다
+        askQuestion(action.question, { onError: () => setQuestion((current) => current || action.question) });
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [incomingText, autoSend, location.key, location.pathname, location.search, location.hash, status, canAsk, asking, askQuestion, navigate]);
 
-  const canAsk = !!status?.configured && !!status?.enabled;
+  // 아직 받은 답이 없으면 가운데 큰 입력 카드(첫 질문이 실패해도 그대로) — 보내는 순간 위쪽 모양으로 바꾼다
+  const hero = turns.length === 0 && !asking;
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="page-shell">
       <PageHeader
-        title="규정 질문"
-        description="사내 규정에 대해 물으면, 지금 시행 중인 규정을 근거로 AI가 답합니다."
+        title={t('layout.nav.ask')}
+        description={t('ask.description')}
         actions={
           status?.configured ? (
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <span data-testid="ask-usage">
-                이번 달 회사 {status.used}/{status.limit}회 · 나 {status.userUsed}/{status.userLimit}회
+                {t('ask.usage', { used: status.used, limit: status.limit, userUsed: status.userUsed, userLimit: status.userLimit })}
               </span>
               {isAdmin && (
                 <button
@@ -168,6 +155,15 @@ export default function AskPage() {
 
       {isLoading && <LoadingBlock />}
 
+      {statusFailed && !status && (
+        <div className="card p-4 text-sm text-red-700 bg-red-50 border-red-200 flex flex-wrap items-center gap-3" data-testid="ask-status-error">
+          <span>{t('ask.statusError')}</span>
+          <button type="button" className="btn-secondary text-xs px-2.5 py-1" onClick={() => refetchStatus()}>
+            {t('asOfView.retry')}
+          </button>
+        </div>
+      )}
+
       {status && !status.configured && <AskNotConfigured role={user?.role} platformRole={user?.platformRole} />}
 
       {status?.configured && !status.enabled && <AskOffNotice needsConsent={status.needsConsent} isAdmin={isAdmin} />}
@@ -182,53 +178,41 @@ export default function AskPage() {
         />
       )}
 
-      {canAsk && (
-        <form onSubmit={submit} className="card p-4 space-y-3">
-          <textarea
-            className="input w-full text-sm min-h-[84px]"
-            placeholder="예) 결혼하면 경조금은 얼마인가요?"
-            value={question}
-            maxLength={500}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                submit();
-              }
+      {canAsk && status && (
+        <AskComposer
+          variant={hero ? 'hero' : 'compact'}
+          value={question}
+          onChange={setQuestion}
+          onSubmit={() => askQuestion(normalizeQuestion(question))}
+          pending={asking}
+          notice={status.notice}
+          inputRef={inputRef}
+        >
+          <AskExamples
+            role={user?.role}
+            onPick={(text) => {
+              setQuestion(text);
+              inputRef.current?.focus();
             }}
           />
-          <div className="flex flex-wrap items-center gap-2">
-            {EXAMPLES.map((ex) => (
-              <button
-                key={ex}
-                type="button"
-                className="text-xs rounded-full border border-gray-200 px-2.5 py-1 text-gray-600 hover:bg-gray-50"
-                onClick={() => setQuestion(ex)}
-              >
-                {ex}
-              </button>
-            ))}
-            <button
-              type="submit"
-              className="btn-primary ml-auto inline-flex items-center gap-1.5 text-sm"
-              disabled={question.trim().length < 2 || askMutation.isPending}
-            >
-              <Send size={14} /> {askMutation.isPending ? '찾는 중…' : '묻기'}
-            </button>
-          </div>
-          {status && <AskNoticeFooter notice={status.notice} />}
-        </form>
+        </AskComposer>
       )}
 
-      {askMutation.isPending && (
-        <div className="card p-4 text-sm text-gray-600">{t('ask.pending')}</div>
-      )}
+      {asking && <div className="card p-4 text-sm text-gray-600">{t('ask.pending')}</div>}
       {askMutation.isError && (
-        <div className="card p-4 text-sm text-red-700 bg-red-50 border-red-200">{errorMessage(askMutation.error)}</div>
+        <div className="card p-4 text-sm text-red-700 bg-red-50 border-red-200" data-testid="ask-error">
+          {serverMessage(askMutation.error) ?? t('ask.error.generic')}
+        </div>
       )}
 
       {turns.map((turn, i) => (
-        <TurnView key={turns.length - i} turn={turn} canOpenLaws={roleCanOpen(user?.role, '/laws')} />
+        <AskTurnView
+          key={turns.length - i}
+          question={turn.question}
+          result={turn.result}
+          // 답의 법령 칩이 가는 곳은 법령 상세 — 그 화면을 열 수 있는 역할에게만 링크로 보인다(T-172 판정)
+          canOpenLaws={roleCanOpen(user?.role, '/laws/:id')}
+        />
       ))}
     </div>
   );

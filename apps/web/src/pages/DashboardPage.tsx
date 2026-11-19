@@ -9,6 +9,7 @@ import { useI18n } from '../i18n/useI18n';
 import { PageHeader } from '../components/ui/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
 import LawAmendmentBanner from '../components/LawAmendmentBanner';
+import DashboardAskEntry from '../components/DashboardAskEntry';
 
 type UserRole = 'admin' | 'editor' | 'viewer';
 
@@ -99,6 +100,9 @@ export default function DashboardPage() {
           </button>
         }
       />
+
+      {/* 규정 질문 입구(T-217) — 켜져 있을 때만. 열람자는 대시보드에 오지 않고 메뉴로 묻는다 */}
+      <DashboardAskEntry />
 
       {/* 법령 개정 배너(T-158) — 관리자·편집자만(열람자는 개정 후보를 보지 않는다) */}
       {canCreate && <LawAmendmentBanner />}
