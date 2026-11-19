@@ -98,6 +98,15 @@ describe('지난 질문 다시 보기 화면 (T-218)', () => {
     }
   });
 
+  it('범위를 골라 물은 질문은 답을 받지 못했어도 범위 줄이 보인다 (T-219)', () => {
+    const scope = [{ id: 'p1', title: '여비 규정', code: 'FN-01' }];
+    for (const data of [{ ...detail(true), scope }, { ...detail(true), scope, outcome: 'failed', result: null }]) {
+      const html = render(data);
+      expect(html).toContain('data-testid="ask-turn-scope"');
+      expect(html).toContain('FN-01 여비 규정');
+    }
+  });
+
   it('답을 받지 못한 질문: 질문과 그 사실만', () => {
     const html = render({ ...detail(true), outcome: 'failed', result: null });
     expect(html).toContain('결혼하면 경조금은 얼마인가요?');

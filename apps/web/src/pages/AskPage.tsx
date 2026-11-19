@@ -1,21 +1,23 @@
 import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { askApi, type AiQaNotice, type AskResult, type AskStatus } from '../api/ask';
+import { askApi, type AskResult, type AskScopePolicy, type AskStatus } from '../api/ask';
 import { useAuthStore } from '../stores/authStore';
-import { toast } from '../stores/toastStore';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
-import { AskConsentDialog, AskNotConfigured, AskOffNotice } from '../components/AskNotice';
+import { AskNotConfigured, AskOffNotice } from '../components/AskNotice';
+import { AskHeaderActions } from '../components/AskHeaderActions';
 import { AskComposer } from '../components/AskComposer';
 import { AskExamples } from '../components/AskExamples';
 import { AskTurnView } from '../components/AskTurn';
 import { AskHistoryAside, ASK_HISTORY_KEY } from '../components/AskHistoryPanel';
 import { AskHistoryView } from '../components/AskHistoryView';
+import { AskScopePicker } from '../components/AskScopePicker';
 import { useI18n } from '../i18n/useI18n';
 import { ASK_STATUS_KEY, useAskStatus } from '../hooks/useAskStatus';
 import { useIncomingQuestion } from '../hooks/useIncomingQuestion';
 import { canAskNow, normalizeQuestion } from '../lib/askQuestion';
 import { roleCanOpen } from '../lib/viewerAccess';
+import { errorCode, serverMessage } from '../lib/apiError';
 
 /**
  * T-130 규정 질문 — 직원이 말로 물으면 지금 시행 중인 사내 규정만 근거로 AI 가 답한다(D-09 결정).
@@ -24,18 +26,14 @@ import { roleCanOpen } from '../lib/viewerAccess';
  * 답이 생기면 입력 카드가 위로 올라가고 답이 아래에 쌓인다. 대시보드 입구가 넘긴 질문은 한 번만 보내고,
  * 주소(`?q=`)로 온 질문은 입력칸에 채우기만 한다(`lib/askQuestion` 의 `incomingQuestion`).
  * 왼쪽에는 내 지난 질문(T-218, SEARCH-10) — 고르면 그때의 답을 그대로 다시 보이고, 새로 물으면 고른 것이 풀린다.
+ * 입력 카드 아래 줄에서 살펴볼 규정을 골라 범위를 좁힌다(T-219, SEARCH-11) — 고르지 않으면 회사 전체.
  */
 
 interface Turn {
   question: string;
   result: AskResult;
-}
-
-/** 서버가 준 오류 문구(사용자가 할 일이 적혀 있다) — 없거나 서버 기본 문구면 null */
-function serverMessage(err: unknown): string | null {
-  const data = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data;
-  const msg = Array.isArray(data?.message) ? data?.message[0] : data?.message;
-  return msg && msg !== 'Internal server error' ? msg : null;
+  /** 물을 때 고른 범위 — 비었으면 회사 전체 */
+  scope: AskScopePolicy[];
 }
 
 export default function AskPage() {
@@ -44,28 +42,33 @@ export default function AskPage() {
   const qc = useQueryClient();
   const { t } = useI18n();
   const [question, setQuestion] = useState('');
-  // 켜기 전 외부 전송 고지 확인 창(T-146) — 연 순간의 고지를 고정해 그 판으로 보낸다(그사이 판이 바뀌면 서버가 거절)
-  const [consentNotice, setConsentNotice] = useState<AiQaNotice | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   // 다시 보는 지난 질문(T-218)
   const [historyId, setHistoryId] = useState<string | null>(null);
+  // 질문 범위(T-219) — 고른 규정 id. 비었으면 회사 전체
+  const [scope, setScope] = useState<string[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: status, isLoading, isError: statusFailed, refetch: refetchStatus } = useAskStatus();
   const canAsk = canAskNow(status);
 
   const askMutation = useMutation({
-    mutationFn: (q: string) => askApi.ask(q),
-    onSuccess: (result, q) => {
-      setTurns((prev) => [{ question: q, result }, ...prev].slice(0, 10));
+    mutationFn: (v: { question: string; policyIds: string[] }) => askApi.ask(v.question, v.policyIds),
+    onSuccess: (result, v) => {
+      // 물을 때 고른 범위를 답 위에 보인다 — 서버가 확인한 그때의 이름(지난 질문과 같은 값)
+      setTurns((prev) => [{ question: v.question, result, scope: result.scope }, ...prev].slice(0, 10));
       // 기다리는 동안 새로 쓴 질문은 남긴다 — 보낸 글 그대로일 때만 비운다
-      setQuestion((current) => (normalizeQuestion(current) === q ? '' : current));
+      setQuestion((current) => (normalizeQuestion(current) === v.question ? '' : current));
       qc.setQueryData<AskStatus>(ASK_STATUS_KEY, (s) =>
         s ? { ...s, used: result.usage.used, userUsed: result.usage.userUsed } : s,
       );
     },
-    // 그사이 꺼졌거나 고지가 바뀌었으면(403) 상태를 다시 받아 폼 대신 안내를 보인다
-    onError: () => qc.invalidateQueries({ queryKey: ASK_STATUS_KEY }),
+    onError: (e) => {
+      // 그사이 꺼졌거나 고지가 바뀌었으면(403) 상태를 다시 받아 폼 대신 안내를 보인다
+      qc.invalidateQueries({ queryKey: ASK_STATUS_KEY });
+      // 고른 규정이 그사이 비활성으로 바뀌었거나 지워졌으면 목록을 다시 받는다 — 고르기가 범위에서 뺀다(T-219)
+      if (errorCode(e) === 'AI_QA_SCOPE_INVALID') qc.invalidateQueries({ queryKey: ['policies'] });
+    },
     // 답했든 못 했든 질문은 기록에 남는다 — 목록을 다시 받고, 기다리는 동안 지난 질문을 열었으면 이번 결과로 돌아온다
     onSettled: () => {
       setHistoryId(null);
@@ -75,7 +78,7 @@ export default function AskPage() {
   const { mutate: askQuestion, isPending: asking } = askMutation;
   const ask = (q: string) => {
     setHistoryId(null);
-    askQuestion(q);
+    askQuestion({ question: q, policyIds: scope });
   };
   // 지난 질문을 고르면 바로 전 질문의 오류 안내는 거둔다 — 보내는 중이면 그대로 두고, 결과가 오면 그 결과로 돌아온다
   const selectHistory = (id: string) => {
@@ -85,28 +88,11 @@ export default function AskPage() {
   // 답의 법령 칩이 가는 곳은 법령 상세 — 그 화면을 열 수 있는 역할에게만 링크로 보인다(T-172 판정)
   const canOpenLaws = roleCanOpen(user?.role, '/laws/:id');
 
-  // 켤 때는 확인 창에서 본 고지 판을 함께 보낸다 — 끄기는 확인 없이(T-146)
-  const toggleMutation = useMutation({
-    mutationFn: (v: { enabled: boolean; noticeVersion?: number }) => askApi.setEnabled(v.enabled, v.noticeVersion),
-    onSuccess: (s) => {
-      setConsentNotice(null);
-      qc.setQueryData(ASK_STATUS_KEY, s);
-      qc.invalidateQueries({ queryKey: ASK_STATUS_KEY });
-      toast(s.enabled ? t('ask.toggle.doneOn') : t('ask.toggle.doneOff'), 'success');
-    },
-    onError: (e) => {
-      // 고지가 그사이 바뀌었으면 창을 닫고(확인란도 풀린다) 새 고지를 받아 다시 열게 한다
-      setConsentNotice(null);
-      qc.invalidateQueries({ queryKey: ASK_STATUS_KEY });
-      toast(serverMessage(e) ?? t('ask.error.generic'), 'error');
-    },
-  });
-
-  // 넘겨받은 질문(T-217) — 대시보드 입구는 한 번만 보내고, 주소의 `?q=` 는 채우기만 한다(hooks/useIncomingQuestion)
+  // 넘겨받은 질문(T-217) — 대시보드 입구는 한 번만 보내고(범위 없이), 주소의 `?q=` 는 채우기만 한다(hooks/useIncomingQuestion)
   const fillIncoming = useCallback((q: string) => setQuestion(q), []);
   const sendIncoming = useCallback(
     // 보내지 못하면(그사이 꺼짐 등) 질문을 입력칸에 돌려준다
-    (q: string) => askQuestion(q, { onError: () => setQuestion((current) => current || q) }),
+    (q: string) => askQuestion({ question: q, policyIds: [] }, { onError: () => setQuestion((current) => current || q) }),
     [askQuestion],
   );
   useIncomingQuestion({ statusReady: !!status, canAsk, pending: asking, fill: fillIncoming, send: sendIncoming });
@@ -126,36 +112,7 @@ export default function AskPage() {
       <PageHeader
         title={t('layout.nav.ask')}
         description={t('ask.description')}
-        actions={
-          status?.configured ? (
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span data-testid="ask-usage">
-                {t('ask.usage', { used: status.used, limit: status.limit, userUsed: status.userUsed, userLimit: status.userLimit })}
-              </span>
-              {isAdmin && (
-                <button
-                  type="button"
-                  className="btn-secondary text-xs px-2.5 py-1"
-                  disabled={toggleMutation.isPending}
-                  onClick={() => (status.enabled ? toggleMutation.mutate({ enabled: false }) : setConsentNotice(status.notice))}
-                >
-                  {status.enabled ? t('ask.toggle.off') : status.needsConsent ? t('ask.toggle.reconsent') : t('ask.toggle.on')}
-                </button>
-              )}
-              {/* 바뀐 고지에 동의하지 않을 수도 있다 — 다시 확인을 기다리는 회사도 끈다 */}
-              {isAdmin && status.needsConsent && (
-                <button
-                  type="button"
-                  className="btn-secondary text-xs px-2.5 py-1"
-                  disabled={toggleMutation.isPending}
-                  onClick={() => toggleMutation.mutate({ enabled: false })}
-                >
-                  {t('ask.toggle.offStale')}
-                </button>
-              )}
-            </div>
-          ) : null
-        }
+        actions={status?.configured ? <AskHeaderActions status={status} isAdmin={isAdmin} /> : null}
       />
 
       {isLoading && <LoadingBlock />}
@@ -173,16 +130,6 @@ export default function AskPage() {
 
       {status?.configured && !status.enabled && <AskOffNotice needsConsent={status.needsConsent} isAdmin={isAdmin} />}
 
-      {consentNotice && (
-        <AskConsentDialog
-          key={consentNotice.version}
-          notice={consentNotice}
-          pending={toggleMutation.isPending}
-          onConfirm={() => toggleMutation.mutate({ enabled: true, noticeVersion: consentNotice.version })}
-          onCancel={() => setConsentNotice(null)}
-        />
-      )}
-
       {canAsk && status && (
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
           <AskHistoryAside selectedId={historyId} onSelect={selectHistory} onNew={startOver} />
@@ -196,6 +143,7 @@ export default function AskPage() {
               pending={asking}
               notice={status.notice}
               inputRef={inputRef}
+              toolbar={<AskScopePicker selected={scope} onChange={setScope} disabled={asking} />}
             >
               <AskExamples
                 role={user?.role}
@@ -209,7 +157,9 @@ export default function AskPage() {
             {asking && <div className="card p-4 text-sm text-gray-600">{t('ask.pending')}</div>}
             {askMutation.isError && (
               <div className="card p-4 text-sm text-red-700 bg-red-50 border-red-200" data-testid="ask-error">
-                {serverMessage(askMutation.error) ?? t('ask.error.generic')}
+                {errorCode(askMutation.error) === 'AI_QA_SCOPE_INVALID'
+                  ? t('ask.scope.invalid')
+                  : (serverMessage(askMutation.error) ?? t('ask.error.generic'))}
               </div>
             )}
 
@@ -217,7 +167,7 @@ export default function AskPage() {
               <AskHistoryView id={historyId} canOpenLaws={canOpenLaws} />
             ) : (
               turns.map((turn, i) => (
-                <AskTurnView key={turns.length - i} question={turn.question} result={turn.result} canOpenLaws={canOpenLaws} />
+                <AskTurnView key={turns.length - i} question={turn.question} result={turn.result} scope={turn.scope} canOpenLaws={canOpenLaws} />
               ))
             )}
           </div>

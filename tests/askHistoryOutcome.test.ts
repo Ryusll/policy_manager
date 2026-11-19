@@ -3,7 +3,7 @@
  * 기록의 오류 문구(failure)는 내보내지 않고 결과 종류로만 알린다. 까닭 칸 전의 기록은 남은 칸으로 되짚는다.
  */
 import { describe, expect, it } from 'vitest';
-import { askOutcome, toHistoryDetail, toHistoryItem } from '../apps/api/src/ask/ask-history';
+import { askOutcome, scopeOf, toHistoryDetail, toHistoryItem } from '../apps/api/src/ask/ask-history';
 
 const base = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -19,6 +19,7 @@ const base = {
   citations: null as unknown,
   lawCitations: null as unknown,
   consulted: null as unknown,
+  scope: [] as unknown,
 };
 
 describe('결과 종류 (T-218)', () => {
@@ -54,13 +55,19 @@ describe('목록·다시 보기로 바꾸기 (T-218)', () => {
   const citation = { ref: 'R1', articleId: 'a1', policyId: 'p1', policyTitle: '복리후생규정', label: '제2조', content: '경조금 50만원' };
   const consulted = [{ policyId: 'p1', policyTitle: '복리후생규정', number: 2, branchNumber: null, label: '제2조(경조금)' }];
 
-  it('목록에는 id·질문·시각·결과 종류만', () => {
-    expect(toHistoryItem({ ...base, answerable: true })).toEqual({
+  it('목록에는 id·질문·시각·결과 종류만 — 범위는 다시 보기에만 싣는다 (T-219)', () => {
+    expect(toHistoryItem({ ...base, answerable: true, scope: [{ id: 'p1', title: 'x', code: 'y' }] })).toEqual({
       id: base.id,
       question: base.question,
       createdAt: '2026-11-19T01:02:03.000Z',
       outcome: 'answered',
     });
+  });
+
+  it('범위는 기록에 남긴 물은 때의 이름·코드 그대로 — 모양이 맞지 않는 것은 뺀다 (T-219)', () => {
+    const scope = [{ id: 'p1', title: '여비 규정', code: 'FN-01' }, { id: 'p2' }, null, 'x', { id: 'p3', title: 1, code: 'C' }];
+    expect(toHistoryDetail({ ...base, scope }).scope).toEqual([{ id: 'p1', title: '여비 규정', code: 'FN-01' }]);
+    for (const empty of [null, undefined, {}, '[]']) expect(scopeOf(empty)).toEqual([]);
   });
 
   it('답한 기록은 물은 때의 답·근거 원문·법령 근거·살펴본 조문을 그대로', () => {

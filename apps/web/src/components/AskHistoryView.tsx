@@ -4,6 +4,7 @@ import { MessageCircleQuestion } from 'lucide-react';
 import { askApi } from '../api/ask';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { AskTurnView } from './AskTurn';
+import { AskScopeLine } from './AskScopeLine';
 import { ASK_HISTORY_KEY } from './AskHistoryPanel';
 import { useI18n } from '../i18n/useI18n';
 import { ASK_STATUS_KEY } from '../hooks/useAskStatus';
@@ -50,13 +51,14 @@ export function AskHistoryView({ id, canOpenLaws }: { id: string; canOpenLaws: b
         {data.result?.answerable ? t('ask.history.answeredAt', { at }) : t('ask.history.askedAt', { at })}
       </p>
       {data.result ? (
-        <AskTurnView question={data.question} result={data.result} canOpenLaws={canOpenLaws} />
+        <AskTurnView question={data.question} result={data.result} scope={data.scope} canOpenLaws={canOpenLaws} />
       ) : (
         <div className="card p-5 space-y-3" data-testid="ask-turn">
           <div className="flex items-start gap-2">
             <MessageCircleQuestion size={18} className="mt-0.5 shrink-0 text-gray-400" />
             <p className="text-sm font-medium text-gray-900 whitespace-pre-wrap">{data.question}</p>
           </div>
+          <AskScopeLine scope={data.scope} />
           <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
             {t(`ask.history.detail.${data.outcome}`)}
           </p>

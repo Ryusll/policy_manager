@@ -1,4 +1,5 @@
 import type { AskReason, AskResult } from './ask.service';
+import type { AskScopePolicy } from './ask-candidates';
 
 /**
  * 내 지난 질문(T-218, SRS SEARCH-10) — 질문 기록 한 행을 화면에 내보낼 꼴로 바꾼다.
@@ -32,6 +33,7 @@ export const ASK_HISTORY_DETAIL_SELECT = {
   citations: true,
   lawCitations: true,
   consulted: true,
+  scope: true,
 } as const;
 
 interface OutcomeRow {
@@ -50,6 +52,7 @@ interface ListRow extends OutcomeRow {
 }
 
 interface DetailRow extends ListRow {
+  scope: unknown;
   answer: unknown;
   citations: unknown;
   lawCitations: unknown;
@@ -64,6 +67,8 @@ export interface AskHistoryItem {
 }
 
 export interface AskHistoryDetail extends AskHistoryItem {
+  /** 물을 때 고른 범위 — 그때의 이름·코드 그대로, 비었으면 회사 전체에서 물었다(T-219). 목록에는 싣지 않는다 */
+  scope: AskScopePolicy[];
   /** 물은 때의 근거를 남긴 기록인가 — T-218 전 기록이면 false 라 답 본문만 보인다 */
   snapshot: boolean;
   /** 화면이 질문 화면과 같은 모양으로 그릴 답. 답을 받지 못했거나(오류) 처리 중이던 질문은 null */
@@ -90,8 +95,22 @@ export function askOutcome(row: OutcomeRow): AskOutcome {
 
 const list = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
+/** 기록에 남긴 범위 — 모양이 맞는 것만(물은 때의 이름·코드). 범위 칸 전의 기록은 빈 배열(회사 전체) */
+export function scopeOf(value: unknown): AskScopePolicy[] {
+  return list<Record<string, unknown> | null>(value).flatMap((p) =>
+    p && typeof p.id === 'string' && typeof p.title === 'string' && typeof p.code === 'string'
+      ? [{ id: p.id, title: p.title, code: p.code }]
+      : [],
+  );
+}
+
 export function toHistoryItem(row: ListRow): AskHistoryItem {
-  return { id: row.id, question: row.question, createdAt: row.createdAt.toISOString(), outcome: askOutcome(row) };
+  return {
+    id: row.id,
+    question: row.question,
+    createdAt: row.createdAt.toISOString(),
+    outcome: askOutcome(row),
+  };
 }
 
 export function toHistoryDetail(row: DetailRow): AskHistoryDetail {
@@ -110,5 +129,5 @@ export function toHistoryDetail(row: DetailRow): AskHistoryDetail {
   } else if (isReason(item.outcome)) {
     result = { answerable: false, reason: item.outcome, blocks: [], citations: [], lawCitations: [], consulted };
   }
-  return { ...item, snapshot, result };
+  return { ...item, scope: scopeOf(row.scope), snapshot, result };
 }

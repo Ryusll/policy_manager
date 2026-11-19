@@ -1413,6 +1413,8 @@ model AiQaLog {
   citations        Json?
   lawCitations     Json?    @map("law_citations")
   consulted        Json?
+  /// 묻는 사람이 고른 질문 범위 — 물은 때의 규정 [{ id, title, code }], 비었으면 회사 전체(T-219, SRS SEARCH-11). 지난 질문에 그대로 보인다
+  scope            Json     @default("[]")
   createdAt        DateTime @default(now()) @map("created_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

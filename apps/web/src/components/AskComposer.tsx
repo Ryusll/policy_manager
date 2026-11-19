@@ -15,6 +15,8 @@ interface AskComposerProps {
   pending: boolean;
   notice: AiQaNotice;
   inputRef?: Ref<HTMLTextAreaElement>;
+  /** 입력 카드 아래 줄 왼쪽에 두는 것(질문 범위 고르기, T-219) */
+  toolbar?: ReactNode;
   /** 처음 화면에서 입력 카드와 고지 아래에 붙는 것(예시 질문) */
   children?: ReactNode;
 }
@@ -24,7 +26,7 @@ interface AskComposerProps {
  * 외부 전송 고지는 두 모양 모두 입력 카드 바로 아래에 둔다(SEARCH-6·9 ④). 보내는 중에는 다시 보낼 수 없다.
  * 두 모양이 같은 자리에 같은 입력칸을 두어, 보내는 순간 모양이 바뀌어도 쓰던 글과 초점이 그대로 남는다.
  */
-export function AskComposer({ variant, value, onChange, onSubmit, pending, notice, inputRef, children }: AskComposerProps) {
+export function AskComposer({ variant, value, onChange, onSubmit, pending, notice, inputRef, toolbar, children }: AskComposerProps) {
   const { t } = useI18n();
   const hero = variant === 'hero';
   const ready = !pending && canSubmitQuestion(value);
@@ -56,7 +58,7 @@ export function AskComposer({ variant, value, onChange, onSubmit, pending, notic
         onSubmit={submit}
         className={
           hero
-            ? 'card overflow-hidden transition-shadow focus-within:border-navy-400 focus-within:ring-2 focus-within:ring-navy-100'
+            ? 'card transition-shadow focus-within:border-navy-400 focus-within:ring-2 focus-within:ring-navy-100'
             : 'card p-4 space-y-3'
         }
       >
@@ -75,6 +77,7 @@ export function AskComposer({ variant, value, onChange, onSubmit, pending, notic
           onKeyDown={onKeyDown}
         />
         <div className={hero ? 'flex items-center gap-2 px-3 pb-3' : 'flex items-center gap-2'}>
+          {toolbar}
           <span className="hidden sm:inline text-[11px] text-gray-400" data-testid="ask-key-hint">
             {t('ask.keyHint')}
           </span>

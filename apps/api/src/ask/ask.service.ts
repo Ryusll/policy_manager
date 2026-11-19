@@ -2,12 +2,12 @@ import { HttpException, HttpStatus, Injectable, Logger, NotFoundException, Servi
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { todayDateOnly } from '../common/date-only';
-import { currentVersionsSql } from '../common/as-of';
 import { AskProvider, AskRefusedError, AiUsage } from './ask-provider';
 import { createAskProvider } from './ask-provider-factory';
 import { AI_QA_CONSENT_SELECT, aiQaNotice, aiQaState, assertAskAllowed, guardProvider } from './ask-notice';
 import { AskConsentService } from './ask-consent.service';
 import { answerStep, type AskCitation, type AskLawCitation } from './ask-answer';
+import { checkedScope, inForceRows, keywordGroups, type AskScopePolicy } from './ask-candidates';
 import {
   ASK_MAX_GROUPS,
   AnswerBlock,
@@ -16,7 +16,6 @@ import {
   buildContext,
   buildToc,
   groupRows,
-  joKey,
   questionKeywords,
   rowLabel,
 } from './ask-text';
@@ -42,6 +41,11 @@ export interface AskResult {
   /** AI 에 본문을 준 조 — 답하지 못했을 때 직원이 직접 확인할 수 있게 */
   consulted: { policyId: string; policyTitle: string; number: number; branchNumber: number | null; label: string }[];
   usage: { used: number; limit: number; userUsed: number; userLimit: number };
+}
+
+/** 질문 응답 — 답과 함께 물을 때 고른 범위(그때의 이름·코드, 비었으면 회사 전체, T-219) */
+export interface AskResponse extends AskResult {
+  scope: AskScopePolicy[];
 }
 
 /**
@@ -132,96 +136,22 @@ export class AskService {
   }
 
   /**
-   * 지금 시행 중인 조문 행 전부(본문 없이) — 목차와 낱말 찾기의 기준. "현재" 판정은 규정 상세·검색과
-   * 같은 규칙(`currentVersionsSql`, T-127)이다. 조 머리는 버전이 없어도(제목만 있는 조) 같은 조에 시행 중인
-   * 행이 있으면 넣는다.
-   */
-  private async inForceRows(tenantId: string) {
-    const today = todayDateOnly();
-    const picked = await this.prisma.$queryRaw<{ article_id: string; version_id: string; repealed_on: Date | null }[]>(
-      currentVersionsSql(tenantId, today, { activePoliciesOnly: true }),
-    );
-    const versionOf = new Map<string, string>();
-    for (const r of picked) {
-      if (r.repealed_on && r.repealed_on.getTime() <= today.getTime()) continue; // 그날 폐지 상태
-      versionOf.set(r.article_id, r.version_id);
-    }
-
-    const articles = await this.prisma.article.findMany({
-      where: { chapter: { policy: { tenantId, isActive: true } } },
-      select: {
-        id: true,
-        number: true,
-        branchNumber: true,
-        clauseNumber: true,
-        itemNumber: true,
-        title: true,
-        chapter: { select: { policy: { select: { id: true, title: true, code: true } } } },
-      },
-    });
-    const rows: (AskRow & { versionId: string | null })[] = articles.map((a) => ({
-      articleId: a.id,
-      policyId: a.chapter.policy.id,
-      policyTitle: a.chapter.policy.title,
-      policyCode: a.chapter.policy.code,
-      number: a.number,
-      branchNumber: a.branchNumber,
-      clauseNumber: a.clauseNumber,
-      itemNumber: a.itemNumber,
-      title: a.title,
-      content: '',
-      versionId: versionOf.get(a.id) ?? null,
-    }));
-    // 시행 중인 행이 하나라도 있는 조만 남기고, 그 조의 머리(버전 없는 제목 행)는 함께 둔다
-    const liveJo = new Set(rows.filter((r) => r.versionId).map((r) => joKey(r.policyId, r.number, r.branchNumber)));
-    return rows.filter(
-      (r) =>
-        liveJo.has(joKey(r.policyId, r.number, r.branchNumber)) &&
-        (r.versionId || (r.clauseNumber == null && r.itemNumber == null)),
-    );
-  }
-
-  /** 질문 낱말이 시행 중 본문·조문 제목에 들어 있는 조 — 들어 있는 낱말 수가 많은 순 */
-  private async keywordGroups(tenantId: string, keywords: string[], liveKeys: Set<string>): Promise<string[]> {
-    const score = new Map<string, number>();
-    const today = todayDateOnly();
-    for (const kw of keywords) {
-      const pattern = `%${kw.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
-      // 본문은 "현재" 버전만 본다(T-127) — 시행일 전인 개정 문구로 후보를 고르지 않는다
-      const hits = await this.prisma.$queryRaw<{ policy_id: string; number: number; branch_number: number | null }[]>(
-        Prisma.sql`
-          SELECT DISTINCT c.policy_id, a.number, a.branch_number
-          FROM articles a
-          JOIN chapters c ON c.id = a.chapter_id
-          JOIN policies p ON p.id = c.policy_id
-          LEFT JOIN (${currentVersionsSql(tenantId, today, { activePoliciesOnly: true })}) cur ON cur.article_id = a.id
-          WHERE p.tenant_id = ${tenantId} AND p.is_active = true
-            AND (a.title LIKE ${pattern} ESCAPE '\\' OR cur.content LIKE ${pattern} ESCAPE '\\')
-          LIMIT 200`,
-      );
-      for (const h of hits) {
-        const key = joKey(h.policy_id, h.number, h.branch_number);
-        if (liveKeys.has(key)) score.set(key, (score.get(key) ?? 0) + 1);
-      }
-    }
-    return [...score.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
-  }
-
-  /**
    * 한도 확인과 자리 잡기를 한 번에 한다 — **AI 를 부르기 전에 먼저 센다.**
    *
    * 예전에는 끝까지 간 질문만 기록해, AI 호출이 실패했거나(502) 고르기 단계에서 거절됐거나 답이 길이 제한에서
    * 끊긴 질문은 한도에 세지 않았다(비용은 나간다). 또 확인과 기록 사이가 떨어져 있어 동시에 들어온 질문이
    * 함께 한도를 넘을 수 있었다. 이제 회사 단위 잠금 아래에서 세고 "예약" 행을 먼저 남긴다 — AI 를 부르기
    * 전에 끝난 질문(시행 중인 규정이 없을 때, 그사이 관리자가 껐을 때 등)만 나중에 돌려준다.
+   * 확인 차례는 켜짐·고지(403) → 질문 범위(400, T-219) → 한도(429)이고, 어디서 막히든 기록 행은 남지 않는다.
    */
-  private async reserve(tenantId: string, userId: string | null, question: string) {
+  private async reserve(tenantId: string, userId: string | null, question: string, policyIds: string[] | undefined) {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai_qa:${tenantId}`}))`;
       // 켜짐은 한도와 같은 트랜잭션에서 본다 — 꺼진 회사는 기록 행도 남기지 않는다
       const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: AI_QA_CONSENT_SELECT });
       if (!tenant) throw new NotFoundException('Tenant not found');
       assertAskAllowed(aiQaState(tenant));
+      const scope = await checkedScope(tx, tenantId, policyIds);
       const { used, userUsed } = await this.usedThisMonth(tx, tenantId, userId);
       if (used >= this.monthlyLimit) {
         throw new HttpException(
@@ -244,10 +174,18 @@ export class AskService {
         );
       }
       const row = await tx.aiQaLog.create({
-        data: { tenantId, userId, question, answerable: false, aiCalled: true, citedArticleIds: [] },
+        data: {
+          tenantId,
+          userId,
+          question,
+          answerable: false,
+          aiCalled: true,
+          citedArticleIds: [],
+          scope: (scope ?? []) as unknown as Prisma.InputJsonValue,
+        },
         select: { id: true },
       });
-      return { id: row.id, used: used + 1, userUsed: userUsed + (userId ? 1 : 0) };
+      return { id: row.id, used: used + 1, userUsed: userUsed + (userId ? 1 : 0), scope };
     });
   }
 
@@ -294,13 +232,15 @@ export class AskService {
     });
   }
 
-  async ask(tenantId: string, userId: string | null, rawQuestion: string): Promise<AskResult> {
+  async ask(tenantId: string, userId: string | null, rawQuestion: string, policyIds?: string[]): Promise<AskResponse> {
     const question = rawQuestion.trim();
     const provider = this.provider;
     if (!provider) {
       throw new ServiceUnavailableException('규정 질문은 아직 준비 중입니다. 쓰려면 아스트룸에 문의하세요.');
     }
-    const slot = await this.reserve(tenantId, userId, question);
+    // 범위(T-219)는 예약 안에서 한도에 세기 전에 본다 — 잘못 고른 질문은 기록도 한도 차감도 없다
+    const slot = await this.reserve(tenantId, userId, question, policyIds);
+    const withScope = (result: AskResult): AskResponse => ({ ...result, scope: slot.scope ?? [] });
     // 예약 뒤에도 외부로 보내기 직전마다 회사 상태를 다시 본다 — 그사이 관리자가 끄면 보내지 않는다(T-146)
     const guard = guardProvider(provider, async () => {
       const latest = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: AI_QA_CONSENT_SELECT });
@@ -314,13 +254,14 @@ export class AskService {
       userLimit: this.userMonthlyLimit,
     });
     try {
-      return await this.answerQuestion(guard.provider, tenantId, slot.id, question, usages, usage);
+      const scopeIds = slot.scope?.map((p) => p.id) ?? null;
+      return withScope(await this.answerQuestion(guard.provider, tenantId, slot.id, question, usages, usage, scopeIds));
     } catch (e) {
       const extra = usageOf(e);
       if (extra) usages.push(extra);
       if (e instanceof AskRefusedError) {
         await this.finish(slot.id, { aiCalled: true, usages, failure: `refused:${e.message}`, reason: 'refused' });
-        return { answerable: false, reason: 'refused', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(true) };
+        return withScope({ answerable: false, reason: 'refused', blocks: [], citations: [], lawCitations: [], consulted: [], usage: usage(true) });
       }
       // AI 를 부르기 시작했으면 실패해도 비용이 났을 수 있다 — 예약을 그대로 두어 한도에 센다.
       // 부르기 전에 끝났으면(그사이 관리자가 껐을 때 등) 한도에서 돌려준다
@@ -337,9 +278,10 @@ export class AskService {
     question: string,
     usages: AiUsage[],
     usage: (aiCalled: boolean) => AskResult['usage'],
+    scope: string[] | null,
   ): Promise<AskResult> {
     // ① 근거 후보 — 목차에서 AI 가 고른 조 + 질문 낱말이 든 조
-    const rows = await this.inForceRows(tenantId);
+    const rows = await inForceRows(this.prisma, tenantId, scope);
     const groups = groupRows(rows);
     if (!groups.length) {
       // AI 를 부르지 않았다 — 한도에서 돌려준다
@@ -354,7 +296,7 @@ export class AskService {
     const byTocKey = new Map(toc.entries.map((e) => [e.key, e.group.key]));
     const selectedKeys = sel.keys.map((k) => byTocKey.get(k.trim())).filter((k): k is string => !!k);
     const liveKeys = new Set(groups.map((g) => g.key));
-    const keywordKeys = await this.keywordGroups(tenantId, questionKeywords(question), liveKeys);
+    const keywordKeys = await keywordGroups(this.prisma, tenantId, questionKeywords(question), liveKeys, scope);
     const chosen: string[] = [];
     for (const k of [...selectedKeys.slice(0, 10), ...keywordKeys]) {
       if (!chosen.includes(k)) chosen.push(k);
