@@ -1,5 +1,5 @@
 /**
- * 법령 관리 (T-100·T-102). 등록된 법령 목록 + 법제처 검색으로 신규 등록.
+ * 법령 관리 (T-100·T-102). 등록된 법령 목록 + 법제처 검색으로 신규 등록(등록 창은 components/RegisterLawModal).
  *
  * 법령은 테넌트 공용이다(ADR-0020) — 여기서 등록하면 모든 회사가 같이 본다.
  * 조회는 로그인만 하면 열리지만, 등록·삭제는 admin·editor 전용(백엔드 가드와 동일).
@@ -8,14 +8,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Scale, Search, Trash2, X } from 'lucide-react';
+import { Plus, Scale, Trash2 } from 'lucide-react';
 import { lawsApi } from '../api/laws';
-import { lawGoKrApi } from '../api/lawgokr';
 import { useAuthStore } from '../stores/authStore';
-import { toast } from '../stores/toastStore';
 import LawChangeList from '../components/LawChangeList';
 import LawSyncStaleNotice from '../components/LawSyncStaleNotice';
-import { useI18n } from '../i18n/useI18n';
+import RegisterLawModal from '../components/RegisterLawModal';
 
 export default function LawsPage() {
   const { user } = useAuthStore();
@@ -146,132 +144,6 @@ export default function LawsPage() {
       )}
 
       {showRegister && <RegisterLawModal onClose={() => setShowRegister(false)} />}
-    </div>
-  );
-}
-
-function RegisterLawModal({ onClose }: { onClose: () => void }) {
-  const qc = useQueryClient();
-  const { t } = useI18n();
-  const [input, setInput] = useState('');
-  const [query, setQuery] = useState('');
-  const [error, setError] = useState('');
-
-  const { data: config } = useQuery({ queryKey: ['lawgokr', 'status'], queryFn: lawGoKrApi.status });
-
-  const searchQuery = useQuery({
-    queryKey: ['lawgokr', 'search-for-register', query],
-    queryFn: () => lawGoKrApi.search({ q: query, display: 20 }),
-    enabled: !!query && config?.configured !== false,
-  });
-
-  const registerMutation = useMutation({
-    mutationFn: (mst: string) => lawsApi.register(mst),
-    onSuccess: (law) => {
-      qc.invalidateQueries({ queryKey: ['laws', 'list'] });
-      setError('');
-      onClose();
-      toast(
-        // T-151: 이 법령을 이미 다른 판으로 추적 중이면 새로 만들지 않고 그 법령을 돌려준다
-        // T-150: 요청한 판이 현행이 아니면 현행 판으로 등록했다 — 시행 예정 개정은 다음 동기화가 변경으로 받는다
-        law.alreadyTracked
-          ? t('laws.alreadyTracked', { name: law.lawName })
-          : law.beforePending
-            ? t('laws.registeredBeforePending', { name: law.lawName, pending: law.beforePending })
-            : law.requestedMst
-              ? t('laws.registeredCurrent', { name: law.lawName, requested: law.requestedMst })
-              : t('laws.registered', { name: law.lawName, count: law.articleCount }),
-        'success',
-      );
-    },
-    onError: (err: any) => {
-      setError(err?.response?.data?.message?.toString() || '법령을 등록하지 못했습니다.');
-    },
-  });
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h2 className="text-sm font-semibold text-gray-800">법령 등록</h2>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="p-4 space-y-3 overflow-y-auto">
-          {config?.configured === false ? (
-            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              법제처 연동이 설정되지 않았습니다. 서버 환경변수 <code className="font-mono">LAW_GO_KR_OC</code>가
-              필요합니다.
-            </p>
-          ) : (
-            <>
-              <form
-                className="flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const next = input.trim();
-                  if (next) setQuery(next);
-                }}
-              >
-                <div className="relative flex-1">
-                  <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    className="input w-full pl-8 text-sm"
-                    placeholder="법령명 검색 (예: 근로기준법)"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <button type="submit" className="btn-primary text-sm" disabled={!input.trim()}>
-                  검색
-                </button>
-              </form>
-
-              {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>}
-
-              {searchQuery.isFetching && <p className="text-xs text-gray-500">검색 중…</p>}
-
-              {searchQuery.data && (
-                <ul className="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
-                  {searchQuery.data.items.map((law) => (
-                    <li key={law.mst} className="flex items-center justify-between gap-3 p-2.5 hover:bg-gray-50/70">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{law.title}</p>
-                        <p className="text-[11px] text-gray-500">
-                          {[law.lawType, law.ministry].filter(Boolean).join(' · ')}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn-primary text-xs whitespace-nowrap shrink-0"
-                        disabled={registerMutation.isPending}
-                        onClick={() => {
-                          setError('');
-                          registerMutation.mutate(law.mst);
-                        }}
-                      >
-                        <Download size={13} />
-                        {registerMutation.isPending && registerMutation.variables === law.mst
-                          ? '등록 중…'
-                          : '등록'}
-                      </button>
-                    </li>
-                  ))}
-                  {searchQuery.data.items.length === 0 && (
-                    <li className="p-4 text-sm text-gray-500 text-center">검색 결과가 없습니다.</li>
-                  )}
-                </ul>
-              )}
-            </>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

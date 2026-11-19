@@ -14,9 +14,11 @@ import {
   LawGoKrSearchResponse,
   LawSearchResult,
   OneOrMany,
+  SearchPageRequest,
 } from './lawgokr.types';
 import { RegulationArticleNode } from '../regulation-parse/regulation-tree.builder';
 import { VERSION_LIST_PAGE_SIZE, lawDetailCacheKey, lawSearchCacheKey, lawVersionListCacheKey } from './lawgokr-cache-keys';
+import { LAW_SEARCH_RELEVANCE, RANK_PAGE_SIZE, searchRanked } from './lawgokr-search-rank';
 
 /**
  * T-53. 법제처 국가법령정보 공동활용 OPEN API 프록시.
@@ -49,10 +51,13 @@ export class LawGoKrService {
   private oc(): string {
     const oc = process.env.LAW_GO_KR_OC?.trim();
     if (!oc) {
-      throw new ServiceUnavailableException(
-        '법제처 API 인증값(LAW_GO_KR_OC)이 설정되지 않았습니다. ' +
-          '.env에 발급받은 인증값을 넣고 API를 재기동하세요.',
-      );
+      // code — 화면이 '다시 눌러도 풀리지 않는 실패'를 가려 문의하라고 안내한다(T-210)
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        code: 'LAWGOKR_NOT_CONFIGURED',
+        message: '법제처 API 인증값(LAW_GO_KR_OC)이 설정되지 않았습니다. .env에 발급받은 인증값을 넣고 API를 재기동하세요.',
+      });
     }
     return oc;
   }
@@ -63,7 +68,7 @@ export class LawGoKrService {
    * 법제처는 실패도 HTTP 200 + JSON으로 내려준다. 상태 코드만 보고 성공으로 판정하면
    * 오류 메시지가 그대로 파싱 대상이 되므로, 본문 모양으로 실패를 가려낸다.
    */
-  private async call<T>(path: string, params: Record<string, string | number | undefined>): Promise<T> {
+  private async call<T>(path: string, params: Record<string, string | number | undefined>, opts: { timeBody?: boolean } = {}): Promise<T> {
     const url = new URL(`${this.baseUrl}/${path}`);
     url.searchParams.set('OC', this.oc());
     url.searchParams.set('type', 'JSON');
@@ -74,8 +79,12 @@ export class LawGoKrService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let res: Response;
+    let body: string | undefined;
     try {
       res = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
+      // 검색(응답이 작다)은 본문까지 제한 시간 안에 받는다 — 본문이 멈추면 같은 쪽을 기다리는 요청이 모두 묶인다(T-210).
+      // 법령 본문 조회(수 MB)는 지금처럼 머리까지만 잰다
+      if (opts.timeBody) body = await res.text();
     } catch (e: any) {
       const reason = e?.name === 'AbortError' ? `응답 시간 초과(${this.timeoutMs}ms)` : e?.message || e;
       // URL에 OC가 들어 있으므로 절대 로그에 URL을 남기지 않는다.
@@ -85,7 +94,7 @@ export class LawGoKrService {
       clearTimeout(timer);
     }
 
-    const body = await res.text();
+    if (body === undefined) body = await res.text();
     if (!res.ok) {
       this.log.warn(`법제처 응답 오류 [${path}] status=${res.status}`);
       throw new BadGatewayException(`법제처 API가 오류를 반환했습니다 (HTTP ${res.status}).`);
@@ -104,10 +113,14 @@ export class LawGoKrService {
     if (parsed && typeof parsed.result === 'string' && parsed.LawSearch === undefined) {
       const detail = [parsed.result, parsed.msg].filter(Boolean).join(' ');
       this.log.error(`법제처 인증 실패 [${path}]: ${detail}`);
-      throw new ServiceUnavailableException(
-        `법제처 API 인증에 실패했습니다: ${detail} ` +
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        code: 'LAWGOKR_AUTH',
+        message:
+          `법제처 API 인증에 실패했습니다: ${detail} ` +
           '(인증값이 맞는지, 그리고 법제처에 등록된 서버 IP·도메인에 이 서버가 들어 있는지 확인하세요.)',
-      );
+      });
     }
 
     return parsed as T;
@@ -118,7 +131,12 @@ export class LawGoKrService {
     return Array.isArray(value) ? value : [value];
   }
 
-  /** 법령명 검색. `search=2`면 본문까지 훑는다. */
+  /**
+   * 법령명 검색. `search=2`면 본문까지 훑는다.
+   *
+   * 정렬을 주지 않은 법령명 검색은 **검색어와 맞는 순**으로 준다(T-210, LAW-28) — 법제처는 가나다순으로만 주어, 이름이 같은
+   * 법령이 약칭에 걸린 법령들 뒤로 밀린다("상법"은 56건 중 34번째). 정렬을 직접 준 요청과 본문 검색은 법제처 순서 그대로다.
+   */
   async search(options: {
     query: string;
     page?: number;
@@ -126,35 +144,61 @@ export class LawGoKrService {
     sort?: string;
     searchScope?: 1 | 2;
   }): Promise<LawSearchResult> {
-    const query = options.query.trim();
+    // 자소가 풀린 검색어(맥 파일 이름에서 복사한 글자)는 법제처가 0건을 준다(2026-11-18 실호출) — 합친 꼴로 보낸다
+    const query = options.query.trim().normalize('NFC');
     const page = Math.max(1, Math.trunc(options.page || 1));
     const display = Math.min(100, Math.max(1, Math.trunc(options.display || 20)));
-    const sort = options.sort || 'lasc';
     const scope = options.searchScope === 2 ? 2 : 1;
+    const sort = options.sort || (scope === 1 ? LAW_SEARCH_RELEVANCE : 'lasc');
 
-    const cacheKey = lawSearchCacheKey({ scope, sort, display, page, query });
-    const cached = await this.cache.get<LawSearchResult>(cacheKey);
+    if (sort !== LAW_SEARCH_RELEVANCE) return this.searchPage({ query, page, display, sort, scope });
+    // 본문 검색에는 이름으로 견줄 근거가 없다 — 맞는 순을 청해도 법제처 순서로 준다
+    if (scope === 2) return this.searchPage({ query, page, display, sort: 'lasc', scope });
+
+    const byName = (p: number, size: number, fresh = false) =>
+      this.searchPage({ query, page: p, display: size, sort: 'lasc', scope: 1 }, fresh);
+    const ranked = await searchRanked((p, fresh) => byName(p, RANK_PAGE_SIZE, fresh), query, page, display);
+    // 너무 많아 줄 세우지 못했으면 청한 쪽을 가나다순 그대로 — 그 사실을 응답에 싣는다
+    return ranked ?? { ...(await byName(page, display)), ranked: false };
+  }
+
+  private readonly searchInFlight = new Map<string, Promise<LawSearchResult>>();
+
+  /**
+   * 법제처 목록 한 쪽을 받은 순서 그대로(캐시 포함). 쪽 캐시의 뜻은 T-210 전과 같다 — 줄 세운 결과는 캐시하지 않는다.
+   * `fresh` 면 캐시를 읽지 않고 새로 받아 덮어쓴다(쪽마다 받은 시각이 달라 총건수가 어긋났을 때).
+   */
+  private async searchPage(o: SearchPageRequest, fresh = false): Promise<LawSearchResult> {
+    const cacheKey = lawSearchCacheKey(o);
+    const cached = fresh ? null : await this.cache.get<LawSearchResult>(cacheKey);
     if (cached) return cached;
+    // 같은 쪽을 동시에 청한 요청들은 법제처 호출 하나를 같이 기다린다 — 줄 세우기는 요청 하나가 최대 5쪽을 받는다
+    const running = this.searchInFlight.get(cacheKey);
+    if (running !== undefined) return running;
+    const request = this.fetchSearchPage(o, cacheKey).finally(() => this.searchInFlight.delete(cacheKey));
+    this.searchInFlight.set(cacheKey, request);
+    return request;
+  }
 
-    const raw = await this.call<LawGoKrSearchResponse>('lawSearch.do', {
-      target: 'law',
-      query,
-      page,
-      display,
-      sort,
-      search: scope,
-    });
-
+  private async fetchSearchPage(o: SearchPageRequest, cacheKey: string): Promise<LawSearchResult> {
+    const { query, page, display, sort, scope } = o;
+    const params = { target: 'law', query, page, display, sort, search: scope };
+    const raw = await this.call<LawGoKrSearchResponse>('lawSearch.do', params, { timeBody: true });
     const box = raw.LawSearch;
-    const result: LawSearchResult = {
-      total: Number(box?.totalCnt ?? 0) || 0,
-      page,
-      display,
-      items: LawGoKrService.toArray<LawGoKrSearchItem>(box?.law)
-        .map(mapSearchItem)
-        .filter((item) => item.mst),
-    };
-
+    // 상자가 없거나 결과 코드가 성공('00')이 아니면 '0건'이 아니라 실패다 — 0건으로 읽어 캐시하면 10분 동안 없는 법령이 된다
+    if (!box || (box.resultCode !== undefined && String(box.resultCode) !== '00')) {
+      this.log.warn(`법제처 검색 응답이 올바르지 않습니다 (resultCode=${String(box?.resultCode ?? '없음')})`);
+      throw new BadGatewayException('법제처 API 응답 형식이 올바르지 않습니다.');
+    }
+    const rows = LawGoKrService.toArray<LawGoKrSearchItem>(box.law);
+    const total = Number(box.totalCnt ?? 0) || 0;
+    // 총건수 안의 쪽인데 한 줄도 없으면 법제처가 쪽을 비워 준 것이다 — 0건으로 읽어 캐시하면 그 쪽 법령이 10분 동안 없는 것이 된다.
+    // (끝을 넘긴 쪽은 원래 비어 온다. 판정은 거르기 전 행 수로 — 법령일련번호가 빈 행만 있는 쪽은 비어 온 것이 아니다)
+    if (rows.length === 0 && (page - 1) * display < total) {
+      this.log.warn(`법제처 검색 쪽이 비어 왔습니다 (page=${page}, totalCnt=${total})`);
+      throw new BadGatewayException('법제처 목록을 온전히 받지 못했습니다. 잠시 뒤 다시 검색해 주세요.');
+    }
+    const result: LawSearchResult = { total, page, display, items: rows.map(mapSearchItem).filter((item) => item.mst) };
     await this.cache.set(cacheKey, result, this.searchTtl);
     return result;
   }

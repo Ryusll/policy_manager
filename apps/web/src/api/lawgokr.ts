@@ -27,10 +27,16 @@ export type LawSearchItem = {
 };
 
 export type LawSearchResult = {
+  /** 전체 건수 — 줄 세운 결과(`ranked: true`)면 줄 세운 건수, 그 밖에는 법제처 총건수 */
   total: number;
   page: number;
   display: number;
   items: LawSearchItem[];
+  /**
+   * 법령명 검색에만 실린다(T-210, LAW-28). true — 검색어와 맞는 순으로 줄 세웠다.
+   * false — 결과가 너무 많아 법제처 순서(가나다) 그대로다. 이때는 검색어를 좁히라고 알린다.
+   */
+  ranked?: boolean;
 };
 
 /** 법제처 세션의 `extractMeta`에 실려 오는 서지사항 */

@@ -12,6 +12,8 @@ import { Search, Scale, Download, ExternalLink } from 'lucide-react';
 import { clsx } from 'clsx';
 import { lawGoKrApi, type LawSearchItem } from '../api/lawgokr';
 import { regulationParseApi, type ParseSession } from '../api/regulationParse';
+import { useI18n } from '../i18n/useI18n';
+import { LAW_SEARCH_QUERY_MAX, retrySearch, searchFailureText } from '../lib/lawSearchPages';
 
 const PAGE_SIZE = 20;
 
@@ -20,6 +22,7 @@ export function LawGoKrSearchPanel({
 }: {
   onSessionCreated: (session: ParseSession) => void;
 }) {
+  const { t } = useI18n();
   const [input, setInput] = useState('');
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<'title' | 'fulltext'>('title');
@@ -36,10 +39,12 @@ export function LawGoKrSearchPanel({
     data: result,
     isFetching,
     error: searchError,
+    refetch,
   } = useQuery({
     queryKey: ['lawgokr', 'search', query, scope, page],
     queryFn: () => lawGoKrApi.search({ q: query, page, display: PAGE_SIZE, scope }),
     enabled: !!query && config?.configured !== false,
+    retry: retrySearch, // 요청이 틀린 실패(4xx)는 다시 보내지 않는다(T-210)
   });
 
   const importMutation = useMutation({
@@ -55,6 +60,8 @@ export function LawGoKrSearchPanel({
     const next = input.trim();
     if (!next) return;
     setError('');
+    // 같은 검색어를 1쪽에서 다시 내면(검색 실패 뒤 재시도) 상태가 안 바뀌어 요청이 나가지 않는다 — 직접 다시 부른다(T-210)
+    if (next === query && page === 1) void refetch();
     setPage(1);
     setQuery(next);
   };
@@ -97,6 +104,7 @@ export function LawGoKrSearchPanel({
             className="input w-full pl-8 text-sm"
             placeholder="법령명 검색 (예: 근로기준법)"
             value={input}
+            maxLength={LAW_SEARCH_QUERY_MAX}
             onChange={(e) => setInput(e.target.value)}
           />
         </div>
@@ -120,8 +128,9 @@ export function LawGoKrSearchPanel({
         <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
       )}
       {searchError && (
-        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
-          {(searchError as any)?.response?.data?.message?.toString() || '법제처 검색에 실패했습니다.'}
+        <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          {/* 등록 창과 같은 갈래 — 법제처 연결 문제는 고객용 문구로, 다시 눌러 풀리는 실패에만 재시도 안내(T-210) */}
+          {searchFailureText(searchError, false, t)}
         </p>
       )}
 
@@ -146,6 +155,12 @@ export function LawGoKrSearchPanel({
           <p className="text-[11px] text-gray-500 px-1">
             전체 {total.toLocaleString()}건 · {page}/{lastPage} 페이지
           </p>
+          {/* 법령명 검색은 서버가 검색어와 맞는 순으로 준다. 결과가 너무 많으면 가나다순 그대로라 그 사실을 알린다(T-210, LAW-28) */}
+          {result.ranked === false && (
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+              {t('lawSearch.unranked')}
+            </p>
+          )}
           <ul className="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
             {result.items.map((law) => (
               <LawRow
@@ -200,8 +215,11 @@ function LawRow({
   pendingMst?: string;
   onImport: (mst: string) => void;
 }) {
+  const { t } = useI18n();
   const isThis = busy && pendingMst === law.mst;
-  const meta = [law.lawType, law.revisionType, law.ministry].filter(Boolean).join(' · ');
+  // 약칭에 걸려 나온 결과가 왜 나왔는지 알 수 있게 약칭도 적는다(LAW-28)
+  const short = law.shortTitle ? t('lawSearch.shortTitle', { name: law.shortTitle }) : null;
+  const meta = [law.lawType, law.revisionType, law.ministry, short].filter(Boolean).join(' · ');
   return (
     <li className="flex items-start justify-between gap-3 p-3 bg-white hover:bg-gray-50/70">
       <div className="min-w-0 flex-1">

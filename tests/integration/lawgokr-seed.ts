@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
 import { randomInt, randomUUID } from 'crypto';
 import { mapLawDetail, mapSearchItem } from '../../apps/api/src/lawgokr/lawgokr.mapper';
-import { lawDetailCacheKey, lawVersionListCacheKey, VERSION_LIST_PAGE_SIZE } from '../../apps/api/src/lawgokr/lawgokr-cache-keys';
+import { lawDetailCacheKey, lawSearchCacheKey, lawVersionListCacheKey, VERSION_LIST_PAGE_SIZE } from '../../apps/api/src/lawgokr/lawgokr-cache-keys';
 
 /**
  * 가짜 법제처 — API 가 법제처를 부르기 전에 캐시(Redis)를 먼저 보는 점을 써서(lawgokr.service), 응답을 캐시에 심는다(T-151).
@@ -142,6 +142,48 @@ export class FakeLaw {
     if (this.keys.size) redis(['DEL', ...this.keys]);
     this.keys.clear();
   }
+}
+
+/** 가짜 법령명 검색 결과의 한 줄 */
+export interface FakeSearchRow {
+  mst: string;
+  title: string;
+  shortTitle?: string;
+}
+
+/**
+ * 가짜 법령명 검색 결과(T-210) — 법제처가 가나다순으로 줄 목록을 `display` 건씩 쪽으로 나눠, 서비스가 읽는 쪽 캐시 키(법령명 검색·
+ * 가나다순)로 심는다. 줄 세우기는 100건 쪽을 읽고, 500건 초과로 가나다순 그대로 넘길 때는 청한 건수의 쪽을 읽는다.
+ *
+ * 검색어는 시험마다 다른 것을 쓴다 — 실제 검색어에 심으면 그동안 같은 Redis 를 보는 다른 세션이 가짜 결과를 본다.
+ * `total` 을 따로 주면 "법제처에는 더 있다"를 흉내 낸다. 지우는 함수를 돌려준다(afterAll 에서 부른다)
+ */
+export function seedLawSearch(query: string, rows: FakeSearchRow[], display = 100, total = rows.length): () => void {
+  const keys: string[] = [];
+  // 빈 목록도 1쪽은 심는다(0건) — 안 심으면 API 가 캐시를 못 찾아 진짜 법제처를 부른다
+  for (let page = 1; page === 1 || (page - 1) * display < rows.length; page += 1) {
+    const items = rows.slice((page - 1) * display, page * display).map((r) =>
+      mapSearchItem({
+        법령일련번호: r.mst,
+        법령ID: `9${r.mst.slice(-5)}`,
+        법령명한글: r.title,
+        법령약칭명: r.shortTitle ?? '',
+        법령구분명: '법률',
+        공포일자: '20260101',
+        공포번호: '1',
+        시행일자: '20260101',
+        제개정구분명: '일부개정',
+        현행연혁코드: '현행',
+      }),
+    );
+    const key = lawSearchCacheKey({ scope: 1, sort: 'lasc', display, page, query });
+    const out = redis(['-x', 'SETEX', key, '900'], JSON.stringify({ total, page, display, items }));
+    if (out !== 'OK') throw new Error(`캐시 심기 실패(${key}): ${out}`);
+    keys.push(key);
+  }
+  return () => {
+    if (keys.length) redis(['DEL', ...keys]);
+  };
 }
 
 /**

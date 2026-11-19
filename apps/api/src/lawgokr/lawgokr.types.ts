@@ -103,8 +103,20 @@ export interface LawGoKrSearchResponse {
   LawSearch?: {
     totalCnt?: string | number;
     page?: string | number;
+    /** 성공이면 '00'(0건·끝을 넘긴 쪽도 '00' — 2026-11-18 실호출) */
+    resultCode?: string | number;
+    resultMsg?: string;
     law?: OneOrMany<LawGoKrSearchItem>;
   };
+}
+
+/** 법령명·본문 검색 한 쪽의 요청(캐시 키와 같은 칸) */
+export interface SearchPageRequest {
+  query: string;
+  page: number;
+  display: number;
+  sort: string;
+  scope: 1 | 2;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -134,10 +146,16 @@ export interface LawSearchResultItem {
 }
 
 export interface LawSearchResult {
+  /** 전체 건수. 줄 세운 결과(`ranked: true`)면 줄 세운 건수이고, 그 밖에는 법제처가 알려 준 총건수다 */
   total: number;
   page: number;
   display: number;
   items: LawSearchResultItem[];
+  /**
+   * 정렬을 주지 않은 법령명 검색에만 실린다(T-210, LAW-28). true — 검색어와 맞는 순으로 줄 세웠다.
+   * false — 결과가 너무 많아(`RANK_POOL_MAX` 초과) 법제처 순서(가나다) 그대로다. 화면은 이때 검색어를 좁히라고 알린다.
+   */
+  ranked?: boolean;
 }
 
 /** 본문 조회 결과의 메타(법령 서지사항) */
