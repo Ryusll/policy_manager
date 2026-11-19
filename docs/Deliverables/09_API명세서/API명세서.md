@@ -391,6 +391,14 @@
 > 규칙으로 고칠 근거가 확실하지 않으면 본문은 제1 조문 그대로이고 `reviewFlags` 에 `manual_draft_required`(그 밖에 `ambiguous_match`·`context_unclear`·`rule_conflict`·`relation_review_only`·`scope_review`·`law_provision_repealed`·`unexplained_change`·`unmapped_law_change`).
 > `approve` 는 **사람의 승인을 요구하는 것이 제품 요구사항이자 특허 청구항의 구성요소**다 — 자동 발행 경로를 만들지 않는다([ADR-0021](../10_ADR_의사결정기록/ADR.md)).
 
+## dashboard (`/api/dashboard`) — 대시보드 지표, ⚠️ **테넌트별** ✅ 구현됨 (T-213, SRS LAW-29·LAW-19 수정)
+
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| GET | overview | admin·editor | **지표 카드 넷과 법령 개정 구역의 숫자**를 한 스냅숏(`readSnapshot` — 규정 본문과 같은 읽기 전용 REPEATABLE READ·문장 제한, 시작 대기나 제한을 넘기면 503 '현황 숫자를 읽는 데 너무 오래 걸려 멈췄습니다 — 잠시 뒤 다시 시도하세요.' — 읽기만 하니 다시 시도하면 된다)으로 돌려준다. `policies {active, inactive, articlesInForce}` — 활성·비활성 규정 수, 활성 규정의 오늘 시행 중인 조 수(같은 장에서 조 번호·가지 번호가 같은 행 — 머리·항·호 — 을 한 조로 묶고, 그 가운데 하나라도 오늘 시행 중인 판이 있으면 1. 현재 판 고르기는 `currentVersionsSql`, 폐지일이 오늘 이하면 빼고, 초안만·시행 예정만 있는 조는 세지 않는다). `links {confirmedLinks, suggestedLinks, linkedLaws, oldestCheckedAt, failedLaws, uncheckedLaws}` — 회사 경계(`ourLinks`)의 확정·추천 연결 수, 확정 연결이 닿는 법령 수, 그 법령들의 마지막 확인(성공 — 법령별 `lastCheckedAt`) 가운데 가장 오래된 시각(ISO, 성공한 확인이 없으면 null), 마지막 확인이 실패한 법령 수와 실패 없이 확인 기록도 없는 법령 수(한 법령을 둘에 세지 않는다). `candidates {draft, review}` — 개정 검토 기본 목록과 같은 조건(`candidateListWhere`)의 작성·검토 수(합 = 메뉴 배지). `scheduled {amend, repeal}` — 제·개정 예고(`GET /policies/scheduled-changes`)와 같은 조건·같은 단위(조문 행, 규정·날짜 묶음마다)를 상한 없이 더한 수. `recentLawChanges[]` — 우리 확정 연결이 닿는 변경과 우리 후보(상태 무관)의 변경을 법령·법령 시행일로 묶은 줄 다섯(법령 시행일이 없는 변경은 공포일로, 공포일도 없으면 감지한 날로 가른다): `{key, lawId, lawName(약칭 우선), lawFullName, promulgatedDate, effectiveDate, detectedDate, articles, pending, approved, rejected}` — 공포일이 늦은 순(없으면 감지한 날 `detectedDate` — 한국 날짜, 같으면 늦게 감지한 것), 우리 조문 = 확정 연결로 닿는 조문 ∪ 그 줄의 후보 조문. 줄은 DB 가 (법령, 법령 시행일, 공포일)로 묶은 값으로 고르고(확정 연결로 닿는 변경과 우리 후보의 변경을 따로 묶어 합친다 — 인덱스를 타게) 고른 줄의 변경·후보만 읽는다(변경 이력 전체를 받지 않는다) |
+
+> **viewer 에게는 열지 않는다(403).** 개정 후보·법령 연결 숫자는 확정 전 내부 정보다(개정 후보·법령 연결 API 와 같은 역할 범위). 숫자에 AI 의견·위험 등급을 섞지 않는다(LAW-23). 화면은 조회 키를 `['amendments','dashboard']` 로 둬 연결·후보 동작 뒤 배너·배지와 함께 다시 읽는다.
+
 ## health (`/api/health`)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|

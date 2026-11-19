@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { parseSnapshot, positionKey, type Position, type StructureSnapshot } from '../common/article-structure';
 import { placeArticle, placeAsOf } from './as-of-structure';
+import { listScheduledGroups } from './scheduled-groups';
 import {
   AS_OF_VERSION_ORDER,
   asOfState,
@@ -274,66 +275,17 @@ export class PoliciesService {
    * 승인해도 나오지 않았다.
    */
   async findScheduledChanges(tenantId: string, limit = 10) {
-    const today = todayDateOnly();
-    // 항·목 행이면 firstArticle 이 '제3조제2항(부제)'가 되도록 항·목 번호도 읽는다(T-211)
-    const articleSelect = {
-      id: true,
-      number: true,
-      branchNumber: true,
-      clauseNumber: true,
-      itemNumber: true,
-      title: true,
-      chapter: { select: { policy: { select: { id: true, code: true, title: true, isActive: true } } } },
-    } as const;
-    // 같은 날 묶음의 첫 줄(firstArticle)이 조 → 가지 → 조 본문 → 항 → 목 순으로 정해지게(예전에는 조 번호만 봐서 같은 조의 어느 행이 먼저일지 몰랐다)
-    const byArticle = ARTICLE_ORDER.map((order) => ({ article: order }));
-    const rows = await this.prisma.articleVersion.findMany({
-      where: { ...scheduledVersionWhere(today), article: { chapter: { policy: { tenantId } } } },
-      orderBy: [{ effectiveDate: 'asc' }, ...byArticle],
-      select: { effectiveDate: true, article: { select: articleSelect } },
-    });
-    // 폐지 예정(T-132 ③) — 오늘은 시행 중이고 이 날부터 빠지는 조문
-    const repeals = await this.prisma.articleVersion.findMany({
-      where: { repealedOn: { gt: today }, status: { in: ['published', 'archived'] }, article: { chapter: { policy: { tenantId } } } },
-      orderBy: [{ repealedOn: 'asc' }, ...byArticle],
-      select: { repealedOn: true, article: { select: articleSelect } },
-    });
-    const groups = new Map<
-      string,
-      {
-        policyId: string;
-        code: string;
-        title: string;
-        isActive: boolean;
-        effectiveDate: string;
-        articleIds: Set<string>;
-        repealIds: Set<string>;
-        firstArticle: string;
-      }
-    >();
-    const add = (date: Date, article: (typeof rows)[number]['article'], kind: 'amend' | 'repeal') => {
-      const p = article.chapter.policy;
-      const day = toDateOnlyString(date);
-      const key = `${p.id}|${day}`;
-      const g = groups.get(key) ?? {
-        policyId: p.id,
-        code: p.code,
-        title: p.title,
-        isActive: p.isActive,
-        effectiveDate: day,
-        articleIds: new Set<string>(),
-        repealIds: new Set<string>(),
-        firstArticle: formatArticleRowHeading(article),
-      };
-      (kind === 'amend' ? g.articleIds : g.repealIds).add(article.id);
-      groups.set(key, g);
-    };
-    for (const r of rows) add(r.effectiveDate!, r.article, 'amend');
-    for (const r of repeals) add(r.repealedOn!, r.article, 'repeal');
-    return [...groups.values()]
+    // 묶기는 대시보드 '사내 시행 예정' 카드와 같은 함수(T-213) — 카드 수와 목록이 갈라지지 않게. 첫 줄 표기는 '제3조제2항(부제)'(T-211)
+    const groups = await listScheduledGroups(this.prisma, tenantId, todayDateOnly());
+    return groups
       .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate) || a.title.localeCompare(b.title))
       .slice(0, Math.min(Math.max(limit, 1), 50))
-      .map(({ articleIds, repealIds, ...g }) => ({ ...g, articleCount: articleIds.size, repealCount: repealIds.size }));
+      .map(({ articleIds, repealIds, firstArticle, ...g }) => ({
+        ...g,
+        firstArticle: formatArticleRowHeading(firstArticle),
+        articleCount: articleIds.size,
+        repealCount: repealIds.size,
+      }));
   }
 
   /**

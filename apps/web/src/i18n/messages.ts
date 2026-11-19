@@ -1,9 +1,11 @@
 import type { Locale } from '../stores/localeStore';
+import { dashboardMessages } from './messages.dashboard';
 
 type Msg = Record<string, string | string[] | Record<string, unknown>>;
 
 export const messages: Record<Locale, Msg> = {
   ko: {
+    ...dashboardMessages.ko, // 화면별로 나눈 문구(T-213) — 같은 키를 아래에 또 두지 않는다
     'layout.appTitle': '베다(Veda)',
     'layout.productTitle': '규정관리 시스템',
     'layout.subtitle': '정책·규정 통합 플랫폼',
@@ -104,10 +106,6 @@ export const messages: Record<Locale, Msg> = {
     'dashboard.welcomeLine': '{name}({role}) 님, 안녕하세요.',
     'dashboard.searchPlaceholder': '규정 내용을 검색하세요...',
     'dashboard.search': '검색',
-    'dashboard.stat.total': '전체 규정',
-    'dashboard.stat.active': '시행중 규정',
-    'dashboard.stat.inactive': '비활성 규정',
-    'dashboard.stat.role': '권한',
     'dashboard.recent': '최근 등록 규정',
     'dashboard.viewAll': '전체보기',
     'dashboard.code': '규정코드',
@@ -565,7 +563,7 @@ export const messages: Record<Locale, Msg> = {
     'amendmentDoc.duplicateArticle': '같은 조문의 개정 후보가 둘 이상이라 한 문서에 넣을 수 없습니다. 후보 상세 화면에서 하나씩 내 주세요.',
     'amendmentDoc.stale': '{article} 후보의 기준 본문이 지금 시행 중인 본문과 다릅니다. 그 후보 상세 화면의 안내를 따른 뒤 다시 하세요.',
     'amendmentDoc.staleAny': '기준 본문이 지금 시행 중인 본문과 다른 후보가 있습니다. 후보 상세 화면의 안내를 따른 뒤 다시 하세요.',
-    'dashboard.lawBanner.title': '법령 개정',
+    'dashboard.lawBanner.title': '처리할 개정',
     'dashboard.lawBanner.review': '처리 대기 후보 {count}건 검토하기',
     'dashboard.lawBanner.upcoming': '{date} 시행 예정 「{law}」 개정 — 우리 조문 {articles}개, 처리 대기 후보 {pending}건',
     'dashboard.lawBanner.overdue': '이미 시행된 법령 개정의 처리 대기 후보 {count}건',
@@ -744,6 +742,7 @@ export const messages: Record<Locale, Msg> = {
     'ask.reason.no_regulations_scope': '고른 규정에 지금 시행 중인 조문이 없어 답할 수 없습니다. 범위를 넓혀 다시 물어 보세요.',
   },
   en: {
+    ...dashboardMessages.en,
     'layout.appTitle': 'Veda',
     'layout.productTitle': 'Policy Management System',
     'layout.subtitle': 'Policy management platform',
@@ -833,10 +832,6 @@ export const messages: Record<Locale, Msg> = {
     'lawChanges.empty': 'No law changes detected.',
     'dashboard.searchPlaceholder': 'Search policy content...',
     'dashboard.search': 'Search',
-    'dashboard.stat.total': 'All policies',
-    'dashboard.stat.active': 'Active',
-    'dashboard.stat.inactive': 'Inactive',
-    'dashboard.stat.role': 'Role',
     'dashboard.recent': 'Recently added',
     'dashboard.viewAll': 'View all',
     'dashboard.code': 'Code',
@@ -1293,7 +1288,7 @@ export const messages: Record<Locale, Msg> = {
     'amendmentDoc.duplicateArticle': 'An article has more than one candidate, so they cannot go into one document. Export them one at a time from their detail pages.',
     'amendmentDoc.stale': 'The candidate for {article} was made from text that is no longer in force. Follow the notice on its detail page, then try again.',
     'amendmentDoc.staleAny': 'Some candidates were made from text that is no longer in force. Follow the notice on their detail pages, then try again.',
-    'dashboard.lawBanner.title': 'Law amendments',
+    'dashboard.lawBanner.title': 'To review',
     'dashboard.lawBanner.review': 'Review pending candidates ({count})',
     'dashboard.lawBanner.upcoming': 'Amendment to “{law}” takes effect {date} — our provisions: {articles}, pending candidates: {pending}',
     'dashboard.lawBanner.overdue': 'Pending candidates for amendments already in effect: {count}',

@@ -31,6 +31,7 @@ import { PlatformBrandingModule } from './platform-branding/platform-branding.mo
 import { NotificationsModule } from './notifications/notifications.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import { AskModule } from './ask/ask.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { LockBusyFilter } from './common/lock-busy.filter';
 
 @Module({
@@ -64,6 +65,7 @@ import { LockBusyFilter } from './common/lock-busy.filter';
     NotificationsModule,
     FavoritesModule,
     AskModule,
+    DashboardModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

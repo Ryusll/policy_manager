@@ -8,7 +8,8 @@ import { useMemo } from 'react';
 import { useI18n } from '../i18n/useI18n';
 import { PageHeader } from '../components/ui/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
-import LawAmendmentBanner from '../components/LawAmendmentBanner';
+import DashboardStatCards from '../components/dashboard/DashboardStatCards';
+import LawAmendmentSection from '../components/dashboard/LawAmendmentSection';
 import DashboardAskEntry from '../components/DashboardAskEntry';
 
 type UserRole = 'admin' | 'editor' | 'viewer';
@@ -43,13 +44,11 @@ export default function DashboardPage() {
     queryFn: policiesApi.list,
   });
 
-  // 승인된 미래 시행 조문 개정 — 예고에 함께(T-132 ⑤). 못 받아도 규정 시행일 예고는 그대로
-  const { data: scheduledChanges = [] } = useQuery({
+  // 승인된 미래 시행 조문 개정 — 예고에 함께(T-132 ⑤). 못 받아도 규정 시행일 예고는 그대로 보이되, 못 받은 것을 알린다(T-213 — 카드 수와 목록이 어긋나 보이지 않게)
+  const { data: scheduledChanges = [], isError: scheduledFailed } = useQuery({
     queryKey: ['policies', 'scheduled-changes'],
     queryFn: () => policiesApi.scheduledChanges(20),
   });
-
-  const activeCount = policies.filter((p: any) => p.isActive).length;
 
   const recentPolicies = useMemo(() => {
     return [...policies]
@@ -64,20 +63,6 @@ export default function DashboardPage() {
   // 최근 개정 / 제·개정 예고 (T-78)
   const revised = useMemo(() => recentlyRevised(policies as any[], 5), [policies]);
   const upcoming = useMemo(() => mergeUpcoming(policies as any[], scheduledChanges, 5), [policies, scheduledChanges]);
-
-  const stats = useMemo(
-    () => [
-      { label: t('dashboard.stat.total'), value: policies.length, color: 'border-l-navy-600' },
-      { label: t('dashboard.stat.active'), value: activeCount, color: 'border-l-blue-500' },
-      { label: t('dashboard.stat.inactive'), value: policies.length - activeCount, color: 'border-l-gray-400' },
-      {
-        label: t('dashboard.stat.role'),
-        value: user?.role && isUserRole(user.role) ? roleLabel[user.role] : user?.role || '-',
-        color: 'border-l-gold-500',
-      },
-    ],
-    [t, locale, policies.length, activeCount, roleLabel, user?.role],
-  );
 
   const canCreate = user?.role === 'admin' || user?.role === 'editor';
 
@@ -104,29 +89,22 @@ export default function DashboardPage() {
       {/* 규정 질문 입구(T-217) — 켜져 있을 때만. 열람자는 대시보드에 오지 않고 메뉴로 묻는다 */}
       <DashboardAskEntry />
 
-      {/* 법령 개정 배너(T-158) — 관리자·편집자만(열람자는 개정 후보를 보지 않는다) */}
-      {canCreate && <LawAmendmentBanner />}
+      {/* 지표 카드 넷과 늘 보이는 법령 개정 구역(T-213, SRS LAW-29·LAW-19) — 관리자·편집자만(열람자는 개정 후보·연결을 보지 않는다) */}
+      {canCreate && <DashboardStatCards />}
+      {canCreate && <LawAmendmentSection />}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {stats.map((s, i) => (
-          <div key={i} className={`stat-card ${s.color}`}>
-            <div className="text-2xl font-bold text-gray-900 tabular-nums">{s.value}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {(revised.length > 0 || upcoming.length > 0) && (
+      {/* 관리자·편집자에게는 늘 그린다 — 지표 카드 '사내 시행 예정'이 가리키는 곳(#dashboard-scheduled)이 비어도 있어야 한다 */}
+      {(canCreate || revised.length > 0 || upcoming.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           <div className="section-card">
             <div className="section-card__head">
-              <h2>최근 개정</h2>
+              <h2>{t('dashboard.revised.title')}</h2>
               <Link to="/policies" className="text-xs text-navy-200 hover:text-white inline-flex items-center gap-1">
-                전체 <ArrowRight size={12} />
+                {t('dashboard.viewAll')} <ArrowRight size={12} />
               </Link>
             </div>
             {revised.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-gray-500">개정일이 기록된 규정이 없습니다.</p>
+              <p className="px-4 py-6 text-sm text-gray-500">{t('dashboard.revised.empty')}</p>
             ) : (
               <ul className="divide-y divide-gray-100">
                 {revised.map((policy) => (
@@ -145,12 +123,19 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="section-card">
+          {/* 지표 카드 '사내 시행 예정'이 이 구역으로 온다(id) */}
+          <div className="section-card scroll-mt-4" id="dashboard-scheduled">
             <div className="section-card__head">
-              <h2>제·개정 예고</h2>
+              <h2>{t('dashboard.upcoming.title')}</h2>
             </div>
+            {scheduledFailed && (
+              <p className="px-4 pt-3 text-xs text-red-700" role="alert">
+                {t('dashboard.upcoming.loadFailed')}
+              </p>
+            )}
             {upcoming.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-gray-500">시행 예정인 규정이 없습니다.</p>
+              // 조문 시행 예정을 못 받았으면 '없습니다'라고 단정하지 않는다(위 실패 안내만)
+              scheduledFailed ? null : <p className="px-4 py-6 text-sm text-gray-500">{t('dashboard.upcoming.empty')}</p>
             ) : (
               <ul className="divide-y divide-gray-100">
                 {upcoming.map((item) => (
@@ -158,18 +143,24 @@ export default function DashboardPage() {
                     <Link
                       to={'/policies/' + item.policyId}
                       className="flex items-center gap-3 px-4 py-2.5 hover:bg-amber-50/60"
-                      title={item.firstArticle ? `${item.firstArticle}${item.articleCount > 1 ? ` 외 ${item.articleCount - 1}개 조문` : ''}` : undefined}
+                      title={
+                        item.firstArticle
+                          ? item.articleCount > 1
+                            ? t('dashboard.upcoming.firstMore', { first: item.firstArticle, n: item.articleCount - 1 })
+                            : item.firstArticle
+                          : undefined
+                      }
                     >
                       <span className="text-[11px] rounded px-1.5 py-0.5 border border-amber-200 bg-amber-50 text-amber-800 shrink-0 tabular-nums">
-                        {item.daysLeft}일 후 시행
+                        {t('dashboard.upcoming.daysLeft', { n: item.daysLeft })}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-sm text-gray-900">
                         {item.title}
                         {item.articleCount > 0 && (
-                          <span className="ml-1.5 text-xs text-gray-500">조문 {item.articleCount}개 개정</span>
+                          <span className="ml-1.5 text-xs text-gray-500">{t('dashboard.upcoming.amend', { n: item.articleCount })}</span>
                         )}
                         {item.repealCount > 0 && (
-                          <span className="ml-1.5 text-xs text-red-700">조문 {item.repealCount}개 폐지</span>
+                          <span className="ml-1.5 text-xs text-red-700">{t('dashboard.upcoming.repeal', { n: item.repealCount })}</span>
                         )}
                       </span>
                       <span className="text-xs text-gray-500 tabular-nums shrink-0">{item.dateKey}</span>

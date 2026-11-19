@@ -52,7 +52,13 @@ const isExpired = (e: unknown) => {
  * - 시작 대기를 넘기면 503(TX_BUSY), 제한을 넘기면 503 — 아무것도 바꾸지 않았으니 다시 시도하면 된다
  * - 같은 날짜로 나중에 같은 결과가 나온다는 보장은 아니다 — 그 사이 과거 시행일 발행·시행일 보정이 있으면 달라진다
  */
-export async function readSnapshot<T>(prisma: PrismaService, work: (db: SnapshotDb) => Promise<T>): Promise<T> {
+/**
+ * 규정 본문이 아닌 읽기(대시보드 집계 등)가 스냅숏을 쓸 때의 이름 — 운영 로그에서 어느 읽기가 제한에 걸렸는지 가르고,
+ * 사용자 문구도 그 읽기에 맞게(규정 본문 문구로 답하지 않게). 주지 않으면 규정 본문 읽기다
+ */
+export type SnapshotLabel = { name: string; timeoutMessage: string };
+
+export async function readSnapshot<T>(prisma: PrismaService, work: (db: SnapshotDb) => Promise<T>, label?: SnapshotLabel): Promise<T> {
   try {
     return await prisma.$transaction(
       async (tx) => {
@@ -64,14 +70,16 @@ export async function readSnapshot<T>(prisma: PrismaService, work: (db: Snapshot
     );
   } catch (e) {
     if (isPoolTimeout(e)) {
-      logger.warn(`스냅숏 읽기가 연결을 얻지 못해 503(P2024 풀 대기 초과) — 풀이 마르고 있다`);
+      logger.warn(`스냅숏 읽기(${label?.name ?? '규정 본문'})가 연결을 얻지 못해 503(P2024 풀 대기 초과) — 풀이 마르고 있다`);
       throw new ServiceUnavailableException(TX_BUSY_MESSAGE);
     }
     if (!isExpired(e)) throw e;
     // 원 오류의 코드·마지막 줄을 함께 — 어느 시계(Prisma 만료·DB 문장 제한)에 걸렸는지 운영 로그에서 가른다
     const code = e instanceof Prisma.PrismaClientKnownRequestError ? `${e.code}${(e.meta as { code?: string } | undefined)?.code ? `/${(e.meta as { code?: string }).code}` : ''}` : 'unknown';
     const last = (e instanceof Error ? e.message : '').split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? '';
-    logger.warn(`스냅숏 읽기가 제한 ${SNAPSHOT_TIMEOUT_MS}ms 를 넘겨 503(${code}: ${last.slice(0, 160)}) — 큰 규정·3단비교면 제한을 다시 잰다`);
-    throw new ServiceUnavailableException(SNAPSHOT_TIMEOUT_MESSAGE);
+    logger.warn(
+      `스냅숏 읽기(${label?.name ?? '규정 본문'})가 제한 ${SNAPSHOT_TIMEOUT_MS}ms 를 넘겨 503(${code}: ${last.slice(0, 160)}) — ${label ? '그 읽기의 쿼리 비용을 잰다' : '큰 규정·3단비교면 제한을 다시 잰다'}`,
+    );
+    throw new ServiceUnavailableException(label?.timeoutMessage ?? SNAPSHOT_TIMEOUT_MESSAGE);
   }
 }
