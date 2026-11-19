@@ -17,7 +17,6 @@ import {
 import { formatKoDate } from '../lib/legalArticleLabel';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
-import { formatArticleJo } from '../lib/legalArticleLabel';
 import { collectArticleChangeNotes } from '../lib/versionState';
 
 const KIND_LABEL: Record<PolicyRevisionKind, string> = {
@@ -75,7 +74,7 @@ export default function RevisionReasonsModal({
   });
 
   // 오늘 시행본과 시행 예정 버전의 사유(T-127)
-  const articleNotes = useMemo(() => collectArticleChangeNotes(policy, formatArticleJo), [policy]);
+  const articleNotes = useMemo(() => collectArticleChangeNotes(policy), [policy]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['policy', policyId, 'revision-reasons'] });

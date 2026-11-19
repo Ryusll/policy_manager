@@ -58,7 +58,7 @@ import {
   CreateRevisionReasonDto,
   UpdateRevisionReasonDto,
 } from './policies.dto';
-import { ARTICLE_ORDER, formatJo } from '../common/article-label';
+import { ARTICLE_ORDER, formatArticleRowHeading, formatJo } from '../common/article-label';
 import { VERSION_LAW_CHANGE, withLawChange } from '../versions/version-law-change';
 import { readSnapshot, type SnapshotDb } from '../common/read-snapshot';
 import { LONG_LOCK_WAIT_MS, lockArticlesForDelete, lockPolicyForDelete, lockPolicyRow } from '../common/row-locks';
@@ -275,22 +275,27 @@ export class PoliciesService {
    */
   async findScheduledChanges(tenantId: string, limit = 10) {
     const today = todayDateOnly();
+    // 항·목 행이면 firstArticle 이 '제3조제2항(부제)'가 되도록 항·목 번호도 읽는다(T-211)
     const articleSelect = {
       id: true,
       number: true,
       branchNumber: true,
+      clauseNumber: true,
+      itemNumber: true,
       title: true,
       chapter: { select: { policy: { select: { id: true, code: true, title: true, isActive: true } } } },
     } as const;
+    // 같은 날 묶음의 첫 줄(firstArticle)이 조 → 가지 → 조 본문 → 항 → 목 순으로 정해지게(예전에는 조 번호만 봐서 같은 조의 어느 행이 먼저일지 몰랐다)
+    const byArticle = ARTICLE_ORDER.map((order) => ({ article: order }));
     const rows = await this.prisma.articleVersion.findMany({
       where: { ...scheduledVersionWhere(today), article: { chapter: { policy: { tenantId } } } },
-      orderBy: [{ effectiveDate: 'asc' }, { article: { number: 'asc' } }],
+      orderBy: [{ effectiveDate: 'asc' }, ...byArticle],
       select: { effectiveDate: true, article: { select: articleSelect } },
     });
     // 폐지 예정(T-132 ③) — 오늘은 시행 중이고 이 날부터 빠지는 조문
     const repeals = await this.prisma.articleVersion.findMany({
       where: { repealedOn: { gt: today }, status: { in: ['published', 'archived'] }, article: { chapter: { policy: { tenantId } } } },
-      orderBy: [{ repealedOn: 'asc' }, { article: { number: 'asc' } }],
+      orderBy: [{ repealedOn: 'asc' }, ...byArticle],
       select: { repealedOn: true, article: { select: articleSelect } },
     });
     const groups = new Map<
@@ -318,7 +323,7 @@ export class PoliciesService {
         effectiveDate: day,
         articleIds: new Set<string>(),
         repealIds: new Set<string>(),
-        firstArticle: `${formatJo(article.number, article.branchNumber)}${article.title ? ` ${article.title}` : ''}`,
+        firstArticle: formatArticleRowHeading(article),
       };
       (kind === 'amend' ? g.articleIds : g.repealIds).add(article.id);
       groups.set(key, g);

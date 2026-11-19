@@ -10,7 +10,6 @@ import {
   statuteDate,
   versionDisplayState,
 } from '../apps/web/src/lib/versionState';
-import { formatArticleJo } from '../apps/web/src/lib/legalArticleLabel';
 
 const today = '2026-10-10';
 
@@ -122,10 +121,10 @@ describe('조문별 개정 사유 — 시행 예정 개정의 사유도 함께',
         },
       ],
     };
-    expect(collectArticleChangeNotes(policy, formatArticleJo)).toEqual([
+    expect(collectArticleChangeNotes(policy)).toEqual([
       { key: 'v9', label: '제3조의2', note: '신설', effectiveDate: '2099-03-01', scheduled: true },
-      { key: 'v2', label: '제2조 (수당)', note: '수당 인상', effectiveDate: '2099-01-01T00:00:00.000Z', scheduled: true },
-      { key: 'v1', label: '제2조 (수당)', note: '제정', effectiveDate: '2024-01-01T00:00:00.000Z', scheduled: false },
+      { key: 'v2', label: '제2조(수당)', note: '수당 인상', effectiveDate: '2099-01-01T00:00:00.000Z', scheduled: true },
+      { key: 'v1', label: '제2조(수당)', note: '제정', effectiveDate: '2024-01-01T00:00:00.000Z', scheduled: false },
     ]);
   });
 });
@@ -141,9 +140,9 @@ describe('제정·개정이유 — 본문 목록에서 빠진 시행 예정 신�
         ],
       },
     };
-    expect(collectArticleChangeNotes(policy, formatArticleJo)).toEqual([
-      { key: 'n1', label: '제2조 (끼어든 조)', note: '다음 달 시행', effectiveDate: '2099-03-01', scheduled: true },
-      { key: 'v1', label: '제1조 (목적)', note: '제정', effectiveDate: '2024-01-01', scheduled: false },
+    expect(collectArticleChangeNotes(policy)).toEqual([
+      { key: 'n1', label: '제2조(끼어든 조)', note: '다음 달 시행', effectiveDate: '2099-03-01', scheduled: true },
+      { key: 'v1', label: '제1조(목적)', note: '제정', effectiveDate: '2024-01-01', scheduled: false },
     ]);
   });
 });
@@ -163,3 +162,49 @@ describe('본문에서 빠진 시행 예정 신설 조문 — 조 단위로 한 
   });
 });
 
+
+describe('시행 예정 띠의 조 제목 — 조 머리 행의 제목만 (T-211)', () => {
+  const r = (clauseNumber: number | null, title: string) => ({
+    liveChapterId: 'c', number: 5, branchNumber: null, clauseNumber, itemNumber: null, title, effectiveDate: '2099-01-01',
+  });
+
+  it('제2항의 부제는 조 제목으로 올리지 않는다', () => {
+    expect(groupScheduledByJo([r(null, ''), r(1, ''), r(2, '예외')])[0].title).toBe('');
+  });
+
+  it('조 머리 행의 제목만 쓴다 — 신설 항만 있으면 번호만(기존 조에 새 항만 끼어든 것일 수 있다)', () => {
+    expect(groupScheduledByJo([r(1, '지급 기준')])[0].title).toBe('');
+    expect(groupScheduledByJo([r(null, ' 수당 '), r(1, '지급 기준')])[0].title).toBe('수당');
+  });
+});
+
+describe('조문별 개정 사유의 라벨 — 항·목은 어느 조인지까지 (T-211 ③)', () => {
+  it('본문에서 빠진 시행 예정 신설 조문의 항 행도 본문 행과 같은 라벨', () => {
+    const policy = {
+      chapters: [],
+      current: {
+        scheduledArticles: [
+          { number: 3, clauseNumber: 2, itemNumber: null, title: '부제', versionId: 's1', changeNote: '신설', effectiveDate: '2099-01-01' },
+          { number: 3, clauseNumber: null, itemNumber: null, title: '(수당)', versionId: 's2', changeNote: '신설', effectiveDate: '2099-01-01' },
+        ],
+      },
+    };
+    expect(collectArticleChangeNotes(policy).map((n) => n.label)).toEqual(['제3조 ② 부제', '제3조(수당)']);
+  });
+
+  it('조는 제N조(제목), 항의 부제는 조 제목 자리에 넣지 않는다', () => {
+    const v = (id: string) => [{ id, changeNote: '개정', effectiveDate: '2024-01-01' }];
+    const policy = {
+      chapters: [
+        {
+          articles: [
+            { number: 2, title: '(수당)', versions: v('a') },
+            { number: 2, clauseNumber: 2, title: '입증', versions: v('b') },
+            { number: 2, clauseNumber: 1, itemNumber: 3, title: '', versions: v('c') },
+          ],
+        },
+      ],
+    };
+    expect(collectArticleChangeNotes(policy).map((n) => n.label)).toEqual(['제2조(수당)', '제2조 ② 입증', '제2조 ① 3.']);
+  });
+});

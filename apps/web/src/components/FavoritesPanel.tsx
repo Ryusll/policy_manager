@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import { Star, FileText, BookOpen, X } from 'lucide-react';
 import { favoritesApi, type Favorite } from '../api/favorites';
 import { formatArticleAnchor } from '../lib/articleAnchor';
+import { articlePositionLabel } from '../lib/articleHeading';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
 import { toast } from '../stores/toastStore';
@@ -19,10 +20,10 @@ function targetHref(fav: Favorite): string {
   return `/policies/${fav.policyId}#${formatArticleAnchor(fav.article)}`;
 }
 
+/** 조면 '제3조(목적)', 항이면 '제3조제2항(부제)' — 조 머리 표기(T-211) */
 function targetLabel(fav: Favorite): string {
   if (!fav.article) return fav.policy.title;
-  const anchor = formatArticleAnchor(fav.article);
-  return fav.article.title ? `${anchor} ${fav.article.title}` : anchor;
+  return articlePositionLabel(fav.article, fav.article.title, formatArticleAnchor(fav.article));
 }
 
 export function FavoritesPanel() {

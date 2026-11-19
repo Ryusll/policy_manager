@@ -155,8 +155,11 @@ describe('T-132 ②③ 시행 예정 철회와 폐지 예정', () => {
       expect(a.scheduledVersions.map((v: any) => v.id)).toEqual([v2]);
       const variable = (await api(`/variables/${variableId}`, { token: t.token })).body;
       expect(variable.scheduledBindings.map((b: any) => b.versionId)).toEqual([v2]);
-      const notes = ((await api('/notifications', { token: viewer })).body as any[]).map((n) => n.title);
+      const received = (await api('/notifications', { token: viewer })).body as any[];
+      const notes = received.map((n) => n.title);
       expect(notes).toEqual(expect.arrayContaining([expect.stringContaining('[개정 철회 · 2099-06-01')]));
+      // 철회 알림의 조문 줄도 조 머리 표기(T-211 ③)
+      expect(received.find((n) => n.title.includes('[개정 철회 · 2099-06-01')).body).toContain('조문: 제5조(조5)\n');
     });
 
     it('남은 시행 예정 판도 철회하면 지금 본문이 다시 게시본 — 시행 예정이 없다', async () => {

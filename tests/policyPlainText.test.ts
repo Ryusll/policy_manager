@@ -44,7 +44,7 @@ describe('전문 텍스트 내보내기 (T-84)', () => {
     ]);
     const text = buildPolicyPlainText({ policy, chapters });
     expect(text).toContain('===== 제1장 총칙 =====');
-    expect(text).toContain('제1조 목적');
+    expect(text).toContain('제1조(목적)');
     expect(text).toContain('이 규정은 …을 목적으로 한다.');
   });
 
@@ -73,8 +73,8 @@ describe('전문 텍스트 내보내기 (T-84)', () => {
 
     it('조문은 그대로 다 들어간다', () => {
       const text = buildPolicyPlainText({ policy, chapters: hidden() });
-      expect(text).toContain('제1조 목적');
-      expect(text).toContain('제2조 적용범위');
+      expect(text).toContain('제1조(목적)');
+      expect(text).toContain('제2조(적용범위)');
       expect(text).toContain('본사와 지점에 적용한다.');
     });
 
@@ -102,8 +102,8 @@ describe('전문 텍스트 내보내기 (T-84)', () => {
       },
     ]);
     const text = buildPolicyPlainText({ policy, chapters });
-    expect(text).toContain('제1조 목적');
-    expect(text).toContain('제2조 절 안의 조');
+    expect(text).toContain('제1조(목적)');
+    expect(text).toContain('제2조(절 안의 조)');
     expect(text).toContain('절 본문');
   });
 
@@ -188,5 +188,54 @@ describe('전문 텍스트 — 어느 날의 본문인지 (T-180)', () => {
 
   it('기준 줄이 없으면 예전 머리 그대로 (T-180)', () => {
     expect(buildPolicyPlainText({ policy, chapters: [] }).split('\n').slice(0, 2)).toEqual(['HR-001 인사규정', '']);
+  });
+});
+
+describe('전문 텍스트의 조 머리 — 화면·PDF 와 같은 판정 (T-211 ②)', () => {
+  const chapters = buildFullViewGroups([
+    {
+      id: 'c1',
+      number: 1,
+      title: '총칙',
+      suppressHeader: false,
+      sections: [],
+      articles: [
+        article({ number: 1, title: '목적' }),
+        article({ number: 2, title: '요건', versions: [] }),
+        article({ number: 2, title: '', clauseNumber: 1, versions: ver('첫째 항') }),
+        article({ number: 2, title: '입증', clauseNumber: 2, versions: ver('둘째 항') }),
+        // 옛 데이터 — 조 머리 행 없이 하나뿐인 제1항이 조 제목을 갖는다
+        article({ number: 5, title: '권한', clauseNumber: 1, versions: ver('옛 조 본문') }),
+        // 옛 데이터 — 조 제목을 제1항에도 복제해 두었다
+        article({ number: 6, title: '(의결)', versions: [] }),
+        article({ number: 6, title: '의결', clauseNumber: 1, versions: ver('복제 조 첫째 항') }),
+        article({ number: 7, branchNumber: 2, title: '', versions: ver('가지 조 본문') }),
+      ],
+    },
+  ]);
+  const lines = buildPolicyPlainText({ policy, chapters }).split('\n');
+  const after = (line: string) => lines[lines.indexOf(line) + 1];
+
+  it('조 머리는 조마다 한 줄 — 제N조(제목), 제목이 없으면 번호만', () => {
+    expect(after('제1조(목적)')).toBe('이 규정은 …을 목적으로 한다.');
+    expect(lines).toContain('제2조(요건)');
+    expect(after('제7조의2')).toBe('가지 조 본문');
+    expect(lines.filter((l) => /^제\d+조/.test(l))).toEqual(['제1조(목적)', '제2조(요건)', '제5조(권한)', '제6조(의결)', '제7조의2']);
+  });
+
+  it('항은 번호와 부제 — 부제가 없으면 번호만', () => {
+    expect(after('①')).toBe('첫째 항');
+    expect(after('② 입증')).toBe('둘째 항');
+  });
+
+  it('조 머리 행이 없는 옛 데이터도 조 머리 줄을 적고, 항 줄에 제목을 다시 적지 않는다', () => {
+    const i = lines.indexOf('제5조(권한)');
+    expect(lines.slice(i, i + 4)).toEqual(['제5조(권한)', '', '①', '옛 조 본문']);
+    expect(lines).not.toContain('① 권한');
+  });
+
+  it('제1항에 복제된 조 제목은 한 번만 적는다', () => {
+    expect(lines.filter((l) => l.includes('의결'))).toEqual(['제6조(의결)']);
+    expect(after('제6조(의결)')).toBe('');
   });
 });

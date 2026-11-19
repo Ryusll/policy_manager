@@ -129,7 +129,7 @@ export default function SettingsPage() {
       '.tmpl-chapters > .tmpl-chapter ~ .tmpl-chapter{page-break-before:always;break-before:page;}' +
       '.tmpl-chapter-title{margin:0 0 6px;font-size:16px;font-weight:700;color:#145a42;}' +
       '.tmpl-article-block{margin-top:5mm;padding-left:2mm;border-left:3px solid #e5e7eb;}' +
-      '.tmpl-article-label{font-size:12px;font-weight:700;color:#6b7280;margin-bottom:2mm;}' +
+      '.tmpl-article-label{font-size:13px;font-weight:700;color:#111827;margin-bottom:1mm;}' +
       '.tmpl-article-body{white-space:pre-wrap;font-size:13px;}' +
       '@media print{@page{size:A4;margin:12mm;}.tmpl-shell{padding:0;border:1px solid #145a42;min-height:0;}}',
     isActive: true,

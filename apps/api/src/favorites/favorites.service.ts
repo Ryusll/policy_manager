@@ -21,7 +21,8 @@ export class FavoritesService {
         articleId: true,
         createdAt: true,
         policy: { select: { id: true, code: true, title: true, isActive: true } },
-        article: { select: { id: true, number: true, clauseNumber: true, itemNumber: true, title: true } },
+        // 가지 번호가 없으면 제3조의2 가 '제3조(정의)'로 보이고 다른 조(#제3조)로 간다(T-211)
+        article: { select: { id: true, number: true, branchNumber: true, clauseNumber: true, itemNumber: true, title: true } },
       },
     });
     return rows;

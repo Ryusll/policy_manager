@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { formatJo } from '../common/article-label';
+import { ARTICLE_ORDER, formatJo } from '../common/article-label';
 import { currentVersionsSql } from '../common/as-of';
 import { todayDateOnly } from '../common/date-only';
 
@@ -156,10 +156,13 @@ export class SearchService {
           id: true,
           number: true,
           branchNumber: true,
+          // 항·목 행이면 화면이 '제2조 ② 부제'로 적는다 — 없으면 항의 부제가 조 제목처럼 '제2조(부제)'로 보인다(T-211)
+          clauseNumber: true,
+          itemNumber: true,
           title: true,
           chapter: { select: { policy: { select: { id: true, title: true } } } },
         },
-        orderBy: [{ number: 'asc' }, { branchNumber: { sort: 'asc', nulls: 'first' } }],
+        orderBy: ARTICLE_ORDER,
         take: limit,
       }),
     ]);
@@ -170,6 +173,8 @@ export class SearchService {
         id: a.id,
         number: a.number,
         branchNumber: a.branchNumber,
+        clauseNumber: a.clauseNumber,
+        itemNumber: a.itemNumber,
         title: a.title,
         policyId: a.chapter.policy.id,
         policyTitle: a.chapter.policy.title,

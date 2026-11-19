@@ -10,6 +10,7 @@ export type Favorite = {
   article: {
     id: string;
     number: number;
+    branchNumber: number | null;
     clauseNumber: number | null;
     itemNumber: number | null;
     title: string;

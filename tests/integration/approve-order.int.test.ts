@@ -69,6 +69,8 @@ describe('T-132 ④ 승인 알림의 시행일', () => {
     const first = await notes();
     expect(first[0].title).toBe('[개정 시행] 알림규정');
     expect(first[0].body).toContain('시행일: 2024-01-01');
+    // 조 머리 표기 — 번호와 제목을 붙여 쓴다(T-211 ③)
+    expect(first[0].body).toContain('조문: 제1조(목적)\n');
 
     const approve = async (content: string, effectiveDate: string) => {
       const d = await api(`/articles/${set.article.id}/versions`, { method: 'POST', token: t.token, json: { content } });
@@ -81,6 +83,7 @@ describe('T-132 ④ 승인 알림의 시행일', () => {
     expect(after.map((n) => n.title)).toContain('[개정 발행 · 2099-06-01 시행 예정] 알림규정');
     const future = after.find((n) => n.title.includes('시행 예정'));
     expect(future.body).toContain('시행일: 2099-06-01 — 그때까지는 지금 본문이 시행 중입니다');
+    expect(future.body).toContain('조문: 제1조(목적)\n');
   });
 });
 

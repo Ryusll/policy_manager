@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { formatArticleLabel, formatJo } from '../common/article-label';
+import { formatArticleRowHeading, formatJo } from '../common/article-label';
 import { parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
 import { parseRevisionNotifyFromMetadata } from '../notifications/revision-notify.types';
 import { AS_OF_VERSION_ORDER, asOfState, asOfVersionWhere } from '../common/as-of';
@@ -1033,7 +1033,8 @@ export class AmendmentsService {
     },
   ) {
     const policy = cand.article.chapter.policy;
-    const articleLabel = formatArticleLabel(cand.article);
+    // 조문 표기는 직접 승인·철회 알림과 같다 — '[개정 시행]' 알림이 경로마다 다르게 보이지 않게(T-211)
+    const articleLabel = formatArticleRowHeading(cand.article);
     const lawLabel = `${cand.changeEvent.law.lawName} ${cand.changeEvent.lawArticle?.label ?? labelFromNodeKey(cand.changeEvent.nodeKey)}`;
     const inTenant = async (ids: string[]) =>
       ids.length

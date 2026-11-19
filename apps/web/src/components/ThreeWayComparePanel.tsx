@@ -12,7 +12,7 @@ import { Columns3, Info } from 'lucide-react';
 import { policiesApi, type ThreeWayRow } from '../api/policies';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
-import { formatArticleJo } from '../lib/legalArticleLabel';
+import { formatArticleHeading } from '../lib/articleHeading';
 
 const LEVEL_LABEL = ['규정', '세칙', '지침'];
 
@@ -24,8 +24,7 @@ function ArticleCell({
   return (
     <div className="space-y-0.5">
       <p className="text-xs font-semibold text-gray-900">
-        {formatArticleJo(article.number, article.branchNumber)}
-        {article.title ? ` (${article.title})` : ''}
+        {formatArticleHeading(article.number, article.branchNumber, article.title)}
       </p>
       <p className="text-xs text-gray-600 whitespace-pre-wrap line-clamp-6">{article.content}</p>
     </div>

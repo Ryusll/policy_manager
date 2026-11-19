@@ -10,7 +10,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
 import { articleHash } from '../lib/articleAnchor';
-import { formatArticleJo } from '../lib/legalArticleLabel';
+import { articleRowHeading } from '../lib/articleHeading';
 
 export default function SearchPage() {
   const { t } = useI18n();
@@ -173,7 +173,7 @@ export default function SearchPage() {
                     >
                       <BookOpen size={13} className="text-gold-600 flex-none" />
                       <span className="truncate">
-                        {formatArticleJo(a.number, a.branchNumber)} {a.title}
+                        {articleRowHeading(a)}
                       </span>
                       <span className="ml-auto text-[10px] text-gray-400 truncate max-w-[40%] flex-none">
                         {a.policyTitle}

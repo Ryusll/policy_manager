@@ -9,7 +9,7 @@ import { coerceNullableDate, parseDateOnly, toDateOnlyString, todayDateOnly } fr
 import { AS_OF_VERSION_ORDER, asOfVersionWhere } from '../common/as-of';
 import { planEffectiveDateFill } from './effective-date-fill';
 import * as Diff from 'diff';
-import { ARTICLE_ORDER, formatJo } from '../common/article-label';
+import { ARTICLE_ORDER, formatArticleRowHeading, formatJo } from '../common/article-label';
 import { VERSION_LAW_CHANGE, withLawChange } from './version-law-change';
 import { withdrawScheduledLocked } from './version-withdraw';
 import { LONG_LOCK_WAIT_MS, lockArticleRow, lockArticleRows, lockPolicyRow, lockPolicyWithArticles } from '../common/row-locks';
@@ -271,7 +271,7 @@ export class VersionsService {
     const policy = version.article?.chapter?.policy;
     const article = version.article;
     if (policy && article) {
-      const articleLabel = `${formatJo(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`;
+      const articleLabel = formatArticleRowHeading(article);
       const notifyResult = await this.revisionNotify.dispatchPolicyRevisionApproved({
         tenantId,
         policyId: policy.id,
@@ -451,7 +451,7 @@ export class VersionsService {
     });
 
     const first = targets[0];
-    const firstLabel = `${formatJo(first.number, first.branchNumber)}${first.title ? ` (${first.title})` : ''}`;
+    const firstLabel = formatArticleRowHeading(first);
     const notifyResult = await this.revisionNotify.dispatchPolicyRevisionApproved({
       tenantId,
       policyId,
@@ -691,7 +691,7 @@ export class VersionsService {
         policyTitle: policy.title,
         policyCode: policy.code,
         articleId: article.id,
-        articleLabel: `${formatJo(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`,
+        articleLabel: formatArticleRowHeading(article),
         versionId,
         effectiveDate: result.withdrawnEffectiveDate,
         reason: note,

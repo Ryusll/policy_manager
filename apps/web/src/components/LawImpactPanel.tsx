@@ -4,6 +4,7 @@ import { lawChangesApi, type ImpactedArticle } from '../api/lawChanges';
 import { amendmentsApi } from '../api/amendments';
 import { RELATION_TYPE_LABEL } from '../api/lawLinks';
 import { formatArticleAnchor } from '../lib/articleAnchor';
+import { articlePositionLabel } from '../lib/articleHeading';
 import { toast } from '../stores/toastStore';
 import { useI18n } from '../i18n/useI18n';
 import AmendmentCandidatePreview from './AmendmentCandidatePreview';
@@ -145,10 +146,10 @@ function ImpactRow({ item }: { item: ImpactedArticle }) {
   return (
     <li className="px-2.5 py-2 space-y-1">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        {/* 조면 '제3조(목적)', 항이면 '제3조제2항(부제)' — 조 머리 표기(T-211) */}
         <Link to={`/policies/${item.policy.id}#${anchor}`} className="font-medium text-navy-700 hover:underline">
-          {anchor}
+          {articlePositionLabel(item.article, item.article.title, anchor)}
         </Link>
-        <span className="text-gray-700">{item.article.title}</span>
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
           {RELATION_TYPE_LABEL[item.relationType]}
         </span>

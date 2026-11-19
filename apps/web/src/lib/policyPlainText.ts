@@ -1,4 +1,6 @@
-import { articleShortLabel, isChapterHeaderHidden } from './legalArticleLabel';
+import { articleShortLabel, isArticleJoRoot, isChapterHeaderHidden } from './legalArticleLabel';
+import { formatArticleHeading } from './articleHeading';
+import { fullViewRowTitle, joGroupHeadTitle } from './fullViewGroups';
 import { noCurrentTextMarker } from './versionState';
 
 /**
@@ -43,9 +45,17 @@ export function buildPolicyPlainText(input: PlainTextInput): string {
     }
     // 절 소속 조문도 빠짐없이 담는다(allGroups 는 절 소속 여부와 무관한 조 번호 순)
     for (const group of chapter.allGroups || []) {
-      for (const article of group.items || []) {
+      // 조 머리는 조마다 한 번 — `제1조(목적)`(T-211). 화면·PDF 와 같은 판정이라 조 제목을 제1항에 적어 둔 옛 데이터도
+      // 머리에만 적고, 조 머리 행이 없는 조도 머리 줄은 적는다(예전에는 `① 제목`만 나와 어느 조인지 알 수 없었다)
+      const joTitle = joGroupHeadTitle(group);
+      const heading = formatArticleHeading(group.articleNumber, group.articleBranch, joTitle);
+      const rows = group.items || [];
+      if (rows.length && !rows.some(isArticleJoRoot)) lines.push('', heading);
+      for (const article of rows) {
         lines.push('');
-        lines.push(`${articleShortLabel(article)} ${article.title || ''}`.trimEnd());
+        lines.push(
+          isArticleJoRoot(article) ? heading : [articleShortLabel(article), fullViewRowTitle(article, joTitle)].filter(Boolean).join(' '),
+        );
         // 오늘 시행 중인 본문만(T-127). 없으면 "삭제 <날짜>"·"날짜 시행 예정" — 시행 예정 본문은 넣지 않는다
         lines.push(String(article.versions?.[0]?.content || noCurrentTextMarker(article) || '').trim());
       }

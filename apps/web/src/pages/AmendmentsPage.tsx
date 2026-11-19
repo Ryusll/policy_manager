@@ -12,6 +12,7 @@ import {
   type AmendmentListState,
 } from '../api/amendments';
 import { formatArticleAnchor } from '../lib/articleAnchor';
+import { articlePositionLabel } from '../lib/articleHeading';
 import { useAuthStore } from '../stores/authStore';
 import { useI18n } from '../i18n/useI18n';
 import { toast } from '../stores/toastStore';
@@ -220,8 +221,8 @@ function AmendmentRow({ row }: { row: AmendmentListItem }) {
       <Link to={`/amendments/${row.id}`} className="block px-4 py-2.5 hover:bg-gray-50" data-testid="amendment-row">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <span className="font-medium text-gray-900">{row.policy.title}</span>
-          <span className="text-navy-700">{formatArticleAnchor(row.article)}</span>
-          <span className="text-gray-700">{row.article.title}</span>
+          {/* 조면 '제3조(목적)', 항이면 '제3조제2항(부제)' — 조 머리 표기(T-211) */}
+          <span className="text-navy-700">{articlePositionLabel(row.article, row.article.title, formatArticleAnchor(row.article))}</span>
           <StateBadge state={row.reviewState} />
           {!row.policy.isActive && (
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-500">비활성 규정</span>

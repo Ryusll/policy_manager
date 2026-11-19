@@ -1,4 +1,4 @@
-import { formatArticleLabel } from '../common/article-label';
+import { formatArticleLabel, formatArticleRowHeading } from '../common/article-label';
 import { toDateOnlyString } from '../common/date-only';
 import { labelFromNodeKey } from '../laws/law-rows';
 import { adjustParticle } from './amendment-rules';
@@ -70,7 +70,7 @@ export function objectParticle(label: string): string {
 }
 
 /** "제12조(난임치료휴가)" — 조문 표기와 제목 */
-export const articleHeading = (a: ReasonArticle) => formatArticleLabel(a) + (a.title ? `(${a.title})` : '');
+export const articleHeading = (a: ReasonArticle) => formatArticleRowHeading(a);
 
 /** 조문 단위 문장 — "…에 따라 제12조를 바꿈"(조문을 지우면 "삭제함"). 개정안 문서의 개정 이유이고, 변경 정보가 없을 때의 초안이다 */
 export function articleSentence(law: ReasonLaw, article: ReasonArticle, deleted: boolean): string {

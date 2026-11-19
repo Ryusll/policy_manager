@@ -14,8 +14,10 @@ import {
   formatItemMok,
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
-import { fullViewGroupKey, joGroupRenderRows } from '../../lib/fullViewGroups';
-import { nextScheduled, noCurrentTextMarker } from '../../lib/versionState';
+import { fullViewGroupKey, fullViewRowTitle, joGroupHeadTitle, joGroupRenderRows } from '../../lib/fullViewGroups';
+import { isBareJoHead, nextScheduled, noCurrentTextMarker } from '../../lib/versionState';
+import { formatArticleHeading } from '../../lib/articleHeading';
+import { JoHeadingText } from './JoHeadingText';
 
 type TemplateLike = {
   id?: string;
@@ -119,15 +121,19 @@ function JoGroupBlock({
   highlightQuery: string;
   showArticleTitle: boolean;
 }) {
+  // 조 머리는 번호와 제목을 붙여 한 줄로 적는다 — `제1조(목적)` (SRS POLICY-10, T-211).
+  // 제목을 끈 양식은 번호만. 조 제목을 제1항에 적어 둔 옛 데이터도 목차와 같은 판정으로 머리에 올린다.
+  const joTitle = showArticleTitle ? joGroupHeadTitle(group) : '';
+  const head = { number: group.articleNumber, branch: group.articleBranch, title: joTitle };
   // 화면낭독기·점자 단말이 조 단위를 하나의 덩어리로 인식하도록 article 로 감싸고
   // 표제를 heading 으로 준다. 들여쓰기(시각)만으로는 구조가 전달되지 않는다. (T-81)
   return (
     <article
       className="text-sm border border-gray-100 rounded p-2 bg-white"
-      aria-label={formatArticleJo(group.articleNumber, group.articleBranch)}
+      aria-label={formatArticleHeading(head.number, head.branch, head.title)}
     >
       <h3 className="font-semibold text-gray-800 mb-1">
-        {highlightText(formatArticleJo(group.articleNumber, group.articleBranch), highlightQuery)}
+        <JoHeadingText {...head} highlightQuery={highlightQuery} />
       </h3>
       <div className="space-y-2">
         {joGroupRenderRows(group).map(({ article, depth }, idx, rows) => (
@@ -136,7 +142,7 @@ function JoGroupBlock({
             article={article}
             plClass={DEPTH_PADDING[depth]}
             highlightQuery={highlightQuery}
-            showArticleTitle={showArticleTitle}
+            title={showArticleTitle ? fullViewRowTitle(article, joTitle) : ''}
             hasSubRows={rows.length > 1}
           />
         ))}
@@ -149,27 +155,29 @@ function FullViewArticleRow({
   article,
   plClass,
   highlightQuery,
-  showArticleTitle,
+  title,
   hasSubRows,
 }: {
   article: any;
   plClass: string;
   highlightQuery: string;
-  showArticleTitle: boolean;
+  /** 이 행 자기 줄에 적을 부제(`fullViewRowTitle`) — 조 머리 행의 제목은 조 머리 줄에 있어 늘 비어 있다 */
+  title: string;
   /** 같은 조에 항·목이 있는지. 그런 조의 머리 행은 원래 본문 없이 제목만 있다 */
   hasSubRows: boolean;
 }) {
+  // 빈 줄 상자를 남기지 않는다 — 제목이 따로 줄을 차지하던 때에는 이 행에 제목이 있었다(T-211)
+  if (isBareJoHead(article, hasSubRows)) return null;
   const sub =
     article.itemNumber != null
       ? formatItemMok(article.itemNumber)
       : article.clauseNumber != null
         ? formatClauseHang(article.clauseNumber)
         : null;
-  const title = showArticleTitle ? String(article.title ?? '').trim() : '';
   // 부제 없는 항·목은 법령 표기대로 번호를 본문 첫 줄에 붙인다("① 본문 …").
   // HTML 템플릿·PDF 출력(`buildEnterprisePolicyBodyHtml`)과 같은 규칙이어야 화면과 인쇄물이 일치한다.
   const inlineSub = !!sub && !title;
-  const headLine = sub ? `${sub}${title ? ` ${title}` : ''}` : title;
+  const headLine = sub && title ? `${sub} ${title}` : '';
   // 낭독용 위치 설명. 화면 표기(①)는 낭독기가 "동그라미 일" 로 읽거나 건너뛴다.
   // 들여쓰기로만 표현된 계층을 말로 전달하려면 이 설명이 필요하다. (T-81)
   const spokenPosition =

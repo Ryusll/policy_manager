@@ -1,4 +1,6 @@
 import { serviceToday } from './serviceDate';
+import { articleRowHeading } from './articleHeading';
+import type { ArticleLabelParts } from './legalArticleLabel';
 
 /**
  * 버전·조문의 "현재" 표시 (T-127).
@@ -140,6 +142,18 @@ export function noCurrentTextMarker(article: ArticleLike): string | null {
   return null;
 }
 
+/**
+ * 항·목을 거느리고 자기 글은 없는 조 머리 행인지 — 제목은 조 머리 줄(`제1조(목적)`)에 적으므로 화면에
+ * 그릴 것이 없다(빈 줄 상자를 남기지 않는다, T-211). 시행본·시행 예정·초안·삭제 표시가 있으면 그린다.
+ */
+export function isBareJoHead(
+  article: ArticleLike & { clauseNumber?: number | null; itemNumber?: number | null; versions?: { content?: string | null }[] },
+  hasSubRows: boolean,
+): boolean {
+  if (!hasSubRows || article.clauseNumber != null || article.itemNumber != null) return false;
+  return !article.versions?.[0]?.content && !nextScheduled(article) && !article.pendingVersion?.content && !noCurrentTextMarker(article);
+}
+
 export type ArticleChangeNote = {
   key: string;
   label: string;
@@ -156,22 +170,19 @@ export type ArticleChangeNote = {
 export function collectArticleChangeNotes(
   policy:
     | {
-        chapters?: { articles?: (CurrentViewArticle & { number: number; branchNumber?: number | null; title?: string | null })[] }[];
+        chapters?: { articles?: (CurrentViewArticle & ArticleLabelParts & { title?: string | null })[] }[];
         /** 본문 목록에서 빠진 시행 예정 신설 조문(자리가 겹친 것, T-127) — 사유는 여기서 온다(T-132 ⑧) */
         current?: {
-          scheduledArticles?: {
-            number: number;
-            branchNumber?: number | null;
+          scheduledArticles?: (ArticleLabelParts & {
             title?: string | null;
             versionId?: string | null;
             changeNote?: string | null;
             effectiveDate?: string | null;
-          }[];
+          })[];
         } | null;
       }
     | null
     | undefined,
-  joLabel: (number: number, branch?: number | null) => string,
 ): ArticleChangeNote[] {
   const rows: ArticleChangeNote[] = [];
   for (const a of policy?.current?.scheduledArticles || []) {
@@ -179,7 +190,8 @@ export function collectArticleChangeNotes(
     if (!note || !a.versionId) continue;
     rows.push({
       key: a.versionId,
-      label: `${joLabel(a.number, a.branchNumber)}${a.title ? ` (${a.title})` : ''}`,
+      // 본문 쪽 행과 같은 라벨 — 항·목 행이면 '제2조 ② 부제'(서버가 clauseNumber·itemNumber 를 싣는다, T-211)
+      label: articleRowHeading(a),
       note,
       effectiveDate: a.effectiveDate ?? null,
       scheduled: true,
@@ -187,7 +199,8 @@ export function collectArticleChangeNotes(
   }
   for (const chapter of policy?.chapters || []) {
     for (const article of chapter.articles || []) {
-      const label = `${joLabel(article.number, article.branchNumber)}${article.title ? ` (${article.title})` : ''}`;
+      // 조는 `제1조(목적)`, 항·목은 어느 조인지까지 `제2조 ② 부제`(T-211)
+      const label = articleRowHeading(article);
       const current = article.versions?.[0];
       const picked = [
         ...(current ? [{ v: current, scheduled: false }] : []),
@@ -210,16 +223,20 @@ export function collectArticleChangeNotes(
 export function groupScheduledByJo<
   T extends { liveChapterId: string; number: number; branchNumber: number | null; clauseNumber: number | null; itemNumber: number | null; title: string; effectiveDate: string | null },
 >(rows: T[]): { key: string; number: number; branchNumber: number | null; title: string; effectiveDate: string | null; rows: number }[] {
-  const groups = new Map<string, { key: string; number: number; branchNumber: number | null; title: string; headTitle: string | null; effectiveDate: string | null; rows: number }>();
+  const groups = new Map<string, { key: string; number: number; branchNumber: number | null; effectiveDate: string | null; members: T[] }>();
   for (const r of rows) {
     const key = `${r.liveChapterId}|${r.number}|${r.branchNumber ?? 0}`;
-    const g = groups.get(key) ?? { key, number: r.number, branchNumber: r.branchNumber, title: '', headTitle: null, effectiveDate: null, rows: 0 };
-    g.rows += 1;
-    if (r.clauseNumber == null && r.itemNumber == null && r.title) g.headTitle = r.title;
-    if (!g.title && r.title) g.title = r.title;
+    const g = groups.get(key) ?? { key, number: r.number, branchNumber: r.branchNumber, effectiveDate: null, members: [] };
+    g.members.push(r);
     if (r.effectiveDate && (!g.effectiveDate || r.effectiveDate < g.effectiveDate)) g.effectiveDate = r.effectiveDate;
     groups.set(key, g);
   }
-  return [...groups.values()].map(({ headTitle, ...g }) => ({ ...g, title: headTitle ?? g.title }));
+  // 조 제목은 조 머리 행의 제목만 쓴다(T-211). 여기 행은 본문에서 빠진 시행 예정 신설 행뿐이라, 기존 조에 새 항만 끼어든
+  // 경우에도 그 항의 부제를 조 제목으로 올리면 '제5조(지급 기준)'처럼 잘못 적힌다. 예전에는 처음 제목이 있는 행을 올렸다
+  return [...groups.values()].map(({ members, ...g }) => ({
+    ...g,
+    title: String(members.find((m) => m.clauseNumber == null && m.itemNumber == null)?.title ?? '').trim(),
+    rows: members.length,
+  }));
 }
 

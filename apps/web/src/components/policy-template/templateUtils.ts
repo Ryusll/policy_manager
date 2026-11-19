@@ -1,12 +1,12 @@
 import { escapeRegExp } from '../../lib/searchRegex';
 import { sanitizeTemplateCss, sanitizeTemplateHtml } from './templateSanitize';
 import {
-  formatArticleJo,
   formatClauseHang,
   formatItemMok,
   isChapterHeaderHidden,
 } from '../../lib/legalArticleLabel';
-import { joGroupRenderRows } from '../../lib/fullViewGroups';
+import { articleHeadingSegments } from '../../lib/articleHeading';
+import { fullViewRowTitle, joGroupHeadTitle, joGroupRenderRows } from '../../lib/fullViewGroups';
 import { noCurrentTextMarker } from '../../lib/versionState';
 
 /**
@@ -77,6 +77,8 @@ function appendArticleBodyHtml(
   rowClass: string,
   highlightQuery?: string,
   hasSubRows = false,
+  /** 이 행 자기 줄에 적을 부제(`fullViewRowTitle`) — 조 머리 행의 제목은 조 머리 줄(tmpl-article-label)에 있어 늘 비어 있다 */
+  title = '',
 ) {
   const sub =
     article?.itemNumber != null
@@ -89,28 +91,14 @@ function appendArticleBodyHtml(
     : '';
   // 부제가 없는 항·목은 법령 표기대로 번호를 본문 첫 줄에 붙여 읽는다("① 본문 …").
   // 별도 줄로 띄우면 인쇄·PDF에서 번호만 덩그러니 남는다.
-  const inlineSub = sub && !article?.title;
+  const inlineSub = sub && !title;
 
-  out.push(`<article class="tmpl-article ${rowClass}">`);
-  if (sub && !inlineSub) {
-    out.push('<div class="tmpl-article-head">');
-    out.push(`<span class="tmpl-article-sub">${subInner}</span>`);
-    if (article?.title) {
-      const nameInner = wrapSearchHighlightsInEscapedHtml(
-        ` ${escapeHtmlText(String(article.title))}`,
-        highlightQuery ?? '',
-      );
-      out.push(`<span class="tmpl-article-name">${nameInner}</span>`);
-    }
-    out.push('</div>');
-  } else if (!sub && article?.title) {
-    out.push('<div class="tmpl-article-head">');
-    const nameInner = wrapSearchHighlightsInEscapedHtml(
-      escapeHtmlText(String(article.title)),
-      highlightQuery ?? '',
+  const inner: string[] = [];
+  if (sub && title) {
+    const nameInner = wrapSearchHighlightsInEscapedHtml(` ${escapeHtmlText(title)}`, highlightQuery ?? '');
+    inner.push(
+      `<div class="tmpl-article-head"><span class="tmpl-article-sub">${subInner}</span><span class="tmpl-article-name">${nameInner}</span></div>`,
     );
-    out.push(`<span class="tmpl-article-name">${nameInner}</span>`);
-    out.push('</div>');
   }
   // 인쇄·PDF·한글은 공식 문서라 오늘 시행 중인 본문만 담는다(시행 전 초안·시행 예정 개정은 화면에만 표시, T-127).
   // 폐지는 "삭제 <날짜>", 아직 시행 전인 새 조문은 "날짜 시행 예정"으로 적는다.
@@ -123,8 +111,10 @@ function appendArticleBodyHtml(
     highlightQuery ?? '',
   );
   const bodyLead = inlineSub ? `<span class="tmpl-article-sub">${subInner}</span> ` : '';
-  if (bodyLead || bodyInner) out.push(`<div class="tmpl-article-body">${bodyLead}${bodyInner}</div>`);
-  out.push('</article>');
+  if (bodyLead || bodyInner) inner.push(`<div class="tmpl-article-body">${bodyLead}${bodyInner}</div>`);
+  // 항·목을 거느린 조의 머리 행은 제목이 조 머리 줄로 올라가 적을 것이 없다 — 빈 행을 남기지 않는다(T-211)
+  if (!inner.length) return;
+  out.push(`<article class="tmpl-article ${rowClass}">`, ...inner, '</article>');
 }
 
 const ROW_CLASS_BY_DEPTH = ['tmpl-row-jo', 'tmpl-row-hang', 'tmpl-row-item'] as const;
@@ -135,11 +125,18 @@ function appendJoGroupHtml(out: string[], group: any, highlightQuery?: string) {
   const artClass = branch ? `tmpl-art-${an}-${branch}` : `tmpl-art-${an}`;
   const branchAttr = branch ? ` data-branch="${branch}"` : '';
   out.push(`<div class="tmpl-article-block ${artClass}" data-article="${an}"${branchAttr}>`);
-  out.push(`<div class="tmpl-article-label">${escapeHtmlText(formatArticleJo(an, branch))}</div>`);
+  // 조 머리는 번호와 제목을 붙여 한 줄로 — `제1조(목적)` (SRS POLICY-10, T-211). 글은 `formatArticleHeading` 과 같은 조각이고,
+  // 검색 강조는 번호·제목 조각에 건다 — 화면(`JoHeadingText`)·일치 개수(`countFullViewMatches`)와 같은 단위(괄호는 대상이 아니다).
+  const joTitle = joGroupHeadTitle(group);
+  const headInner = articleHeadingSegments(an, branch, joTitle)
+    .map((seg) => (seg.part === 'paren' ? escapeHtmlText(seg.text) : wrapSearchHighlightsInEscapedHtml(escapeHtmlText(seg.text), highlightQuery ?? '')))
+    .join('');
+  out.push(`<div class="tmpl-article-label">${headInner}</div>`);
 
   const rows = joGroupRenderRows(group);
   for (const { article, depth } of rows) {
-    appendArticleBodyHtml(out, article, ROW_CLASS_BY_DEPTH[depth], highlightQuery, rows.length > 1);
+    const rowTitle = fullViewRowTitle(article, joTitle);
+    appendArticleBodyHtml(out, article, ROW_CLASS_BY_DEPTH[depth], highlightQuery, rows.length > 1, rowTitle);
   }
   out.push('</div>');
 }

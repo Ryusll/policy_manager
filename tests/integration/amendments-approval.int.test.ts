@@ -242,10 +242,12 @@ describe('T-108 개정 후보 승인·반려', () => {
       const editorNotes = await notes(editorToken);
       expect(editorNotes).toHaveLength(1);
       expect(editorNotes[0]).toMatchObject({ kind: 'law_amendment', link: `/amendments/${cand.x}` });
-      expect(editorNotes[0].title).toMatch(/^\[개정 후보 승인\] 취업규칙 제1조/);
+      // 조문 표기는 직접 승인 알림과 같다 — 조 머리 '제1조(목적)'(T-211)
+      expect(editorNotes[0].title).toMatch(/^\[개정 후보 승인\] 취업규칙 제1조\(목적\)/);
       const viewerNotes = await notes(viewerToken);
       expect(viewerNotes).toHaveLength(1);
       expect(viewerNotes[0]).toMatchObject({ kind: 'policy_revision', title: `[개정 발행 · ${E} 시행 예정] 취업규칙`, articleId: art.x });
+      expect(viewerNotes[0].body).toContain('조문: 제1조(목적)\n');
       expect(await notes(t1.token)).toEqual([]);
     });
 

@@ -462,6 +462,9 @@ export type SearchSuggestResult = {
     id: string;
     number: number;
     branchNumber?: number | null;
+    /** 항·목 행이면 번호가 온다 — '제2조 ② 부제'로 적는다(T-211) */
+    clauseNumber?: number | null;
+    itemNumber?: number | null;
     title: string;
     policyId: string;
     policyTitle: string;

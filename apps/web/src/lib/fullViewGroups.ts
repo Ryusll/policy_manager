@@ -6,7 +6,8 @@
  * 같은 행 목록을 쓰도록 해서 두 경로의 출력이 어긋나지 않게 한다.
  */
 
-import { groupArticlesByJo, flattenJoGroup } from './legalArticleLabel';
+import { groupArticlesByJo, flattenJoGroup, isArticleJoRoot, type ArticleLabelParts } from './legalArticleLabel';
+import { hangRepeatsJoTitle, inferJoTitle } from './articleStructure';
 
 export type FullViewJoGroup = {
   articleNumber: number;
@@ -143,6 +144,26 @@ export function joGroupRenderRows(group: any): FullViewRenderRow[] {
   for (const article of group?.items || []) push(article, depthOf(article));
 
   return rows;
+}
+
+type TitledRow = ArticleLabelParts & { title?: string };
+
+/**
+ * 조 머리(`제1조(목적)`)에 적을 제목 — 조 머리 행의 제목, 없으면 하나뿐인 항이 가진 제목(옛 데이터).
+ * 목차와 같은 판정(`inferJoTitle`)이라 목차와 본문의 조 머리가 어긋나지 않는다(T-211).
+ */
+export function joGroupHeadTitle(group: Pick<FullViewJoGroup, 'articleNumber' | 'articleBranch'> & Partial<FullViewJoGroup>): string {
+  const rows: TitledRow[] = joGroupRenderRows(group).map((r) => r.article);
+  return inferJoTitle(rows, Number(group.articleNumber), group.articleBranch);
+}
+
+/**
+ * 행 자기 줄에 적을 부제. 조 머리 행의 제목은 조 머리 줄로 올라갔고, 조 제목을 되풀이하는 제1항도
+ * 다시 적지 않는다 — 화면·내보내기·검색 개수가 이 판정 하나를 쓴다(T-211).
+ */
+export function fullViewRowTitle(article: TitledRow, joTitle: string): string {
+  if (isArticleJoRoot(article) || hangRepeatsJoTitle(article, joTitle)) return '';
+  return String(article.title ?? '').trim();
 }
 
 /**

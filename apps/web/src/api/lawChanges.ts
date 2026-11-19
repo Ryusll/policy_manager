@@ -58,7 +58,7 @@ export type ImpactedArticle = {
   evidenceText: string | null;
   confirmedAt: string | null;
   policy: { id: string; code: string; title: string; isActive: boolean };
-  article: { id: string; number: number; clauseNumber: number | null; itemNumber: number | null; title: string };
+  article: { id: string; number: number; branchNumber: number | null; clauseNumber: number | null; itemNumber: number | null; title: string };
   /** 제1 조문 — 기준일에 시행 중인 발행 버전. 없으면 개정 후보를 만들 수 없다 */
   baseVersion: {
     id: string;

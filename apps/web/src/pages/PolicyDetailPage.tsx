@@ -42,7 +42,7 @@ import RevisionReasonsModal from '../components/RevisionReasonsModal';
 import ComparisonTableModal from '../components/ComparisonTableModal';
 import { canManagePolicyTemplates } from '../lib/planFeatures';
 import ArticleReorderPanel from '../components/ArticleReorderPanel';
-import { escapeRegExp } from '../lib/searchRegex';
+import { countFullViewMatches } from '../lib/fullViewSearch';
 import { highlightText } from '../lib/highlightSearch';
 import PlanModal from '../components/PlanModal';
 import { ArticleBodyInline } from '../components/ArticleBodyInline';
@@ -52,14 +52,19 @@ import {
   countDistinctJo,
   formatArticleJo,
   formatClauseHang,
-  flattenJoGroup,
-  groupArticlesByJo,
   isArticleJoRoot,
   isChapterHeaderHidden,
   formatKoDate,
   joKeyOf,
   sortArticlesForToc,
 } from '../lib/legalArticleLabel';
+import {
+  articleDisplayLabel,
+  articlePositionLabel,
+  articleRowHeading,
+  chapterArticleLabel,
+  formatArticleHeading,
+} from '../lib/articleHeading';
 import CrossPolicyComparePanel from '../components/CrossPolicyComparePanel';
 import { buildPolicyPlainText, policyPlainTextFilename } from '../lib/policyPlainText';
 import { sortAppendices } from '../lib/appendixOrder';
@@ -84,13 +89,13 @@ import {
   buildArticleCreateRequests,
   canSubmitNewArticleForm,
   chapterHasJoRoot,
-  inferJoTitle,
   nextClauseNumberForJo,
   nextJoNumberForPolicy,
   segmentArticleHeading,
   titleFieldHint,
   titleFieldLabel,
 } from '../lib/articleStructure';
+import { filterTocChapters, filterTocGroups, tocArticleLabel, type TocRow } from '../lib/tocLabel';
 import { parseRevisionNotify } from '../lib/policyRevisionNotify';
 import { notificationGroupsApi } from '../api/notificationGroups';
 import { usersApi } from '../api/users';
@@ -194,33 +199,6 @@ function policyDateInputValue(d: string | Date | null | undefined): string {
 
 const sortArticlesToc = sortArticlesForToc;
 
-function filterArticleJoGroups(articles: any[], query: string) {
-  const groups = groupArticlesByJo(articles);
-  const q = query.trim().toLowerCase();
-  if (!q) return groups;
-  const matches = (article: any) => {
-    const target = `${articleShortLabel(article)} ${article.title} ${article.versions?.[0]?.content || ''}`.toLowerCase();
-    return target.includes(q);
-  };
-  return groups
-    .map((g) => ({
-      ...g,
-      hangs: g.hangs
-        .map((h) => ({
-          ...h,
-          items: h.items.filter(matches),
-        }))
-        .filter((h) => (h.hang && matches(h.hang)) || h.items.length > 0),
-      orphanItems: g.orphanItems.filter(matches),
-    }))
-    .filter(
-      (g) =>
-        (g.main && matches(g.main)) ||
-        g.hangs.length > 0 ||
-        g.orphanItems.length > 0,
-    );
-}
-
 type RecommendedAction = { label: string; href: string; external: boolean };
 
 function RelatedBadge({ label }: { label: string }) {
@@ -283,25 +261,8 @@ function TocArticleButton({
   onSelect: (article: any) => void;
   joTitle?: string;
 }) {
-  const hangTitleIsJoTitle =
-    joTitle &&
-    article.clauseNumber != null &&
-    article.itemNumber == null &&
-    Number(article.clauseNumber) === 1 &&
-    String(article.title ?? '').trim() === joTitle;
-  // 제목 없는 항·목은 번호(②)만 보이면 내용이 들어갔는지 알 수 없다 — 본문 앞부분을 붙인다
-  const bodyPreview = String(
-    article.versions?.[0]?.content || article.scheduledVersions?.[0]?.content || article.pendingVersion?.content || '',
-  )
-    .replace(/\s+/g, ' ')
-    .trim();
-  const subLabel =
-    !hangTitleIsJoTitle && String(article.title || '').trim()
-      ? `${articleShortLabel(article)} ${article.title}`
-      : `${articleShortLabel(article)}${bodyPreview ? ` ${bodyPreview}` : ''}`;
-  const label = isArticleJoRoot(article)
-    ? `${formatArticleJo(article.number, article.branchNumber)} ${article.title || ''}`.trim()
-    : subLabel;
+  // 조는 조 머리 `제1조(목적)`, 항·목은 번호와 부제(없으면 본문 앞부분) — `tocArticleLabel`(T-211)
+  const label = tocArticleLabel(article, joTitle ?? '');
   const hasOpenComments = Number(article._count?.comments ?? 0) > 0;
   const badge = articleBadgeState(article);
   const upcoming = nextScheduled(article);
@@ -364,6 +325,7 @@ function TocArticleGroups({
   selectMode,
   printSelection,
   onToggleJo,
+  titleRows,
 }: {
   selectMode?: boolean;
   /** 선택 인쇄 키 — 조 번호, 가지 조문은 "3-2" (fullViewGroupKey) */
@@ -378,12 +340,14 @@ function TocArticleGroups({
   onSelect: (article: any) => void;
   canEdit?: boolean;
   onAddHang?: (jo: number, branch: number | null) => void;
+  /** 조 제목을 추정할 거르기 전의 행(장 전체). 없으면 `articles` — 걸러진 행으로 추정하면 거를 때만 조 제목이 바뀐다 */
+  titleRows?: TocRow[];
 }) {
-  const groups = filterArticleJoGroups(articles, query);
+  const groups = filterTocGroups(articles, query, titleRows ?? articles);
   return (
     <>
       {groups.map((group) => {
-        const joTitle = inferJoTitle(articles, group.jo, group.branch);
+        const joTitle = group.joTitle;
         const selectKey = fullViewGroupKey({ articleNumber: group.jo, articleBranch: group.branch });
         const joLabel = formatArticleJo(group.jo, group.branch);
         return (
@@ -408,8 +372,7 @@ function TocArticleGroups({
             />
           ) : (
             <div className={clsx(plJo, 'pr-4 py-2 text-sm font-semibold text-gray-800')}>
-              {joLabel}
-              {joTitle ? ` ${joTitle}` : ''}
+              {formatArticleHeading(group.jo, group.branch, joTitle)}
             </div>
           )}
           {group.hangs.map((hang) => (
@@ -1505,24 +1468,14 @@ export default function PolicyDetailPage() {
     });
   };
 
-  const q = tocQuery.trim().toLowerCase();
   const selectTocArticle = useCallback((article: any) => {
     setSelectedArticle(article);
     // 다른 조문으로 옮기면 앞 조문의 처리 알림은 지운다 — 남아 있으면 이 조문 얘기로 읽힌다
     setVersionActionMsg('');
     window.history.replaceState(null, '', `${window.location.pathname}#article-${article.id}`);
   }, []);
-  const filteredChapters = policy?.chapters?.map((chapter: any) => {
-    const sorted = [...(chapter.articles || [])].sort(sortArticlesToc);
-    if (!q) return { ...chapter, articles: sorted };
-    const groups = filterArticleJoGroups(sorted, q);
-    if (chapter.title.toLowerCase().includes(q)) return { ...chapter, articles: sorted };
-    if (groups.length > 0) {
-      const flat = groups.flatMap((g) => flattenJoGroup(g));
-      return { ...chapter, articles: flat };
-    }
-    return null;
-  }).filter(Boolean) ?? [];
+  // 장마다 맞는 행과 조 제목을 추정할 장 전체 행(allArticles)을 싣는다 — 목차 묶음에 titleRows 로 넘긴다(T-211)
+  const filteredChapters = filterTocChapters(policy?.chapters, tocQuery);
   const pdfFiles = files.filter((file: any) => /\.pdf$/i.test(file.originalName || ''));
 
   /**
@@ -1609,32 +1562,10 @@ export default function PolicyDetailPage() {
     });
   }, []);
 
-  const fullViewMatchCount = useMemo(() => {
-    const q = fullViewSearchQuery.trim();
-    if (!q) return 0;
-    let re: RegExp;
-    try {
-      re = new RegExp(escapeRegExp(q), 'gi');
-    } catch {
-      return 0;
-    }
-    const countIn = (s: string) => {
-      const m = String(s ?? '').match(re);
-      return m ? m.length : 0;
-    };
-    let count = 0;
-    for (const ch of fullViewGroups) {
-      count += countIn(String(ch.title ?? ''));
-      // allGroups는 절 소속 조문까지 포함한다(절 미소속만 보는 blocks로 세면 매치 수가 모자란다)
-      for (const g of ch.allGroups || []) {
-        for (const a of g.items || []) {
-          count += countIn(String(a.title ?? ''));
-          count += countIn(String(a.versions?.[0]?.content ?? ''));
-        }
-      }
-    }
-    return count;
-  }, [fullViewSearchQuery, fullViewGroups]);
+  const fullViewMatchCount = useMemo(
+    () => countFullViewMatches(fullViewGroups, fullViewSearchQuery),
+    [fullViewSearchQuery, fullViewGroups],
+  );
 
   const getFullViewRoot = useCallback(
     () => (showFullTextModal ? fullViewModalRef.current : fullViewMainRef.current),
@@ -1720,7 +1651,7 @@ export default function PolicyDetailPage() {
       for (const a of [...(ch.articles || [])].sort(sortArticlesToc)) {
         out.push({
           id: a.id,
-          label: `${toKoreanOrdinal(ch.number)}장 · ${articleShortLabel(a)} ${a.title || ''}`,
+          label: chapterArticleLabel(ch.number, a),
         });
       }
     }
@@ -1741,7 +1672,7 @@ export default function PolicyDetailPage() {
         rows.push({
           key: a.id,
           articleId: a.id,
-          line: `${toKoreanOrdinal(ch.number)}장 · ${articleShortLabel(a)} (${a.title || '제목 없음'})`,
+          line: chapterArticleLabel(ch.number, a),
           sub: v
             ? `v${v.versionNum} · ${VERSION_STATE_LABEL.in_force}${dates ? ` · ${formatVersionDates(dates)}` : ''}`
             : '오늘 시행 중인 본문 없음',
@@ -1772,7 +1703,7 @@ export default function PolicyDetailPage() {
     if (revisionInternalReasons.length) tags.push(`내부요인(${revisionInternalReasons.join(', ')})`);
     if (revisionExternalReasons.length) tags.push(`외부요인(${revisionExternalReasons.join(', ')})`);
     if (!tags.length) return '';
-    const articleName = selectedArticle ? `${articleShortLabel(selectedArticle)} ${selectedArticle.title || ''}`.trim() : '해당 조문';
+    const articleName = selectedArticle ? articleRowHeading(selectedArticle) : '해당 조문';
     return `${articleName} 개정 초안입니다. ${tags.join(' / ')} 사유로 규정 문구를 정비하고 적용 기준을 명확화했습니다.`;
   }, [revisionInternalReasons, revisionExternalReasons, selectedArticle]);
 
@@ -2410,6 +2341,7 @@ export default function PolicyDetailPage() {
                       printSelection={printSelection}
                       onToggleJo={toggleJo}
                       articles={chapter.articles || []}
+                      titleRows={chapter.allArticles}
                       query={tocQuery}
                       plJo="pl-3"
                       plHang="pl-8"
@@ -2456,6 +2388,7 @@ export default function PolicyDetailPage() {
                       printSelection={printSelection}
                       onToggleJo={toggleJo}
                       articles={articlesWithoutSection(chapter)}
+                      titleRows={chapter.allArticles}
                       query={tocQuery}
                       plJo="pl-3"
                       plHang="pl-8"
@@ -2490,6 +2423,7 @@ export default function PolicyDetailPage() {
                           printSelection={printSelection}
                           onToggleJo={toggleJo}
                           articles={articlesInSection(chapter, section.id)}
+                          titleRows={chapter.allArticles}
                           query={tocQuery}
                           plJo="pl-5"
                           plHang="pl-10"
@@ -3002,7 +2936,7 @@ export default function PolicyDetailPage() {
                       className="rounded border border-amber-300 bg-white px-2 py-0.5 hover:bg-amber-100"
                       title="그날 시점의 본문으로 보기"
                     >
-                      {formatArticleJo(g.number, g.branchNumber)} {g.title} · {g.effectiveDate}부터
+                      {formatArticleHeading(g.number, g.branchNumber, g.title)} · {g.effectiveDate}부터
                     </button>
                   </li>
                 ))}
@@ -3590,8 +3524,13 @@ export default function PolicyDetailPage() {
                     <p className="text-[11px] text-amber-800 mt-2" data-testid="structure-live-note">
                       이 조문은{' '}
                       {ymd(liveSelectedArticle.scheduledVersions?.[0]?.effectiveDate ?? policy?.current?.nextScheduledDate ?? null) || '시행 예정일'}
-                      부터 {formatArticleAnchor(liveAnchorOf(liveSelectedArticle))}
-                      {liveSelectedArticle.liveTitle ? ` (${liveSelectedArticle.liveTitle})` : ''} 자리입니다(시행 예정 재파싱 묶음). 위 칸은 그
+                      부터{' '}
+                      {articlePositionLabel(
+                        liveAnchorOf(liveSelectedArticle),
+                        liveSelectedArticle.liveTitle,
+                        formatArticleAnchor(liveAnchorOf(liveSelectedArticle)),
+                      )}{' '}
+                      자리입니다(시행 예정 재파싱 묶음). 위 칸은 그
                       자리(지금 행)라 고치면 그날부터 적용되고, 오늘 자리({formatArticleAnchor(liveSelectedArticle)})는 그대로입니다.
                     </p>
                   )}
@@ -3823,10 +3762,16 @@ export default function PolicyDetailPage() {
                       {(version.status === 'draft' || version.status === 'review') && version.structure?.kind === 'proposal' && (
                         // 재파싱이 제안한 새 자리(T-110 ②) — 승인한 시행일부터 이 자리로 옮긴다
                         <p className="text-xs text-sky-800 mt-1.5" data-testid="proposed-structure">
-                          제안 계층: {formatArticleJo(version.structure.number, version.structure.branchNumber)}
-                          {version.structure.clauseNumber ? ` 제${version.structure.clauseNumber}항` : ''}
-                          {version.structure.itemNumber ? ` 제${version.structure.itemNumber}목` : ''}
-                          {version.structure.title ? ` (${version.structure.title})` : ''} — 승인한 시행일부터 이 자리로 옮깁니다
+                          {/* 조 자리면 조 머리 표기 `제1조(목적)`(T-211), 항·목 자리면 위치 뒤에 그 행의 부제 */}
+                          제안 계층:{' '}
+                          {articlePositionLabel(
+                            version.structure,
+                            version.structure.title,
+                            `${formatArticleJo(version.structure.number, version.structure.branchNumber)}${
+                              version.structure.clauseNumber ? ` 제${version.structure.clauseNumber}항` : ''
+                            }${version.structure.itemNumber ? ` 제${version.structure.itemNumber}목` : ''}`,
+                          )}{' '}
+                          — 승인한 시행일부터 이 자리로 옮깁니다
                         </p>
                       )}
                       {version.status === 'draft' && version.reviewNote && (
@@ -5171,7 +5116,11 @@ export default function PolicyDetailPage() {
           <div className="bg-white border border-gray-300 shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
             <div className="bg-navy-800 text-white px-5 py-3 flex items-center justify-between">
               <div className="text-sm font-medium">
-                조문 편집 · {articleShortLabel(selectedArticle)} ({selectedArticle.title})
+                {/* 분절 보기 머리와 같은 표기 — 항·목을 고쳐도 어느 조인지 보인다(`제2조(수당) · 항 1`) */}
+                조문 편집 ·{' '}
+                {segmentHeading
+                  ? [segmentHeading.joLine, segmentHeading.subLine].filter(Boolean).join(' · ')
+                  : articleDisplayLabel(selectedArticle)}
               </div>
               <button
                 type="button"

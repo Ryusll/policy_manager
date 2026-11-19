@@ -164,16 +164,6 @@ export function articleShortLabel(article: ArticleLabelParts): string {
   return formatArticleJo(article.number, article.branchNumber);
 }
 
-/** 조 제목과 함께 쓸 때 (예: 제1조 목적) */
-export function articleDisplayLabel(article: ArticleLabelParts & { title?: string }): string {
-  const base = articleShortLabel(article);
-  const t = String(article.title ?? '').trim();
-  if (article.clauseNumber != null || article.itemNumber != null) {
-    return t ? `${base} ${t}` : base;
-  }
-  return t ? `${base} (${t})` : base;
-}
-
 /**
  * 장 머리글을 감출지 — **이 판단의 유일한 정의**(T-84).
  *

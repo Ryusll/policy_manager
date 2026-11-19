@@ -99,9 +99,9 @@ describe('mergeUpcoming — 승인된 미래 시행 조문 개정도 예고에 (
     { id: 'p2', code: 'B', title: '복무규정', effectiveDate: '2026-01-01' },
   ];
   const scheduled = [
-    { policyId: 'p2', code: 'B', title: '복무규정', effectiveDate: '2026-10-20', articleCount: 2, firstArticle: '제3조 휴가' },
-    { policyId: 'p1', code: 'A', title: '급여규정', effectiveDate: '2026-11-01', articleCount: 1, firstArticle: '제2조 수당' },
-    { policyId: 'p1', code: 'A', title: '급여규정', effectiveDate: '2026-10-10', articleCount: 1, firstArticle: '제9조 오늘' },
+    { policyId: 'p2', code: 'B', title: '복무규정', effectiveDate: '2026-10-20', articleCount: 2, firstArticle: '제3조(휴가)' },
+    { policyId: 'p1', code: 'A', title: '급여규정', effectiveDate: '2026-11-01', articleCount: 1, firstArticle: '제2조(수당)' },
+    { policyId: 'p1', code: 'A', title: '급여규정', effectiveDate: '2026-10-10', articleCount: 1, firstArticle: '제9조(오늘)' },
   ];
 
   it('규정 시행일과 조문 개정을 날짜순으로 합치고, 같은 규정·같은 날은 한 줄', () => {
@@ -110,7 +110,7 @@ describe('mergeUpcoming — 승인된 미래 시행 조문 개정도 예고에 (
       ['복무규정', '2026-10-20', 2, 10],
       ['급여규정', '2026-11-01', 1, 22],
     ]);
-    expect(items[1].firstArticle).toBe('제2조 수당');
+    expect(items[1].firstArticle).toBe('제2조(수당)');
   });
 
   it('오늘 시행분은 예고가 아니다 — 개정이 없으면 규정 시행일만', () => {
