@@ -42,7 +42,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | (root) | admin, editor | 규정 목록(검색·필터) |
-| GET | scheduled-changes | JWT | **시행 예정 개정**(대시보드 "제·개정 예고", T-132 ⑤) — 승인됐지만 시행일 전인 조문 버전을 규정·시행일별로 묶어 가까운 순으로: `policyId`·`code`·`title`·`isActive`·`effectiveDate`(YYYY-MM-DD)·`articleCount`·`firstArticle`("제3조 수당")·`repealCount`(그날 폐지 예정인 조문 수, T-132 ③ — 폐지 예정도 같은 규정·날짜 묶음에 들고, 개정 조문 수 `articleCount` 와 따로 센다). Query: `limit`(기본 10, 최대 50). 승인된 문구라 열람자도 본다 |
+| GET | scheduled-changes | JWT | **시행 예정 개정**(대시보드 "제·개정 예고", T-132 ⑤) — 승인됐지만 시행일 전인 조문 버전을 규정·시행일별로 묶어 가까운 순으로: `policyId`·`code`·`title`·`isActive`·`effectiveDate`(YYYY-MM-DD)·`articleCount`·`firstArticle`("제3조(수당)" — 조 머리 표기, 항·목이면 "제3조제1항(부제)", T-211)·`repealCount`(그날 폐지 예정인 조문 수, T-132 ③ — 폐지 예정도 같은 규정·날짜 묶음에 들고, 개정 조문 수 `articleCount` 와 따로 센다). Query: `limit`(기본 10, 최대 50). 승인된 문구라 열람자도 본다 |
 | GET | slots | admin, editor | **규정 자리**(T-198) — `{plan, used, max, remaining}`. `used` 는 저장 때 상한 검사와 같이 회사의 모든 규정(비활성 포함)을 센다. 등록 창·PDF 가져오기가 저장 전에 상한을 알리는 데 쓰는 안내용이고, 막는 것은 저장 때의 검사다. 상한에 걸린 저장(새 규정·텍스트 가져오기·PDF/법제처 확정)은 403 `{code: 'POLICY_LIMIT_REACHED', plan, max, used, message}` — 문구에 요금제 이름(Starter 등)과 "아스트룸에 문의"가 들어간다(예전 `현재 플랜(starter)에서 …최대 5건입니다.`) |
 | GET | import-logs | admin, editor | 가져오기 이력 |
 | POST | import | admin, editor | **텍스트 가져오기 — 한 번에 저장**(T-135). 규정 목록의 "기존 규정 가져오기"(TXT·DOCX·붙여넣기)가 화면에서 나눈 장·조문을 한 요청으로 보낸다. 규정·장·조문·첫 버전·가져오기 이력·감사 기록을 트랜잭션 하나로 — 중간에 실패하면 아무것도 남지 않는다(예전에는 화면이 규정·장·조문·한꺼번에 시행·시행일·이력 API 를 차례로 불러 반쪽 규정이 남을 수 있었다). **편집자**는 초안으로만(보낸 시행일은 쓰지 않는다 — 관리자가 상세 화면에서 한꺼번에 시행), **관리자**는 `effectiveDate`(YYYY-MM-DD, 필수 — 없으면 400)로 바로 시행: 승인자·승인/발행 시각·시행 사유 `기존 규정 가져오기 자동 게시`·규정 시행일, 본문에 변수 표식이 남았으면 400(한꺼번에 시행과 같다), 감사 `version.bulk_publish`. 본문이 빈 조 제목 행은 버전을 만들지 않는다. 플랜 상한 403·코드 중복 409 는 회사 행을 잠근 뒤 센다. 긴 원문은 JSON 기본 한도(100kb)를 넘으므로 `Content-Type: application/vnd.policy-import+json` 으로 보내면 20MB 까지 받는다(이 경로만 — `application/json` 은 그대로 100kb). 응답: 만든 규정 + `articleCount`(만든 조문 행)·`published`(바로 시행한 버전 수) |
@@ -131,6 +131,7 @@
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
 | GET | (root) | JWT | 통합검색. Query: `q`(필수), `page`(기본 1), `limit`(기본 20). **찾는 대상은 조문마다 지금(오늘, 한국 날짜) 시행 중인 본문 하나**다(T-127 — 시행일 전인 개정·폐지된 조문은 빠지고, 시행일 없는 예전 시행본은 현재 본문으로 본다). 응답 `searchEngine`: `pg_bigm_ready`(LIKE) / `ilike`(LIKE 가 실패했을 때) |
+| GET | suggest | JWT | 통합검색 입력의 자동완성. Query: `q`. 이름에 `q` 가 든 규정(`id`·`code`·`title`)과 제목에 `q` 가 든 조문 행(`id`·`number`·`branchNumber`·`clauseNumber`·`itemNumber`·`title`·`policyId`·`policyTitle`, 조 → 가지 → 조 본문 → 항 → 목 순), 각각 최대 8개. 항·목 행은 번호가 와서 화면이 `제2조 ② 부제`로 적는다(T-211) |
 | GET | related-preview | JWT | 판·법·규 연관 미리보기. Query: `type`(precedent\|law\|rule, 필수), `q`(필수), `limit`(기본 5), `sort`(relevance\|latest), `scope`(title\|fulltext) |
 
 ## ask (`/api/ask`) — 규정 근거 AI 질의응답 (T-130, D-09) — 화면: `/ask`
@@ -168,7 +169,7 @@
 ## notifications (`/api/notifications`)
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| GET | (root) | JWT | 알림 목록. `kind`: `policy_revision`(개정 시행 — `policyId` 로 규정 화면. 사내 시행일이 오늘 뒤면 제목이 `[개정 발행 · 날짜 시행 예정]`, 본문에 시행일 줄 — 일반 승인·한꺼번에 시행·재파싱 묶음 승인 모두, T-132 ④. 시행 예정을 철회하면 `[개정 철회 · 날짜 시행 예정이었음]` — 철회한 시행일과 사유, T-132 ②) / `law_amendment`(법령 개정으로 개정 후보가 생김, T-106 — `link` 로 법령 화면의 그 변경). `link` 는 규정이 아닌 화면으로 가는 알림의 이동 경로 |
+| GET | (root) | JWT | 알림 목록. `kind`: `policy_revision`(개정 시행 — `policyId` 로 규정 화면. 사내 시행일이 오늘 뒤면 제목이 `[개정 발행 · 날짜 시행 예정]`, 본문에 시행일 줄 — 일반 승인·한꺼번에 시행·재파싱 묶음 승인 모두, T-132 ④. 본문의 `조문:` 줄은 조 머리 표기 `제1조(목적)`, 항·목이면 `제1조제2항(부제)` — 직접 승인·개정 후보 승인·철회 모두 같다, T-211. 시행 예정을 철회하면 `[개정 철회 · 날짜 시행 예정이었음]` — 철회한 시행일과 사유, T-132 ②) / `law_amendment`(법령 개정으로 개정 후보가 생김, T-106 — `link` 로 법령 화면의 그 변경. 후보를 승인·반려하면 검토를 요청한 사람에게 `[개정 후보 승인]`·`[개정 후보 반려]` 규정명 조문 — 조문은 `제1조(목적)` 꼴, T-211). `link` 는 규정이 아닌 화면으로 가는 알림의 이동 경로 |
 | GET | unread-count | JWT | 미읽음 수 |
 | PATCH | :id/read | JWT | 알림 읽음 처리 |
 | POST | read-all | JWT | 전체 읽음 처리 |
