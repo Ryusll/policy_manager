@@ -152,7 +152,8 @@ describe('T-151 판을 차례로 반영 (가짜 법제처)', () => {
     expect(r.error).toContain('조문이 없어');
     expect(externalId(lawId)).toBe(B.mst);
     expect(versions(lawId)).toEqual([`${A.mst}|baseline|-|0`, `${B.mst}|change|${A.mst}|1`]); // C·D 는 기록도 이벤트도 없다
-    expect(sql(`SELECT last_check_error FROM laws WHERE id='${lawId}';`)).toContain(`MST ${C.mst}`);
+    // 확인 기록(고객 화면)에는 고객 문구만 — 원문(MST·조문이 없어)은 위 실행 결과(통합 관리자 이력)에만 남는다(T-222 로 바뀐 완료 정의)
+    expect(sql(`SELECT last_check_error FROM laws WHERE id='${lawId}';`)).toBe('확인 중 문제가 생겼습니다 — 다음 확인 때 다시 시도합니다. 계속되면 아스트룸에 문의하세요.');
 
     // 법제처에 본문이 제대로 올라오면 다음 동기화가 C 부터 잇는다
     law.seedBody({ ...C, articles: [art('1', '목적', 'a2'), art('2', '휴가', 'b2')] });

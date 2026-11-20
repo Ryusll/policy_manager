@@ -196,7 +196,10 @@ describe('T-104 법령 동기화', () => {
         expect(run.results[0].error).toContain('판 목록에서 찾지 못했습니다');
 
         const got = await api(`/laws/${lawId}`, { token: platform.token });
-        expect(got.body.lastCheckError).toContain('판 목록에서 찾지 못했습니다');
+        // 고객 화면(법령 상세·목록)에는 고객 문구만 — 원문은 위 실행 결과(통합 관리자 이력)에만 남는다(T-222)
+        expect(got.body.lastCheckError).toBe('확인 중 문제가 생겼습니다 — 다음 확인 때 다시 시도합니다. 계속되면 아스트룸에 문의하세요.');
+        const listed = await api('/laws', { token: platform.token });
+        expect(listed.body.find((l: { id: string }) => l.id === lawId)?.lastCheckError).toBe(got.body.lastCheckError);
         // 실패를 성공처럼 보이지 않게 — '마지막 확인'은 앞선 성공의 시각, 다음 차례를 정하는 시도 시각만 이번 실패로(T-153 ⑤)
         expect(got.body.lastCheckedAt).toBe(before.lastCheckedAt);
         expect(new Date(got.body.lastAttemptedAt).getTime()).toBeGreaterThan(new Date(before.lastAttemptedAt ?? 0).getTime());

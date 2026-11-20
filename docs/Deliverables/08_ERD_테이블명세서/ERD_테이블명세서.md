@@ -273,7 +273,7 @@ id, code(unique, 예 `law.go.kr`), name, baseUrl, isActive.
 | versionKey | string? | 현재 수신본의 지문. 바뀌면 개정. 조항 지문을 **문서 순서대로** 이어 해시한다 |
 | effectiveNotesVersion | int? | 조항의 조별 시행일 표기를 쓴 **읽기 규칙의 판**(T-144, 마이그레이션 `20261012010000_law_effective_notes`). null = 아직 읽지 않음(T-144 이전 등록). 등록·새 판 저장이 지금 판을 남기고, 주기 동기화는 이 값이 지금 규칙과 다를 때만 같은 판을 다시 읽어 표기를 맞춘다 |
 | lastCheckedAt | datetime? | 마지막 확인 **시도** 시각. 실패해도 갱신한다 — 고장 난 법령 하나가 매번 맨 앞에 서지 않게 |
-| lastCheckError | text? | 마지막 확인이 실패했으면 사유, 성공이면 null — **"개정 없음"과 "확인 못 함"을 가른다** (T-104) |
+| lastCheckError | text? | 마지막 확인이 실패했으면 사유, 성공이면 null — **"개정 없음"과 "확인 못 함"을 가른다** (T-104). 고객 화면에 보이므로 고객용 문구만 둔다 — 원문은 동기화 실행 결과(`LawSyncRun.results`)와 서버 로그에(T-222) |
 
 `@@unique([sourceId, externalId])`, 인덱스 `[lastCheckedAt]`(폴링 대상 선정).
 

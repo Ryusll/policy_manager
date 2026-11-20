@@ -7,6 +7,7 @@ import { collectEffectiveNotes } from './law-effective-collect';
 import { revisionInfoNote } from './law-revision-info';
 import { lawSyncStatus } from './law-sync-status';
 import { errorText, markLaw, type CheckMark } from './law-sync-mark';
+import { checkErrorForCustomer, walkCheckError } from './law-check-error';
 import { AmendmentsService } from '../amendments/amendments.service';
 import { summarizeRun, type LawSyncResult } from './law-sync-logic';
 import { maxVersionsPerRun, planLawVersions, runBudgetMs, walkLawVersions, walkResult } from './law-version-sync';
@@ -219,8 +220,9 @@ export class LawSyncService {
         // 법제처가 응답하지 않거나 응답이 깨졌으면 채우기가 그 법령에서 멈춘다(law-revision-info)
         const current = { ...law, externalId: result.toMst ?? law.externalId };
         const infoNote = await revisionInfoNote(this.prisma, this.lawGoKr, current, { max: maxVersionsPerRun(), deadline }, this.log);
-        // 판은 이미 반영됐다 — 확인 기록을 남기다 실패해도 결과(반영한 판·이벤트)는 그대로 돌려준다
-        const markNote = await this.mark(law, mark, result.error ?? null);
+        // 판은 이미 반영됐다 — 확인 기록을 남기다 실패해도 결과(반영한 판·이벤트)는 그대로 돌려준다. 확인 기록(고객 화면)에는 고객 문구,
+        // 원문은 결과(통합 관리자 이력)와 로그에(T-222)
+        const markNote = await this.mark(law, mark, walkCheckError(outcome.stop, result.error));
         const note = [result.note, infoNote, markNote].filter(Boolean).join(' ');
         if (note) result.note = note;
         return result;
@@ -249,8 +251,9 @@ export class LawSyncService {
     } catch (e) {
       const error = errorText(e);
       this.log.warn(`법령 동기화 실패 [${law.lawName}]: ${error}`);
-      // 실패는 확인 시각이 아니라 시도 시각만 찍는다 — 고장 난 법령 하나가 매번 맨 앞에 서서 나머지를 막지 않게(T-153 ⑤)
-      const markNote = await this.mark(law, 'error', error);
+      // 실패는 확인 시각이 아니라 시도 시각만 찍는다 — 고장 난 법령 하나가 매번 맨 앞에 서서 나머지를 막지 않게(T-153 ⑤).
+      // 확인 기록(고객 화면)에는 고객 문구만, 원문은 결과(통합 관리자 이력)와 로그에(T-222)
+      const markNote = await this.mark(law, 'error', checkErrorForCustomer(e));
       return { ...base, outcome: 'failed', error, ...(markNote ? { note: markNote } : {}) };
     }
   }

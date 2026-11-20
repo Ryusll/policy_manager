@@ -9,9 +9,10 @@
  * - 한 번에 반영할 판 수(상한)와 실행 시간(마감)을 넘기면 다음 판을 시작하지 않는다 — 남은 판은 다음 동기화가 잇는다
  */
 
+/** failed·race 의 cause — 던져진 오류 그대로(T-222: 고객 화면에 보일 확인 실패 사유를 오류 종류로 고른다, law-check-error) */
 export type ChainStop =
-  | { kind: 'failed'; mst: string; message: string }
-  | { kind: 'race'; mst: string; message: string }
+  | { kind: 'failed'; mst: string; message: string; cause?: unknown }
+  | { kind: 'race'; mst: string; message: string; cause?: unknown }
   | { kind: 'repeal'; mst: string }
   | { kind: 'cap' }
   | { kind: 'deadline' };
@@ -60,7 +61,7 @@ export async function applyChain<V extends { mst: string }>(pending: V[], startM
       prev = entry.mst;
     } catch (e) {
       const kind = o.isRace?.(e) ? 'race' : 'failed';
-      return { applied, lastMst: prev, stop: { kind, mst: entry.mst, message: messageOf(e) }, remaining };
+      return { applied, lastMst: prev, stop: { kind, mst: entry.mst, message: messageOf(e), cause: e }, remaining };
     }
   }
   return { applied, lastMst: prev, remaining: 0 };

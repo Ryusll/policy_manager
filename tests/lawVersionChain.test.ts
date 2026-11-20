@@ -40,7 +40,9 @@ describe('applyChain (T-151)', () => {
     expect(calls.map(([m]) => m)).toEqual(['11', '12']); // 13 은 시도하지 않는다
     expect(r.lastMst).toBe('11');
     expect(r.applied.map((a) => a.entry.mst)).toEqual(['11']);
-    expect(r.stop).toEqual({ kind: 'failed', mst: '12', message: '조문이 없습니다' });
+    // cause — 던져진 오류 그대로(고객 화면의 확인 실패 사유를 오류 종류로 고른다, T-222)
+    expect(r.stop).toEqual({ kind: 'failed', mst: '12', message: '조문이 없습니다', cause: expect.any(Error) });
+    expect(r.stop?.kind === 'failed' && (r.stop.cause as Error).message).toBe('조문이 없습니다');
     expect(r.remaining).toBe(2);
   });
 
@@ -58,9 +60,10 @@ describe('applyChain (T-151)', () => {
 
   it('경합(다른 경로가 먼저 바꿈)은 실패가 아니라 race 로 멈춘다', async () => {
     class Race extends Error {}
-    const { apply } = recorder('12', new Race('다른 경로'));
+    const race = new Race('다른 경로');
+    const { apply } = recorder('12', race);
     const r = await applyChain([v('11'), v('12')], '10', { apply, cap: 10, isRace: (e) => e instanceof Race });
-    expect(r.stop).toEqual({ kind: 'race', mst: '12', message: '다른 경로' });
+    expect(r.stop).toEqual({ kind: 'race', mst: '12', message: '다른 경로', cause: race });
     expect(r.applied).toHaveLength(1);
   });
 
