@@ -19,12 +19,15 @@ import { useI18n } from '../i18n/useI18n';
 import { useAuthStore } from '../stores/authStore';
 import { useAskStatus } from '../hooks/useAskStatus';
 import { activeNavPath, navContextFor, navCurrent, navItemsFor, type NavContext, type NavItem } from '../lib/routeSections';
+import { adminLinks } from '../lib/navAdminLinks';
 import AmendmentsNavBadge from './AmendmentsNavBadge';
-import DropdownMenu from './DropdownMenu';
+import NavDisclosure from './NavDisclosure';
 
 /*
  * 상단 메뉴(T-214, SRS NFR-10) — 날마다 쓰는 업무 메뉴는 펼쳐 두고, 회사 단위 관리 화면은 '관리' 묶음에 넣는다.
  * 어떤 항목이 누구에게 보이는지는 경로 표(lib/routeSections 의 navItemsFor) 한 곳이 정한다 — 경로 표시·열람자 허용 경로와 같은 표.
+ * '관리' 묶음은 사이트 이동 링크라 disclosure 패턴(NavDisclosure, T-226) — 묶음을 열면 그 안 링크가 화면 읽기 프로그램의 링크
+ * 목록에 나온다(닫혀 있으면 접근성 트리에 없다 — APG disclosure 와 같다).
  */
 
 const NAV_ICONS: Record<string, LucideIcon> = {
@@ -92,22 +95,14 @@ export function DesktopNavView({ ctx }: { ctx: NavContext }) {
         </Link>
       ))}
       {nav.admin.length > 0 && (
-        <DropdownMenu
+        <NavDisclosure
           id="nav-admin-group"
           label={t('layout.nav.adminGroup')}
           icon={<SlidersHorizontal size={15} />}
           active={adminActive}
           currentLabel={t('layout.nav.currentGroup')}
           buttonClassName={linkClass(adminActive)}
-          items={nav.admin.map(({ path, label, icon: Icon, id }) => ({
-            kind: 'link' as const,
-            key: path,
-            id,
-            to: path,
-            label,
-            icon: <Icon size={15} className="text-gray-500" />,
-            current: navCurrent(pathname, path),
-          }))}
+          items={adminLinks(nav.admin, pathname)}
         />
       )}
     </nav>

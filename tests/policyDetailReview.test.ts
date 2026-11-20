@@ -267,9 +267,11 @@ describe('메뉴 항목 설명·접근성 (T-215 검토)', () => {
 
   it('글자 크기 항목 이름은 기호 없이 읽힌다, 패널은 열린 채 창·폭이 바뀌어도 다시 잰다', () => {
     for (const k of ['policyDetail.viewMenu.fontSmaller', 'policyDetail.viewMenu.fontLarger']) expect(ko[k], k).not.toMatch(/[−+가]\s|^가/);
-    const dd = src('apps/web/src/components/DropdownMenu.tsx');
-    expect(dd).toContain("window.addEventListener('resize', fit)");
-    expect(dd).toContain('new ResizeObserver(fit)');
+    // 다시 재는 일은 lib/usePanelFit 하나다(T-226 에서 DropdownMenu 에서 떼어 냄) — DropdownMenu 가 그것을 부른다
+    expect(src('apps/web/src/components/DropdownMenu.tsx')).toContain('usePanelFit(panelRef, state.open);');
+    const fit = src('apps/web/src/lib/usePanelFit.ts');
+    expect(fit).toContain("window.addEventListener('resize', fit)");
+    expect(fit).toContain('new ResizeObserver(fit)');
   });
 });
 

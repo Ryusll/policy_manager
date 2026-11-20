@@ -13,7 +13,7 @@ import { messages } from '../apps/web/src/i18n/messages';
 
 /**
  * T-214 상단 메뉴 재편(SRS NFR-10) — 업무 메뉴와 '관리' 묶음, 현재 위치, '공통 기준값' 이름, 개정 후보 경로 표시 표기.
- * 메뉴 버튼(DropdownMenu)의 키보드·닫힘 규칙은 tests/dropdownMenu.test.ts.
+ * '관리' 묶음(disclosure, T-226)의 닫힘 규칙·그리기·링크는 tests/navDisclosure.test.ts, 공용 메뉴 버튼은 tests/dropdownMenu.test.ts.
  */
 const ROOT = join(__dirname, '..');
 const src = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
@@ -150,10 +150,13 @@ describe('사용자 → 메뉴 노출 조건 (T-214)', () => {
 });
 
 describe('상단 메뉴 그리기 — 묶음 버튼과 모바일 구역 (T-214)', () => {
-  it('데스크톱: 관리자에게는 업무 메뉴와 닫힌 관리 묶음 버튼(aria-haspopup·aria-expanded)', () => {
+  // T-226(PM 결정 11/20): 묶음은 메뉴 버튼(aria-haspopup="menu")이 아니라 disclosure — 열린 모양은 tests/navDisclosure.test.ts
+  it('데스크톱: 관리자에게는 업무 메뉴와 닫힌 관리 묶음 버튼(disclosure — aria-expanded, 메뉴 역할 없음, T-226)', () => {
     const html = renderNav('desktop', userOf('admin'), { configured: true, enabled: true });
     expect(html).toContain('id="nav-policies"');
-    expect(html).toMatch(/<button[^>]*id="nav-admin-group"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/);
+    expect(html).toMatch(/<button[^>]*id="nav-admin-group"[^>]*aria-expanded="false"/);
+    expect(html).not.toContain('aria-haspopup');
+    expect(html).not.toMatch(/role="menu/);
     expect(html).toContain('>관리<');
     // 닫힌 묶음의 항목은 그리지 않는다
     expect(html).not.toContain('id="nav-variables"');

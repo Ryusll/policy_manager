@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -11,14 +11,15 @@ import {
   menuHover,
   menuItemsChanged,
   menuKey,
-  panelShift,
   selectEffect,
   type MenuKeyResult,
   type MenuState,
 } from '../lib/menuKeys';
+import { usePanelFit } from '../lib/usePanelFit';
 
 /**
- * 공용 메뉴 버튼(T-214, SRS NFR-10) — 상단 메뉴의 '관리' 묶음이 쓰고, 규정 상세 도구(T-215)가 그대로 쓴다.
+ * 공용 메뉴 버튼(T-214, SRS NFR-10) — 규정 상세 도구(T-215)가 쓴다. 상단 메뉴의 '관리' 묶음은 사이트 이동 링크라 T-226 에서
+ * disclosure 패턴(NavDisclosure)으로 옮겼다 — 메뉴 버튼은 동작·선택 항목이 있는 메뉴에 쓴다.
  * 외부 패키지 없이 WAI-ARIA 메뉴 버튼 패턴: 버튼 `aria-haspopup`·`aria-expanded`, 상태 변화는 lib/menuKeys(키·누르기·마우스 올림),
  * 바깥 클릭·Esc·Tab·화면 이동으로 닫고, Esc·고르기로 닫히면 포커스를 버튼으로 돌린다(바깥 클릭이면 누른 곳으로).
  *
@@ -27,21 +28,17 @@ import {
 export type { MenuGroup, MenuItem, MenuLeaf } from './DropdownMenuItem';
 
 type Props = {
-  /** 버튼 id — 투어·시험이 가리킨다 */
+  /** 버튼 id — 시험·화면 확인이 가리킨다 */
   id: string;
   label: ReactNode;
   icon?: ReactNode;
   items: MenuItem[];
-  /** 묶음 안 화면에 있을 때 버튼을 현재 위치로 보인다 */
-  active?: boolean;
-  /** 현재 위치일 때 화면 읽기 프로그램에만 읽히는 말 — 색만으로 알리지 않게 */
-  currentLabel?: ReactNode;
   buttonClassName?: string;
   panelClassName?: string;
   align?: 'left' | 'right';
 };
 
-export default function DropdownMenu({ id, label, icon, items, active, currentLabel, buttonClassName, panelClassName, align = 'left' }: Props) {
+export default function DropdownMenu({ id, label, icon, items, buttonClassName, panelClassName, align = 'left' }: Props) {
   const [state, setState] = useState<MenuState>(MENU_CLOSED);
   const wrapRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -71,26 +68,8 @@ export default function DropdownMenu({ id, label, icon, items, active, currentLa
     return () => document.removeEventListener('mousedown', onDown);
   }, [state.open]);
 
-  // 패널이 화면 밖으로 나가지 않게 가로로 민다(좁은 화면에서 버튼이 오른쪽 끝 가까이 있을 때 등). 열 때와, 열린 채 창 크기가
-  // 바뀌거나(화면 회전 포함) 패널 폭이 바뀔 때(진행 문구·글자 크기 항목 글) 다시 잰다. 미는 값은 폭을 바꾸지 않아 되먹임이 없다
-  useLayoutEffect(() => {
-    const el = panelRef.current;
-    if (!state.open || !el) return;
-    const fit = () => {
-      el.style.transform = '';
-      const r = el.getBoundingClientRect();
-      const shift = panelShift(r.left, r.right, window.innerWidth);
-      if (shift) el.style.transform = `translateX(${shift}px)`;
-    };
-    fit();
-    window.addEventListener('resize', fit);
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
-    observer?.observe(el);
-    return () => {
-      window.removeEventListener('resize', fit);
-      observer?.disconnect();
-    };
-  }, [state.open]);
+  // 패널이 화면 밖으로 나가지 않게 가로로 민다 — 열 때와 열린 채 창 크기·패널 폭이 바뀔 때(lib/usePanelFit, '관리' 묶음과 같이 쓴다)
+  usePanelFit(panelRef, state.open);
 
   // 화면이 바뀌면 닫는다 — 키보드 뒤로 가기·트랙패드 넘기기처럼 누르지 않고 옮겨 가도 메뉴가 새 화면을 덮지 않게.
   // 포커스가 메뉴 항목에 있었으면 버튼으로 돌린다(항목이 사라지며 포커스가 문서 처음으로 떨어지지 않게)
@@ -157,14 +136,12 @@ export default function DropdownMenu({ id, label, icon, items, active, currentLa
         aria-haspopup="menu"
         aria-expanded={state.open}
         aria-controls={state.open ? panelId : undefined}
-        data-active={active ? 'true' : undefined}
         className={buttonClassName}
         onClick={() => apply(menuButtonClick(state, leaves.length))}
         onKeyDown={(e) => onKey(e, 'button')}
       >
         {icon}
         <span id={labelId}>{label}</span>
-        {active && currentLabel ? <span className="sr-only">{currentLabel}</span> : null}
         <ChevronDown size={13} className={clsx('transition-transform', state.open && 'rotate-180')} aria-hidden />
       </button>
       {state.open && (

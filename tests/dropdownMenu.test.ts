@@ -156,8 +156,8 @@ describe('DropdownMenu 는 위 함수대로만 움직인다 (T-214)', () => {
     expect(menu).toContain('<div role="separator"');
     expect(menu).toContain('<span id={labelId}>{label}</span>');
     expect(menu).toContain('aria-labelledby={labelId}');
-    // 현재 위치를 색만으로 알리지 않는다 — 화면 읽기 프로그램용 말
-    expect(menu).toContain('{active && currentLabel ? <span className="sr-only">{currentLabel}</span> : null}');
+    // 묶음의 현재 위치 표시(active·currentLabel)는 상단 '관리' 묶음과 함께 NavDisclosure 로 옮겼다(T-226 — tests/navDisclosure.test.ts)
+    expect(menu).not.toContain('currentLabel');
     // 긴 메뉴는 화면 안에서 넘긴다
     expect(menu).toContain('max-h-[70vh] overflow-y-auto');
   });
@@ -171,9 +171,12 @@ describe('열린 패널을 화면 안으로 (T-215)', () => {
     expect(panelShift(100, 600, 390)).toBe(8 - 100); // 화면보다 넓으면 왼쪽부터 보인다
   });
 
-  it('DropdownMenu 는 열 때 패널 위치를 재서 민다', () => {
+  it('DropdownMenu 는 열 때 패널 위치를 재서 민다 — 재는 일은 lib/usePanelFit 하나(T-226 에서 떼어 냄, 관리 묶음과 같이 쓴다)', () => {
     const menu = src('apps/web/src/components/DropdownMenu.tsx');
-    expect(menu).toContain('const shift = panelShift(r.left, r.right, window.innerWidth);');
+    expect(menu).toContain('usePanelFit(panelRef, state.open);');
     expect(menu).toContain('ref={panelRef}');
+    const fit = src('apps/web/src/lib/usePanelFit.ts');
+    expect(fit).toContain('const shift = panelShift(r.left, r.right, window.innerWidth);');
+    expect(fit).toContain('}, [ref, open]);');
   });
 });
