@@ -9,6 +9,7 @@ import {
   menuHover,
   menuItemsChanged,
   menuKey,
+  panelShift,
   selectEffect,
   type MenuState,
 } from '../apps/web/src/lib/menuKeys';
@@ -119,11 +120,12 @@ describe('메뉴 항목 종류별 닫힘 규칙 — T-215 도구 메뉴가 그�
 });
 
 describe('DropdownMenu 는 위 함수대로만 움직인다 (T-214)', () => {
-  const menu = src('apps/web/src/components/DropdownMenu.tsx');
+  // 상태·키는 DropdownMenu, 항목 하나 그리기는 DropdownMenuItem(T-215 에서 떼어 냄) — 두 파일을 함께 본다
+  const menu = src('apps/web/src/components/DropdownMenu.tsx') + src('apps/web/src/components/DropdownMenuItem.tsx');
 
   it('누르기·마우스 올림·키·고르기를 lib/menuKeys 로 판정하고, 고른 뒤 포커스는 selectEffect 대로', () => {
     expect(menu).toContain('onClick={() => apply(menuButtonClick(state, leaves.length))}');
-    expect(menu).toContain('onMouseEnter: () => apply(menuHover(state, i), true),');
+    expect(menu).toContain('onHover={() => apply(menuHover(state, i), true)}');
     expect(menu).toContain('const r = menuKey(state, e.key, leaves.length, from);');
     expect(menu).toContain('const effect = selectEffect(item);');
     expect(menu).toContain("apply({ state: MENU_CLOSED, focus: effect.focusButton ? 'button' : 'keep', handled: true })");
@@ -132,7 +134,7 @@ describe('DropdownMenu 는 위 함수대로만 움직인다 (T-214)', () => {
     expect(menu).toContain(`const focused = (e.target as HTMLElement).closest<HTMLElement>('[role^="menuitem"]');`);
     expect(menu).toContain('(focused ?? itemRefs.current[state.index])?.click();');
     expect(menu).toMatch(/onKeyUp=\{\(e\) => \{\s*if \(e\.key === ' '\) e\.preventDefault\(\);/);
-    expect(menu).toContain('onFocus: () => setState((s) => menuFocused(s, i)),');
+    expect(menu).toContain('onFocus={() => setState((s) => menuFocused(s, i))}');
   });
 
   it('화면이 바뀌면 닫고, 항목 수가 바뀌면 위치를 맞추고, 바깥을 누르면 닫는다', () => {
@@ -146,7 +148,8 @@ describe('DropdownMenu 는 위 함수대로만 움직인다 (T-214)', () => {
     expect(menu).toContain('aria-expanded={state.open}');
     expect(menu).toContain('aria-checked={item.checked}');
     expect(menu).toContain("role={item.kind === 'radio' ? 'menuitemradio' : 'menuitemcheckbox'}");
-    expect(menu).toContain('aria-disabled={item.disabled || undefined}');
+    // 막힌 동작·radio 의 aria-disabled — 그린 결과로도 본다(tests/policyDetailReview.test.ts '막히면 안내 대신 이유를')
+    expect(menu).toContain('aria-disabled={disabled || undefined}');
     expect(menu).toContain('role="group" aria-labelledby={headId}');
     // 묶음 앞뒤의 구분선, 메뉴 이름은 버튼의 이름 글자만(현재 위치 숨은 말은 넣지 않는다)
     expect(menu).toContain(`item.kind === 'group' || items[gi - 1].kind === 'group'`);
@@ -157,5 +160,20 @@ describe('DropdownMenu 는 위 함수대로만 움직인다 (T-214)', () => {
     expect(menu).toContain('{active && currentLabel ? <span className="sr-only">{currentLabel}</span> : null}');
     // 긴 메뉴는 화면 안에서 넘긴다
     expect(menu).toContain('max-h-[70vh] overflow-y-auto');
+  });
+});
+
+describe('열린 패널을 화면 안으로 (T-215)', () => {
+  it('오른쪽 끝을 넘으면 왼쪽으로 민다, 그래도 왼쪽이 넘치면 왼쪽 끝에 맞춘다, 안에 있으면 그대로', () => {
+    expect(panelShift(250, 506, 390)).toBe(390 - 8 - 506); // 좁은 화면에서 오른쪽 버튼의 메뉴(16rem)
+    expect(panelShift(20, 276, 390)).toBe(0);
+    expect(panelShift(-30, 226, 390)).toBe(38); // 왼쪽 끝을 넘은 메뉴(오른쪽 정렬)
+    expect(panelShift(100, 600, 390)).toBe(8 - 100); // 화면보다 넓으면 왼쪽부터 보인다
+  });
+
+  it('DropdownMenu 는 열 때 패널 위치를 재서 민다', () => {
+    const menu = src('apps/web/src/components/DropdownMenu.tsx');
+    expect(menu).toContain('const shift = panelShift(r.left, r.right, window.innerWidth);');
+    expect(menu).toContain('ref={panelRef}');
   });
 });

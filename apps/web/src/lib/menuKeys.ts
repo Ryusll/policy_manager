@@ -71,6 +71,17 @@ export function menuItemsChanged(state: MenuState, count: number): MenuState {
   return state.index >= count ? { open: true, index: count - 1 } : state;
 }
 
+/**
+ * 열린 패널이 화면 밖으로 나가지 않게 가로로 밀 거리(px) — 좁은 화면에서 버튼이 오른쪽에 있으면 왼쪽으로 민다(T-215).
+ * 오른쪽 끝을 먼저 맞추고, 그래도 왼쪽이 넘치면 왼쪽 끝에 맞춘다(패널이 화면보다 넓으면 왼쪽부터 보인다)
+ */
+export function panelShift(left: number, right: number, viewport: number, margin = 8): number {
+  let shift = 0;
+  if (right > viewport - margin) shift = viewport - margin - right;
+  if (left + shift < margin) shift = margin - left;
+  return shift;
+}
+
 /** 묶음(group)을 펼친 항목 순서 — 키 이동 위치는 이 순서다(묶음 소제목은 항목이 아니다) */
 export function flattenMenu<T extends { kind: string }>(items: (T | { kind: 'group'; items: T[] })[]): T[] {
   return items.flatMap((it) => (it.kind === 'group' ? (it as { items: T[] }).items : [it as T]));
@@ -83,12 +94,12 @@ export type MenuItemRule = { kind: 'link' | 'action' | 'checkbox' | 'radio'; dis
  * 항목을 골랐을 때 실행하는가, 메뉴를 닫는가, 닫으면 포커스를 메뉴 버튼으로 돌리는가.
  * - 링크·동작: 실행하고 닫고 포커스는 버튼으로(링크도 — 상단 메뉴는 화면이 바뀌어도 남아 키보드 사용자가 자리를 잃지 않게).
  *   `keepOpen` 동작(글자 크기 단계처럼 이어 누르는 것)은 열어 둔다
- * - 비활성 동작: 실행하지 않고 열어 둔다 — 이유 문구를 읽을 수 있게
+ * - 비활성 항목(동작·하나 고르기 — 저장 중인 양식 radio 처럼): 실행하지 않고 열어 둔다 — 이유 문구를 읽을 수 있게
  * - 켜고 끄기(checkbox)·하나 고르기(radio): 실행하고 열어 둔다. 고르는 목록(select)은 radio 로 둔다 — 메뉴(role=menu) 안에는
  *   select 를 둘 수 없다(자식은 menuitem·menuitemcheckbox·menuitemradio·group·separator 뿐)
  */
 export function selectEffect(item: MenuItemRule): { run: boolean; close: boolean; focusButton: boolean } {
-  if (item.kind === 'action' && item.disabled) return { run: false, close: false, focusButton: false };
+  if (item.disabled) return { run: false, close: false, focusButton: false };
   if (item.kind === 'checkbox' || item.kind === 'radio') return { run: true, close: false, focusButton: false };
   if (item.kind === 'action' && item.keepOpen) return { run: true, close: false, focusButton: false };
   return { run: true, close: true, focusButton: true };

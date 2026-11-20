@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/authStore';
 import { useBrandStore } from '../stores/brandStore';
+import { usePolicyRunsStore } from '../stores/policyRunsStore';
 import { useToastStore } from '../stores/toastStore';
 import { endAuthScope, watchAuthIdentity } from './authScope';
 
@@ -27,6 +28,8 @@ export function installSessionReset(queryClient: QueryClient): () => void {
     endAuthScope();
     queryClient.clear();
     useToastStore.getState().clear();
+    // 규정 상세의 진행 중 표시 — 끊긴 요청이 끝을 알리지 못해도 다음 사람의 버튼이 막혀 있지 않게(T-215 12차)
+    usePolicyRunsStore.getState().clear();
     const tenantId = useAuthStore.getState().user?.tenantId ?? null;
     const cached = useBrandStore.getState().cachedTenantId;
     if (tenantId !== null && cached !== null && cached !== tenantId) useBrandStore.getState().clearCache();

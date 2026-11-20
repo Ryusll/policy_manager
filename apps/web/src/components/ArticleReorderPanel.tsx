@@ -10,6 +10,7 @@ import {
   type JoRow,
 } from '../lib/joReorder';
 import { formatArticleJo } from '../lib/legalArticleLabel';
+import { useI18n } from '../i18n/useI18n';
 
 /**
  * 조 순서 일괄 재정렬 (T-60).
@@ -25,15 +26,19 @@ export default function ArticleReorderPanel({
   chapters,
   saving,
   error,
+  notice,
   onCancel,
   onSave,
 }: {
   chapters: any[] | undefined | null;
   saving?: boolean;
   error?: string;
+  /** 창을 연 뒤 조 순서가 바뀌어 새로 그렸을 때의 안내 — 옮기던 것이 사라진 까닭(T-215 15차 #5) */
+  notice?: string;
   onCancel: () => void;
   onSave: (order: { chapterId: string; jo: number; branch?: number }[]) => void;
 }) {
+  const { t } = useI18n();
   const original = useMemo(() => buildJoRows(chapters), [chapters]);
   const [rows, setRows] = useState<JoRow[]>(original);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -53,34 +58,40 @@ export default function ArticleReorderPanel({
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
       <div className="bg-white w-full max-w-2xl max-h-[90vh] flex flex-col border border-gray-300 shadow-2xl">
         <div className="bg-navy-900 text-white px-5 py-3 flex items-center gap-2">
-          <span className="font-medium text-sm">조 순서 재정렬</span>
+          <span className="font-medium text-sm">{t('policyDetail.reorder.open')}</span>
           <button
             type="button"
             onClick={onCancel}
             className="ml-auto text-white/70 hover:text-white"
-            aria-label="닫기"
+            aria-label={t('policyDetail.reorder.close')}
           >
             <X size={16} />
           </button>
         </div>
 
+        {notice && (
+          <p role="status" className="px-5 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-200">
+            {notice}
+          </p>
+        )}
         <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 space-y-1.5">
           <p className="text-xs text-gray-600">
-            끌어서 놓거나 위/아래 버튼으로 순서를 바꿉니다. <strong>장 경계를 넘기면 그 장으로 옮겨집니다.</strong>
+            {t('policyDetail.reorder.howTo')}
+            <strong>{t('policyDetail.reorder.crossChapter')}</strong>
           </p>
           <p className="text-xs text-gray-500">
-            조 번호는 장을 가로질러 이어지므로(제1장 제1·2조 → 제2장 제3조), 하나만 옮겨도 뒤 번호가 함께 밀립니다.
-            저장을 눌러야 실제로 반영됩니다.
+            {t('policyDetail.reorder.numbering')}
           </p>
           {/* 안정 링크(T-73)는 조 번호 기준이다. 번호를 바꾸면 이미 나간 링크가 다른 조를 가리킨다. */}
           <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
-            조문 링크는 조 번호로 만들어집니다. 번호가 바뀌면 <strong>사내 위키·메일에 붙여둔 기존 링크가 다른 조를 가리키게 됩니다.</strong>
+            {t('policyDetail.reorder.linkWarn')}
+            <strong>{t('policyDetail.reorder.linkWarnStrong')}</strong>
           </p>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto">
           {rows.length === 0 && (
-            <p className="px-5 py-8 text-sm text-gray-500 text-center">재정렬할 조가 없습니다.</p>
+            <p className="px-5 py-8 text-sm text-gray-500 text-center">{t('policyDetail.reorder.empty')}</p>
           )}
           <ul className="divide-y divide-gray-100">
             {rows.map((row, idx) => {
@@ -89,7 +100,7 @@ export default function ArticleReorderPanel({
                 <li key={`${row.chapterId}-${row.jo}-${row.branch ?? 0}`}>
                   {showChapterHeadAt(idx) && (
                     <div className="px-4 py-1.5 bg-gray-100/80 border-y border-gray-200 text-xs font-medium text-gray-700">
-                      {row.chapterHidden ? '(장 제목 없음)' : `제${row.chapterNumber}장 ${row.chapterTitle}`}
+                      {row.chapterHidden ? t('policyDetail.reorder.noChapterTitle') : `제${row.chapterNumber}장 ${row.chapterTitle}`}
                     </div>
                   )}
                   <div
@@ -131,7 +142,7 @@ export default function ArticleReorderPanel({
                         onClick={() => move(idx, idx - 1)}
                         disabled={idx === 0 || saving}
                         className="p-1 text-gray-400 hover:text-navy-700 disabled:opacity-30"
-                        aria-label={`제${p.newNumber}조 위로`}
+                        aria-label={t('policyDetail.reorder.up', { n: p.newNumber })}
                       >
                         <ArrowUp size={13} />
                       </button>
@@ -140,7 +151,7 @@ export default function ArticleReorderPanel({
                         onClick={() => move(idx, idx + 1)}
                         disabled={idx === rows.length - 1 || saving}
                         className="p-1 text-gray-400 hover:text-navy-700 disabled:opacity-30"
-                        aria-label={`제${p.newNumber}조 아래로`}
+                        aria-label={t('policyDetail.reorder.down', { n: p.newNumber })}
                       >
                         <ArrowDown size={13} />
                       </button>
@@ -153,19 +164,19 @@ export default function ArticleReorderPanel({
         </div>
 
         {error && (
-          <p className="px-5 py-2 text-xs text-red-700 bg-red-50 border-t border-red-200">{error}</p>
+          <p role="alert" className="px-5 py-2 text-xs text-red-700 bg-red-50 border-t border-red-200">{error}</p>
         )}
 
         <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2">
           <span className="text-xs text-gray-500" aria-live="polite">
-            {changed ? `${movedCount}개 조의 번호가 바뀝니다` : '바뀐 것이 없습니다'}
+            {changed ? t('policyDetail.reorder.moved', { n: movedCount }) : t('policyDetail.reorder.unchanged')}
           </span>
           <div className="ml-auto flex gap-2">
             <button type="button" className="btn-secondary text-sm" onClick={() => setRows(original)} disabled={!changed || saving}>
-              되돌리기
+              {t('policyDetail.reorder.revert')}
             </button>
             <button type="button" className="btn-secondary text-sm" onClick={onCancel} disabled={saving}>
-              취소
+              {t('policyDetail.reorder.cancel')}
             </button>
             <button
               type="button"
@@ -173,7 +184,7 @@ export default function ArticleReorderPanel({
               onClick={() => onSave(toReorderPayload(rows))}
               disabled={!changed || saving}
             >
-              {saving ? '저장 중…' : '저장'}
+              {t(saving ? 'policyDetail.reorder.saving' : 'policyDetail.reorder.save')}
             </button>
           </div>
         </div>

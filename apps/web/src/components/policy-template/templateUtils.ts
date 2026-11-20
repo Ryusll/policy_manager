@@ -119,10 +119,21 @@ function appendArticleBodyHtml(
 
 const ROW_CLASS_BY_DEPTH = ['tmpl-row-jo', 'tmpl-row-hang', 'tmpl-row-item'] as const;
 
+/**
+ * 조 묶음의 클래스 — `tmpl-art-3`, 가지 조는 `tmpl-art-3-2`. HTML 양식(아래)과 화면 렌더러(TemplateRenderer)가 같이 단다.
+ * 회사 양식의 CSS 가 조를 고를 때 쓰고, 열람자의 조문 이동이 이것으로 그 조를 찾는다(T-215, lib/policyDetailLinks).
+ * 양식 HTML 정화는 data-* 를 지우고 class 는 남기므로(templateSanitize) 클래스로 찾는다.
+ */
+export function fullViewArticleClass(number: unknown, branch?: unknown): string {
+  const an = Number(number) || 0;
+  const b = Number(branch) || 0;
+  return b ? `tmpl-art-${an}-${b}` : `tmpl-art-${an}`;
+}
+
 function appendJoGroupHtml(out: string[], group: any, highlightQuery?: string) {
   const an = Number(group?.articleNumber) || 0;
   const branch = Number(group?.articleBranch) || 0;
-  const artClass = branch ? `tmpl-art-${an}-${branch}` : `tmpl-art-${an}`;
+  const artClass = fullViewArticleClass(an, branch);
   const branchAttr = branch ? ` data-branch="${branch}"` : '';
   out.push(`<div class="tmpl-article-block ${artClass}" data-article="${an}"${branchAttr}>`);
   // 조 머리는 번호와 제목을 붙여 한 줄로 — `제1조(목적)` (SRS POLICY-10, T-211). 글은 `formatArticleHeading` 과 같은 조각이고,

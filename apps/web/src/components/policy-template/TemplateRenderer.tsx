@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import {
   applyTokens,
   buildEnterprisePolicyBodyHtml,
+  fullViewArticleClass,
   sanitizeCssLite,
   sanitizeHtmlLite,
 } from './templateUtils';
@@ -127,9 +128,10 @@ function JoGroupBlock({
   const head = { number: group.articleNumber, branch: group.articleBranch, title: joTitle };
   // 화면낭독기·점자 단말이 조 단위를 하나의 덩어리로 인식하도록 article 로 감싸고
   // 표제를 heading 으로 준다. 들여쓰기(시각)만으로는 구조가 전달되지 않는다. (T-81)
+  // 조 묶음 클래스(tmpl-art-N)는 HTML 양식(buildEnterprisePolicyBodyHtml)과 같다 — 조문 이동이 이것으로 그 조를 찾는다(T-215)
   return (
     <article
-      className="text-sm border border-gray-100 rounded p-2 bg-white"
+      className={`text-sm border border-gray-100 rounded p-2 bg-white ${fullViewArticleClass(group.articleNumber, group.articleBranch)}`}
       aria-label={formatArticleHeading(head.number, head.branch, head.title)}
     >
       <h3 className="font-semibold text-gray-800 mb-1">

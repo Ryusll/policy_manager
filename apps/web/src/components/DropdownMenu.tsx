@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Check, ChevronDown } from 'lucide-react';
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
+import { ChevronDown } from 'lucide-react';
 import { clsx } from 'clsx';
+import DropdownMenuItem, { type MenuItem, type MenuLeaf } from './DropdownMenuItem';
 import {
   MENU_CLOSED,
   flattenMenu,
@@ -10,6 +11,7 @@ import {
   menuHover,
   menuItemsChanged,
   menuKey,
+  panelShift,
   selectEffect,
   type MenuKeyResult,
   type MenuState,
@@ -20,28 +22,9 @@ import {
  * 외부 패키지 없이 WAI-ARIA 메뉴 버튼 패턴: 버튼 `aria-haspopup`·`aria-expanded`, 상태 변화는 lib/menuKeys(키·누르기·마우스 올림),
  * 바깥 클릭·Esc·Tab·화면 이동으로 닫고, Esc·고르기로 닫히면 포커스를 버튼으로 돌린다(바깥 클릭이면 누른 곳으로).
  *
- * 항목 종류와 닫힘 규칙(lib/menuKeys 의 selectEffect):
- * - link·action — 고르면 닫힌다. `keepOpen` 인 action(글자 크기 단계처럼 이어 누르는 것)은 닫히지 않는다
- * - 비활성(disabled) — 이유 문구를 보이고 실행되지 않는다(포커스는 간다 — 왜 안 되는지 읽을 수 있게)
- * - checkbox — 켜고 끈다, radio — 여럿 중 하나를 고른다(양식 고르기처럼 select 자리). 둘 다 닫히지 않고 상태를 알린다(`aria-checked`)
- * - group — 소제목이 붙은 묶음(`role="group"`). radio 는 묶음 안에서 하나를 고른다(묶음이 없으면 메뉴 전체가 한 묶음)
+ * 항목 종류와 항목 하나 그리기는 `DropdownMenuItem`, 닫힘 규칙은 lib/menuKeys 의 selectEffect.
  */
-export type MenuLeaf =
-  | { kind: 'link'; key: string; to: string; label: ReactNode; icon?: ReactNode; current?: 'page' | 'true'; id?: string }
-  | {
-      kind: 'action';
-      key: string;
-      label: ReactNode;
-      icon?: ReactNode;
-      onSelect: () => void;
-      keepOpen?: boolean;
-      disabled?: boolean;
-      disabledReason?: ReactNode;
-    }
-  | { kind: 'checkbox'; key: string; label: ReactNode; checked: boolean; onToggle: () => void }
-  | { kind: 'radio'; key: string; label: ReactNode; checked: boolean; onSelect: () => void };
-export type MenuGroup = { kind: 'group'; key: string; label: ReactNode; items: MenuLeaf[] };
-export type MenuItem = MenuLeaf | MenuGroup;
+export type { MenuGroup, MenuItem, MenuLeaf } from './DropdownMenuItem';
 
 type Props = {
   /** 버튼 id — 투어·시험이 가리킨다 */
@@ -62,6 +45,7 @@ export default function DropdownMenu({ id, label, icon, items, active, currentLa
   const [state, setState] = useState<MenuState>(MENU_CLOSED);
   const wrapRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLElement | null)[]>([]);
   const panelId = useId();
   const labelId = useId();
@@ -85,6 +69,27 @@ export default function DropdownMenu({ id, label, icon, items, active, currentLa
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
+  }, [state.open]);
+
+  // 패널이 화면 밖으로 나가지 않게 가로로 민다(좁은 화면에서 버튼이 오른쪽 끝 가까이 있을 때 등). 열 때와, 열린 채 창 크기가
+  // 바뀌거나(화면 회전 포함) 패널 폭이 바뀔 때(진행 문구·글자 크기 항목 글) 다시 잰다. 미는 값은 폭을 바꾸지 않아 되먹임이 없다
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    if (!state.open || !el) return;
+    const fit = () => {
+      el.style.transform = '';
+      const r = el.getBoundingClientRect();
+      const shift = panelShift(r.left, r.right, window.innerWidth);
+      if (shift) el.style.transform = `translateX(${shift}px)`;
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+    observer?.observe(el);
+    return () => {
+      window.removeEventListener('resize', fit);
+      observer?.disconnect();
+    };
   }, [state.open]);
 
   // 화면이 바뀌면 닫는다 — 키보드 뒤로 가기·트랙패드 넘기기처럼 누르지 않고 옮겨 가도 메뉴가 새 화면을 덮지 않게.
@@ -127,72 +132,20 @@ export default function DropdownMenu({ id, label, icon, items, active, currentLa
     if (effect.close) apply({ state: MENU_CLOSED, focus: effect.focusButton ? 'button' : 'keep', handled: true });
   };
 
-  const itemClass = (i: number, disabled?: boolean) =>
-    clsx(
-      'flex w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none',
-      disabled ? 'text-gray-400 cursor-not-allowed' : 'text-gray-800 focus:bg-navy-50',
-      state.index === i && 'bg-navy-50',
-    );
-
   // 항목 하나 — i 는 묶음을 펼친 순서(키 이동 위치)
-  const renderLeaf = (item: MenuLeaf, i: number) => {
-    const common = {
-      ref: (el: HTMLElement | null) => {
+  const renderLeaf = (item: MenuLeaf, i: number) => (
+    <DropdownMenuItem
+      key={item.key}
+      item={item}
+      highlighted={state.index === i}
+      itemRef={(el) => {
         itemRefs.current[i] = el;
-      },
-      tabIndex: -1,
-      onClick: () => select(item),
-      onMouseEnter: () => apply(menuHover(state, i), true),
-      onFocus: () => setState((s) => menuFocused(s, i)),
-    };
-    if (item.kind === 'link') {
-      return (
-        <Link
-          key={item.key}
-          {...common}
-          id={item.id}
-          to={item.to}
-          role="menuitem"
-          aria-current={item.current}
-          className={clsx(itemClass(i), item.current && 'font-semibold text-navy-800')}
-        >
-          {item.icon}
-          {item.label}
-        </Link>
-      );
-    }
-    if (item.kind === 'checkbox' || item.kind === 'radio') {
-      return (
-        <button
-          key={item.key}
-          {...common}
-          type="button"
-          role={item.kind === 'radio' ? 'menuitemradio' : 'menuitemcheckbox'}
-          aria-checked={item.checked}
-          className={itemClass(i)}
-        >
-          <span className="inline-flex w-4 justify-center" aria-hidden>
-            {item.checked ? <Check size={14} /> : null}
-          </span>
-          {item.label}
-        </button>
-      );
-    }
-    return (
-      <button
-        key={item.key}
-        {...common}
-        type="button"
-        role="menuitem"
-        aria-disabled={item.disabled || undefined}
-        className={clsx(itemClass(i, item.disabled), 'flex-wrap')}
-      >
-        {item.icon}
-        {item.label}
-        {item.disabled && item.disabledReason ? <span className="basis-full text-[11px] text-gray-500">{item.disabledReason}</span> : null}
-      </button>
-    );
-  };
+      }}
+      onSelect={() => select(item)}
+      onHover={() => apply(menuHover(state, i), true)}
+      onFocus={() => setState((s) => menuFocused(s, i))}
+    />
+  );
 
   let flat = 0;
   return (
@@ -216,6 +169,7 @@ export default function DropdownMenu({ id, label, icon, items, active, currentLa
       </button>
       {state.open && (
         <div
+          ref={panelRef}
           id={panelId}
           role="menu"
           aria-labelledby={labelId}
