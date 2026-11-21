@@ -50,13 +50,14 @@ describe('진행은 다시 받기가 끝난 뒤에 푼다 (T-215 14차 #4·#5)',
 
   it('규정 정보 저장·상태 전환 — 성공하면 이 규정을 다시 받은 뒤에 알린다(진행을 푸는 onSettled 는 onSuccess 를 기다린다 — 15차 #7, 16차: 본 조회만·로그아웃 뒤에는 알리지 않음)', () => {
     const page = src('apps/web/src/pages/PolicyDetailPage.tsx');
-    // 17차 — 다시 받지 못했으면 화면이 옛 값이라고 덧붙인다. 18차 — 4초 뒤 사라지는 알림이 아니라 남는 자리(reportResult: 도구 줄,
-    // 떠났으면 이름 붙은 알림)에
+    // 17차 — 다시 받지 못했으면 화면이 옛 값이라고 덧붙인다. 18차 — 남는 자리(도구 줄, 떠났으면 이름 붙은 알림)에. T-224 ④ — 결과 자리는
+    // 도구 줄 하나(편집 칸 줄을 걷었다), 받지 못했으면 낡음 표시(reportAfterRefresh — 그 뒤 이 규정을 받으면 걷힌다)
     expect(page).toMatch(
-      /onSuccess: async \(_res, v\) => \{\s*(\/\/[^\n]*\n\s*)*const inScope = authScopeGuard\(\);\s*const fresh = await fetchPolicyNow\(qc, v\.routeId, inScope\);\s*if \(!inScope\(\)\) return;\s*if \(fresh\) reportInfo\(v, t\('policyDetail\.info\.saved'\), 'success'\);\s*(\/\/[^\n]*\n\s*)*else reportResult\(v\.routeId, v\.label, `\$\{t\('policyDetail\.info\.saved'\)\} \$\{t\('policyDetail\.result\.refreshFailed'\)\}`, 'error'\);/,
+      /onSuccess: async \(_res, v\) => \{\s*(\/\/[^\n]*\n\s*)*const inScope = authScopeGuard\(\);\s*const \{ fresh, since \} = await fetchPolicyNowSince\(qc, v\.routeId, inScope\);\s*if \(!inScope\(\)\) return;\s*reportAfterRefresh\(qc, reportResult, t, \{ startedId: v\.routeId, label: v\.label, done: t\('policyDetail\.info\.saved'\), received: fresh !== null, since, source: 'info' \}\);/,
     );
+    // 상태 전환은 창 닫기를 진행을 풀기 전에 그린다(풀린 그리기에서 확인 단추가 다시 살아나지 않게)
     expect(page).toMatch(
-      /const inScope = authScopeGuard\(\);\s*const fresh = await fetchPolicyNow\(qc, v\.routeId, inScope\);\s*if \(!inScope\(\)\) return;\s*if \(resultTarget\(v\.routeId, shownPolicy\) === 'toolbar'\) setActiveToggleTarget\(null\);\s*const done = t\(v\.next \? 'policyDetail\.status\.madeActive' : 'policyDetail\.status\.madeInactive'\);\s*if \(fresh\) reportInfo\(v, done, 'success', 3000\);\s*else reportResult\(v\.routeId, v\.label, `\$\{done\} \$\{t\('policyDetail\.result\.refreshFailed'\)\}`, 'error'\);/,
+      /const inScope = authScopeGuard\(\);\s*const \{ fresh, since \} = await fetchPolicyNowSince\(qc, v\.routeId, inScope\);\s*if \(!inScope\(\)\) return;\s*(\/\/[^\n]*\n\s*)*if \(resultTarget\(v\.routeId, shownPolicy\) === 'toolbar'\) flushSync\(\(\) => setActiveToggleTarget\(null\)\);\s*const done = t\(v\.next \? 'policyDetail\.status\.madeActive' : 'policyDetail\.status\.madeInactive'\);\s*reportAfterRefresh\(qc, reportResult, t, \{ startedId: v\.routeId, label: v\.label, done, received: fresh !== null, since, source: 'toggle' \}\);/,
     );
   });
 

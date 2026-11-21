@@ -164,6 +164,18 @@ export async function refetchReceived(qc: QueryClient, queryKey: readonly unknow
  * 인증 주체가 바뀌었으면 null(로그아웃은 캐시를 비우며 이 받기를 끊는다 — 그 뒤 결과는 알리지 않고, 다음 사용자로 다시 받지 않는다).
  */
 export async function fetchPolicyNow(qc: QueryClient, id: string, inScope: () => boolean): Promise<PolicyData | null> {
+  return (await fetchPolicyNowSince(qc, id, inScope)).fresh;
+}
+
+/**
+ * fetchPolicyNow 와 같고, 이 함수의 받기를 시작한 때(since — 값 없이 받는 중인 첫 받기를 기다린 뒤, Date.now())를 함께 돌려준다(T-224).
+ * 받기 실패를 알릴 때 그 뒤에 끝난 받기만 받은 것으로 보게 한다(stillStale — 저장 전에 보냈을 수 있는 첫 받기의 값은 받은 것으로 치지
+ * 않는다. 이 받기는 그 전 받기를 끊고 시작하므로 since 뒤의 성공은 이 받기이거나 그 뒤에 시작한 받기다)
+ */
+export async function fetchPolicyNowSince(qc: QueryClient, id: string, inScope: () => boolean): Promise<{ fresh: PolicyData | null; since: number }> {
+  let since = Date.now();
+  // 그 사이 로그아웃·다른 사용자 로그인이 있었으면 받지 않는다(T-224 — 비운 캐시에 앞 규정을 다음 범위로 다시 만들어 받지 않게)
+  if (!inScope()) return { fresh: null, since };
   const key = ['policy', id];
   void qc.invalidateQueries({ queryKey: key, predicate: (q) => q.queryKey.length > 2 });
   const options = qc.defaultQueryOptions({ queryKey: key, queryFn: () => policiesApi.get(id) as Promise<PolicyData>, retry: false });
@@ -171,12 +183,13 @@ export async function fetchPolicyNow(qc: QueryClient, id: string, inScope: () =>
   // 값 없이 받는 중이면 끝나기를 기다린다. 멈췄으면 합류하지 않고 null
   const first = waitFirstFetch(qc, query);
   if (first) {
-    if ((await first) === 'paused' || !inScope()) return null; // 로그아웃했으면 다음 사용자로 받지 않는다
+    if ((await first) === 'paused' || !inScope()) return { fresh: null, since }; // 로그아웃했으면 다음 사용자로 받지 않는다
     query = qc.getQueryCache().build(qc, options); // 기다리는 사이 지워졌으면 새 조회(화면이 보는 캐시에 받게)
   }
+  since = Date.now();
   const seen = query.state.dataUpdateCount;
   await follow(qc, query, query.fetch(options, { cancelRefetch: true }));
-  if (!inScope()) return null;
+  if (!inScope()) return { fresh: null, since };
   const { status, dataUpdateCount, data } = query.state;
-  return status === 'success' && dataUpdateCount > seen && data !== undefined ? data : null;
+  return { fresh: status === 'success' && dataUpdateCount > seen && data !== undefined ? data : null, since };
 }

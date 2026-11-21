@@ -99,7 +99,8 @@ describe('첨부 목록 다시 받기 — 그 규정을 떠난 경우 (T-227 —
     pending.reject(new Error('down'));
     await s.finished();
     expect(s.list).toHaveBeenCalledTimes(1); // 새로 받지 않고 합류했다
-    expect(s.report).toHaveBeenCalledWith('A', 'A-01', DELETED, 'error');
+    // 받기 실패는 낡음 표시로(T-224 ④) — 그 뒤 목록을 받으면 걷힌다
+    expect(s.report).toHaveBeenCalledWith('A', 'A-01', DELETED, 'stale', { staleKeys: [['files', 'A']] });
     back();
   });
 

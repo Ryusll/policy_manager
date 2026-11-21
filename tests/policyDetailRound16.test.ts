@@ -234,7 +234,8 @@ describe('조 순서 저장 — 로그아웃·성공 뒤 받기 (T-215 16차 #2�
     const { o, save } = setup();
     await save();
     expect(o.onSaved).toHaveBeenCalledTimes(1);
-    expect(o.report).toHaveBeenCalledWith('A', 'A-01 가 규정', 'policyDetail.reorder.savedStale', 'error');
+    // 받지 못한 새 순서는 낡음 표시로(T-224 ④ — 그 뒤 이 규정을 받으면 걷힌다)
+    expect(o.report).toHaveBeenCalledWith('A', 'A-01 가 규정', 'policyDetail.reorder.savedStale', 'stale', { staleKeys: [['policy', 'A']] });
   });
 
   it('5xx 가 까닭을 실었으면 반영됐는지 모른다는 글의 틀 안에 그 까닭을 넣는다(창은 닫는다, 17차 #6)', async () => {

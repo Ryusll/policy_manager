@@ -24,7 +24,8 @@ export const policyDetailMessages = {
     'policyDetail.info.effectiveDate': '시행일',
     'policyDetail.info.save': '날짜·알림 저장',
     'policyDetail.info.saving': '저장 중…',
-    'policyDetail.info.saved': '저장했습니다.',
+    // 도구 줄은 여러 작업이 함께 쓰는 칸이라 무엇을 저장했는지 적는다(T-224 ④)
+    'policyDetail.info.saved': '규정 정보를 저장했습니다.',
     'policyDetail.info.saveFailed': '날짜·알림을 저장하지 못했습니다. 잠시 뒤 다시 저장해 주세요.',
     'policyDetail.info.revisionLine': '개정일 {date}',
     'policyDetail.info.effectiveLine': '시행일 {date}',
@@ -151,7 +152,7 @@ export const policyDetailMessages = {
     'policyDetail.info.effectiveDate': 'Effective date',
     'policyDetail.info.save': 'Save dates and notifications',
     'policyDetail.info.saving': 'Saving…',
-    'policyDetail.info.saved': 'Saved.',
+    'policyDetail.info.saved': 'Policy details saved.',
     'policyDetail.info.saveFailed': 'Could not save the dates and notifications. Try saving again in a moment.',
     'policyDetail.info.revisionLine': 'Revised {date}',
     'policyDetail.info.effectiveLine': 'Effective {date}',

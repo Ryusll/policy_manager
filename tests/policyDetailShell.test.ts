@@ -175,11 +175,11 @@ describe('위쪽 줄·머리 카드 (T-215)', () => {
     const admin = shell('admin').head;
     expect(admin).toContain(ko['policyDetail.info.toggle']);
     expect(admin).not.toContain(ko['policyDetail.status.makeInactive']);
-    // 결과 알림 영역은 문구가 없어도 늘 있다(문구와 함께 생기는 영역은 화면 읽기 프로그램이 놓친다)
-    expect(admin).toMatch(/<span class="[^"]*sr-only[^"]*" role="status"><\/span>/);
+    // 저장·상태 전환의 결과 줄은 편집 칸에 두지 않는다 — 도구 줄 상태 칸 하나로 모았다(T-224 ④, 아래 시험)
+    expect(admin).not.toMatch(/<span class="[^"]*sr-only[^"]*" role="status"><\/span>/);
   });
 
-  it('저장·상태 전환 결과 문구는 접힌 채로도 보인다', () => {
+  it('저장·상태 전환 결과는 편집 칸이 아니라 도구 줄 상태 칸 하나로 간다(T-224 ④ — 편집 칸 줄·도구 줄·알림으로 나뉘어 받기 실패의 새로 고침 안내가 남았다)', () => {
     const edit = html(
       createElement(PolicyInfoEdit, {
         isActive: false,
@@ -190,14 +190,23 @@ describe('위쪽 줄·머리 카드 (T-215)', () => {
         onEffectiveDate: noop,
         saving: false,
         onSave: noop,
-        message: '저장했습니다.',
         notify: { enabled: false, groupIds: [], userIds: [] },
         onNotify: noop,
         groups: [],
         users: [],
       }),
     );
-    expect(edit).toMatch(/role="status"[^>]*>저장했습니다\./);
+    expect(edit).not.toContain('role="status"');
+    // 편집 칸 컴포넌트에는 결과를 그릴 상태 줄도, 결과 글을 받는 속성도 없다(검토 #7 — 그린 결과 하나만 보면 비어 있을 때 놓친다)
+    const comp = readFileSync(join(__dirname, '..', 'apps/web/src/components/policy-detail/PolicyInfoEdit.tsx'), 'utf8');
+    expect(comp).not.toContain('role="status"');
+    expect(comp).not.toMatch(/\bmessage\??:/);
+    const page = readFileSync(join(__dirname, '..', 'apps/web/src/pages/PolicyDetailPage.tsx'), 'utf8');
+    // JSX 덩어리를 떼어 본다 — 속성 안의 화살표 함수(=>)가 있어 '[^>]*' 로는 끝까지 보지 못한다(재검토 3차 #2)
+    const infoEdit = page.match(/<PolicyInfoEdit\b[\s\S]*?\/>/)?.[0] ?? '';
+    expect(infoEdit).toContain('onSave=');
+    expect(infoEdit).not.toContain('message=');
+    expect(page.match(/reportAfterRefresh\(qc, reportResult, t, \{ startedId: v\.routeId,/g) ?? []).toHaveLength(2);
   });
 });
 

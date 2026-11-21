@@ -40,7 +40,8 @@ describe('첨부 목록을 다시 받지 못하면 알린다 (T-227 — useAttac
     api.del.mockResolvedValueOnce(undefined);
     s.actions.remove('f-1');
     await s.finished();
-    expect(s.report).toHaveBeenCalledWith('A', 'A-01', DELETED, 'error');
+    // 받기 실패는 낡음 표시로(T-224 ④ — 실패 색으로 남고, 그 뒤 목록을 받으면 걷힌다)
+    expect(s.report).toHaveBeenCalledWith('A', 'A-01', DELETED, 'stale', { staleKeys: [['files', 'A']] });
     expect(notices(s.setError)).toEqual([]);
   });
 

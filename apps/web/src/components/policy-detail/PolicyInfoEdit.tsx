@@ -16,8 +16,6 @@ type Props = {
   onEffectiveDate: (v: string) => void;
   saving: boolean;
   onSave: () => void;
-  /** 저장·상태 전환 결과 문구 — 접혀 있어도 보인다 */
-  message: string | null;
   notify: RevisionNotify;
   onNotify: (update: (prev: RevisionNotify) => RevisionNotify) => void;
   groups: { id: string; name: string; members: unknown[] }[];
@@ -50,10 +48,8 @@ export default function PolicyInfoEdit(p: Props) {
           {t('policyDetail.info.toggle')}
           <ChevronDown size={13} className={clsx('transition-transform', open && 'rotate-180')} aria-hidden />
         </button>
-        {/* 알림 영역은 늘 그려 두고 글만 바꾼다 — 글과 함께 생기는 영역은 화면 읽기 프로그램이 놓치기 쉽다 */}
-        <span className={clsx('text-emerald-300', !p.message && 'sr-only')} role="status">
-          {p.message ?? ''}
-        </span>
+        {/* 저장·상태 전환의 결과는 도구 줄 상태 칸 하나로 모았다(T-224 ④ — 편집 칸 줄·도구 줄·알림으로 나뉘어 받기 실패의 '새로 고침해
+            확인'이 다시 저장해 성공해도 남았다) */}
       </div>
       {open && (
         <div id={panelId} className="mt-3 space-y-3">

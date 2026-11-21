@@ -1,6 +1,8 @@
-import { useCallback, useLayoutEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useLayoutEffect, useState } from 'react';
+import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { usePolicyRunsStore } from '../stores/policyRunsStore';
-import { toast } from '../stores/toastStore';
+import { TOAST_MS, toast } from '../stores/toastStore';
+import { stillStale, type ResultSource, type ToolStatus } from './toolStatus';
 
 /*
  * 규정 상세에서 시작한 비동기 작업 가운데 진행을 규정별로 두는 것(RunKind — PDF·한/글 내보내기, 초안 일괄 시행, 시행 상태 전환, 규정 정보
@@ -46,74 +48,8 @@ export function useShownPolicy(id: string | undefined): Readonly<ShownPolicy> {
 
 type T = (key: string, vars?: Record<string, string | number>) => string;
 
-/** 도구 줄 상태 한 줄 — 실패는 남기고(오류 번호를 옮겨 적게), 사용자의 다음 동작(진행 문구·잠깐 알림)이 바꾼다 */
-export type ToolStatus = {
-  /** 진행 문구 등 사용자 동작 — 남긴 실패를 바꾼다 */
-  show: (message: string) => void;
-  /** 남기는 실패(끝난 작업의 결과) — 앞 실패가 떠 있으면 덧붙인다(둘 다 남는다, 같은 글은 한 번만) */
-  fail: (message: string) => void;
-  /** 사용자 동작의 실패 — 앞에 남은 실패를 바꾸고 남긴다(누를 때마다 길어지지 않게) */
-  failNow: (message: string) => void;
-  /** 잠깐 보이는 알림(사용자 동작의 결과) */
-  flash: (message: string, ms: number) => void;
-  clear: () => void;
-  /** 남긴 실패가 떠 있는가 */
-  isSticky: () => boolean;
-};
-
-/** 도구 줄 상태 글의 종류 — 실패는 붉은 계열로 칠한다(T-227, C-116 ⑥: 전에는 실패 문구도 초록색이었다) */
-export type ToolStatusKind = 'info' | 'error';
-
-/**
- * 도구 줄 상태(ToolStatus) — 남긴 실패인지를 상자에 같이 적는다(9차 검토: 같은 규정에서 PDF·한/글을 함께 돌리면 나중에 끝난 성공이
- * 앞의 실패를 덮고 지웠다). 상자는 useState 로 고정한 객체(그리는 중에 넘기는 함수가 닫아 두므로 ref 를 쓰지 않는다 — useShownPolicy 와
- * 같은 방식). 돌려주는 객체는 인자가 같으면 늘 같다. setKind 를 주면 글의 종류(실패·그 밖)를 함께 알린다 — 글은 문자열 그대로 두고 종류만
- * 따로(같은 글에서 종류만 바뀌어도 다시 그리게, T-227)
- */
-export function useToolStatus(
-  setMsg: Dispatch<SetStateAction<string>>,
-  flash: (message: string, ms: number) => void,
-  setKind?: (kind: ToolStatusKind) => void,
-): ToolStatus {
-  // fails — 남긴 실패 글들(덧붙인 차례). 글을 ' / ' 로 잘라 같은지 보면 서버 문구에 ' / ' 가 들면 어긋나 목록으로 둔다(12차 #5)
-  const [box] = useState(() => ({ sticky: false, fails: [] as string[] }));
-  return useMemo(() => {
-    const reset = () => {
-      box.sticky = false;
-      box.fails = [];
-      setKind?.('info');
-    };
-    return {
-      show: (m: string) => {
-        reset();
-        setMsg(m);
-      },
-      fail: (m: string) => {
-        // 남긴 실패가 이미 떠 있으면 덧붙인다 — 나중 실패를 4초짜리 알림으로 보내면 그 까닭(오류 번호)이 사라졌다(10차). 같은 글은 한 번만(11차).
-        // 남긴 실패가 없으면 목록도 비어 있다(실패가 아닌 동작은 모두 reset 으로 비운다)
-        if (!box.fails.includes(m)) box.fails = [...box.fails, m];
-        box.sticky = true;
-        setKind?.('error');
-        setMsg(box.fails.join(' / '));
-      },
-      failNow: (m: string) => {
-        box.sticky = true;
-        box.fails = [m];
-        setKind?.('error');
-        setMsg(m);
-      },
-      flash: (m: string, ms: number) => {
-        reset();
-        flash(m, ms);
-      },
-      clear: () => {
-        reset();
-        setMsg('');
-      },
-      isSticky: () => box.sticky,
-    };
-  }, [box, setMsg, flash, setKind]);
-}
+// 도구 줄 상태 칸은 lib/toolStatus 로 옮겼다(T-224 — 낡음 표시). 여기서도 함께 내보낸다
+export { useToolStatus, type ResultSource, type ToolStatus, type ToolStatusKind } from './toolStatus';
 
 /**
  * 지금 떠 있는 규정 화면의 도구 줄(규정 id → 상태). 규정마다 화면을 새로 그리므로, 작업을 시작한 화면이 내려간 뒤 같은 규정을 다시 그린
@@ -149,13 +85,30 @@ export function useOpenDialog(kind: string, policyId: string | undefined, open: 
   useLayoutEffect(() => (policyId && open ? registerOpenDialog(kind, policyId, setError) : undefined), [kind, policyId, open, setError]);
 }
 
-type ToolbarSink = Pick<ToolStatus, 'flash' | 'fail' | 'isSticky'>;
+// 성공을 잠깐 알림과 이름 붙은 알림 가운데 어디로 보낼지는 holds 하나로 판정한다(남긴 실패만 보는 isSticky 는 넘기지 않는다 — 재검토 3차 #6)
+type ToolbarSink = Pick<ToolStatus, 'flash' | 'fail' | 'failStale' | 'settle' | 'holds'>;
 export type ResultSinks = ToolbarSink & {
-  toast: (message: string, variant: 'success' | 'error') => void;
+  /** 화면 전체 알림 — ms 는 머무는 시간(없으면 알림 저장소의 기본값) */
+  toast: (message: string, variant: 'success' | 'error', ms?: number) => void;
   /** 시작한 화면이 아닌, 지금 그 규정을 그리는 화면의 도구 줄(없으면 undefined) */
   screenFor?: (policyId: string) => ToolbarSink | undefined;
 };
-export type ResultNote = { startedId: string; label: string; message: string; kind: 'success' | 'error'; flashMs?: number };
+/** 결과의 종류 — stale 은 받기 실패를 알리는 남기는 실패(낡음 표시, staleKeys 를 그 뒤 모두 받으면 걷힌다 — T-224 ④) */
+export type ResultKind = 'success' | 'error' | 'stale';
+export type ResultNote = {
+  startedId: string;
+  label: string;
+  message: string;
+  kind: ResultKind;
+  /** 잠깐 보이는 시간 — 도구 줄(없으면 3초)과 화면 전체 알림(없으면 알림 저장소의 기본값)에 같이 쓴다 */
+  flashMs?: number;
+  /** 낡음 표시가 기다리는 조회(받지 못한 key) */
+  staleKeys?: readonly QueryKey[];
+  /** 작업 이름(예 'info') — 실패는 그 작업의 앞 실패 줄을 바꾸고, 성공은 그 작업이 남긴 실패 줄을 걷는다(T-224) */
+  source?: ResultSource;
+};
+/** 결과 알림의 덧붙임 — 숫자면 잠깐 보이는 시간(옛 꼴) */
+export type ReportExtra = { flashMs?: number; staleKeys?: readonly QueryKey[]; source?: ResultSource };
 
 /**
  * 결과 알림 — 시작한 규정을 아직 보고 있으면 도구 줄: 실패는 오류 번호를 옮겨 적을 수 있게 남기고(앞 실패가 떠 있으면 덧붙인다), 성공은
@@ -166,19 +119,54 @@ export type ResultNote = { startedId: string; label: string; message: string; ki
 export function deliverResult(shown: Readonly<ShownPolicy>, sinks: ResultSinks, t: T, note: ResultNote): void {
   const bar = resultTarget(note.startedId, shown) === 'toolbar' ? sinks : sinks.screenFor?.(note.startedId);
   if (bar) {
-    if (note.kind === 'error') return bar.fail(note.message);
-    if (!bar.isSticky()) return bar.flash(note.message, note.flashMs ?? 3000);
+    if (note.kind === 'stale') return bar.failStale(note.message, note.staleKeys ?? [], note.source);
+    if (note.kind === 'error') return bar.fail(note.message, note.source);
+    // 그 작업이 성공했다 — 그 작업이 남긴 실패 줄(진행 문구)을 먼저 걷는다(다시 저장해 성공하면 '저장하지 못했습니다'가 남지 않게). 칸을
+    // 남긴 실패나 다른 작업의 진행 문구가 쓰고 있으면 덮지 않고 이름 붙은 알림으로(내보내기 중에 저장이 끝나도 진행 문구가 남게 — 재검토 #3)
+    if (note.source) bar.settle(note.source);
+    if (!bar.holds()) return bar.flash(note.message, note.flashMs ?? 3000);
   }
-  sinks.toast(t('policyDetail.result.forPolicy', { label: note.label, message: note.message }), note.kind);
+  const text = t('policyDetail.result.forPolicy', { label: note.label, message: note.message });
+  const variant = note.kind === 'success' ? 'success' : 'error';
+  // 긴 안내만 알림에도 그만큼 오래 둔다 — 기본값보다 짧게 줄이지는 않는다(T-224)
+  if (note.flashMs !== undefined && note.flashMs > TOAST_MS) sinks.toast(text, variant, note.flashMs);
+  else sinks.toast(text, variant);
 }
 
 /** 결과 알림 함수(deliverResult 에 화면 전체 알림·지금 떠 있는 화면을 이어 붙인 것) — 돌려주는 함수는 인자가 같으면 늘 같다 */
 export function useReportResult(shown: Readonly<ShownPolicy>, status: ToolStatus, t: T) {
   return useCallback(
-    (startedId: string, label: string, message: string, kind: 'success' | 'error', flashMs = 3000) =>
-      deliverResult(shown, { flash: status.flash, fail: status.fail, isSticky: status.isSticky, toast, screenFor: toolbarFor }, t, { startedId, label, message, kind, flashMs }),
+    (startedId: string, label: string, message: string, kind: ResultKind, extra?: number | ReportExtra) => {
+      const x: ReportExtra = typeof extra === 'number' ? { flashMs: extra } : (extra ?? {});
+      deliverResult(
+        shown,
+        { flash: status.flash, fail: status.fail, failStale: status.failStale, settle: status.settle, holds: status.holds, toast, screenFor: toolbarFor },
+        t,
+        { startedId, label, message, kind, flashMs: x.flashMs, staleKeys: x.staleKeys, source: x.source },
+      );
+    },
     [shown, status, t],
   );
+}
+
+/** 결과 알림 함수의 꼴(useReportResult 가 돌려주는 것) — 훅·페이지가 같은 꼴로 넘긴다 */
+export type ReportFn = (startedId: string, label: string, message: string, kind: ResultKind, extra?: number | ReportExtra) => void;
+
+/**
+ * 끝난 쓰기의 결과(T-224 ④) — 다시 받았으면 완료 문구(성공), 받지 못했으면 완료 문구에 '받아 오지 못했습니다'를 덧붙여 낡음 표시로(그
+ * 조회들을 그 뒤에 받으면 걷힌다 — 다시 저장해 성공하면 '새로 고침해 확인'이 남지 않게, C-116 ⑥). since 는 이 쓰기의 다시 받기를 시작한
+ * 때(fetchPolicyNowSince) — 그 뒤에 다른 받기가 이미 받았으면 성공으로 본다. keys 를 주지 않으면 그 규정 본문 ['policy', id]. source 는
+ * 작업 이름(성공은 그 작업의 앞 실패 줄을 걷고, 낡음 표시는 그 작업의 줄로)
+ */
+export function reportAfterRefresh(
+  qc: QueryClient,
+  report: ReportFn,
+  t: T,
+  v: { startedId: string; label: string; done: string; received: boolean; since: number; keys?: readonly QueryKey[]; flashMs?: number; source?: ResultSource },
+): void {
+  const stale = v.received ? [] : stillStale(qc, v.keys ?? [['policy', v.startedId]], v.since);
+  if (stale.length === 0) return report(v.startedId, v.label, v.done, 'success', { flashMs: v.flashMs, source: v.source });
+  report(v.startedId, v.label, `${v.done} ${t('policyDetail.result.refreshFailed')}`, 'stale', { staleKeys: stale, source: v.source });
 }
 
 /**

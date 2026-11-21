@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { policiesApi } from '../../api/policies';
 import { apiErrorMessage, errorCode, serverMessage } from '../../lib/apiError';
-import { dialogErrorTarget, isRunning, useRuns, type ShownPolicy } from '../../lib/policyResult';
+import { dialogErrorTarget, isRunning, useRuns, type ReportFn, type ShownPolicy } from '../../lib/policyResult';
 import { authScopeGuard, fetchPolicyNow } from '../../lib/policyRefresh';
 import { useLatest } from '../../lib/useLatest';
 import { baseStep, noteLeft, staleKey, type ReorderBase, type ReorderNote } from './reorderNotice';
@@ -11,7 +11,6 @@ import { baseStep, noteLeft, staleKey, type ReorderBase, type ReorderNote } from
 // 안내 칸의 규칙은 reorderNotice.ts — 페이지·시험이 여기서 함께 가져다 쓴다
 export { baseStep, noteLeft, reorderNotice, staleKey, type ReorderBase, type ReorderNote } from './reorderNotice';
 
-type Report = (startedId: string, label: string, message: string, kind: 'success' | 'error', flashMs?: number) => void;
 type Order = Parameters<typeof policiesApi.reorderArticles>[1];
 type Chapters = readonly unknown[] | null | undefined;
 type Chapter = { id?: string; number?: number; articles?: { id?: string; number?: number; branchNumber?: number | null }[] };
@@ -105,7 +104,7 @@ export function useReorderSave(o: {
   basedOn?: string;
   signature: string;
   shown: Readonly<ShownPolicy>;
-  report: Report;
+  report: ReportFn;
   setError: (message: string) => void;
   /** 창 위 안내 칸의 거절 안내(T-225, reorderNotice 가 읽는다) — 저장을 시작하거나 그 순서를 떠나면 걷는다 */
   note: ReorderNote | null;
@@ -172,7 +171,8 @@ export function useReorderSave(o: {
         // 열었습니다'가 한 번 끼어든다(거절 갈래의 안내와 같은 까닭)
         if (!failure) {
           flushSync(() => onSaved());
-          if (!fresh) report(id, label, t('policyDetail.reorder.savedStale'), 'error');
+          // 새 순서를 받지 못했으면 낡음 표시로 — 그 뒤 이 규정을 받으면 걷힌다(T-224 ④)
+          if (!fresh) report(id, label, t('policyDetail.reorder.savedStale'), 'stale', { staleKeys: [['policy', id]] });
           return;
         }
         if (!refused(failure.err)) {

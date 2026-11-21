@@ -162,12 +162,13 @@ describe('창을 새로 그리면 알린다·초안 일괄 시행·영어 문구
 
   it('초안 일괄 시행 — 다시 받은 뒤에 창을 닫고 알리며 진행을 푼다', () => {
     const page = src('apps/web/src/pages/PolicyDetailPage.tsx');
+    // 창 닫기는 진행을 풀기 전에 그린다(T-224 — 풀린 그리기에서 시행 단추가 다시 살아나지 않게)
     expect(page).toMatch(
-      /onSuccess: async \(res, v\) => \{\s*(\/\/[^\n]*\n\s*)*const inScope = authScopeGuard\(\);\s*const fresh = await fetchPolicyNow\(qc, v\.policyId, inScope\);\s*if \(!inScope\(\)\) return;\s*setPublishDraftsForm/,
+      /onSuccess: async \(res, v\) => \{\s*(\/\/[^\n]*\n\s*)*const inScope = authScopeGuard\(\);\s*const \{ fresh, since \} = await fetchPolicyNowSince\(qc, v\.policyId, inScope\);\s*if \(!inScope\(\)\) return;\s*(\/\/[^\n]*\n\s*)*flushSync\(\(\) => setPublishDraftsForm/,
     );
-    // 17차 — 다시 받지 못했으면 화면이 옛 값이라고 덧붙인다
-    expect(page).toMatch(
-      /if \(fresh\) reportResult\(v\.policyId, v\.label, done, 'success', 4000\);\s*else reportResult\(v\.policyId, v\.label, `\$\{done\} \$\{t\('policyDetail\.result\.refreshFailed'\)\}`, 'error'\);/,
+    // 17차 — 다시 받지 못했으면 화면이 옛 값이라고 덧붙인다(T-224 ④ — 낡음 표시, 그 뒤 이 규정을 받으면 걷힌다)
+    expect(page).toContain(
+      "reportAfterRefresh(qc, reportResult, t, { startedId: v.policyId, label: v.label, done, received: fresh !== null, since, flashMs: 4000, source: 'publish' });",
     );
   });
 

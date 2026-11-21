@@ -129,8 +129,9 @@ describe('조문 이동 — 전문 보기 안의 그 조로 (T-215 검토)', () 
     expect(page).toMatch(/const act = pendingJumpAction\(pendingJump, \{ asOfBlocked, fullView: articleViewMode === 'full', id \}\);\s*if \(act === 'none' \|\| act === 'wait'\) return;\s*setPendingJump\(null\);\s*if \(act === 'run' && pendingJump\) jumpInFullView\(pendingJump\);/);
     expect(page).toContain("t(asOfFailed ? 'policyDetail.jump.asOfFailed' : 'policyDetail.jump.asOfBlocked')");
     // 결과는 시작한 규정에 묶어 알린다(lib/policyResult.deliverResult) — 성공은 잠깐, 실패는 남기고, 떠났으면 그 규정 이름을 붙인 화면 전체 알림
-    expect(page).toContain("reportResult(id, label, exportDoneMessage('policyDetail.export.pdfDone'), 'success', 3000);");
-    expect(page).toContain("reportResult(id, label, exportDoneMessage('policyDetail.export.hwpxDone'), 'success', 4000);");
+    // 결과에는 진행 문구의 주인과 같은 작업 이름을 단다 — 그 이름의 결과가 진행 문구를 걷는다(T-224 재검토 #3)
+    expect(page).toContain("reportResult(id, label, exportDoneMessage('policyDetail.export.pdfDone'), 'success', { flashMs: 3000, source: 'pdf' });");
+    expect(page).toContain("reportResult(id, label, exportDoneMessage('policyDetail.export.hwpxDone'), 'success', { flashMs: 4000, source: 'hwpx' });");
     expect(page).toMatch(/finally \{\s*endRun\('pdf', id\);\s*\}/);
     expect(page).toMatch(/finally \{\s*endRun\('hwpx', id\);\s*\}/);
     expect(page).toContain('const flashToolMsg = useFlashMessage(setLawToolMsg);');
@@ -140,8 +141,8 @@ describe('조문 이동 — 전문 보기 안의 그 조로 (T-215 검토)', () 
     expect(page).toContain('const toolStatus = useToolStatus(setLawToolMsg, flashToolMsg, setLawToolKind);');
     expect(page).toContain('lawToolKind={lawToolKind}');
     expect(page).toContain('const reportResult = useReportResult(shownPolicy, toolStatus, t);');
-    expect(page).toMatch(/\} catch \(err: any\) \{\s*reportResult\(id, label, exportFailedMessage\(t, 'pdf', err\?\.response\?\.status\), 'error'\);\s*\} finally \{/);
-    expect(page).toMatch(/\} catch \(err: any\) \{\s*reportResult\(id, label, exportFailedMessage\(t, 'hwpx', err\?\.response\?\.status\), 'error'\);\s*\} finally \{/);
+    expect(page).toMatch(/\} catch \(err: any\) \{\s*reportResult\(id, label, exportFailedMessage\(t, 'pdf', err\?\.response\?\.status\), 'error', \{ source: 'pdf' \}\);\s*\} finally \{/);
+    expect(page).toMatch(/\} catch \(err: any\) \{\s*reportResult\(id, label, exportFailedMessage\(t, 'hwpx', err\?\.response\?\.status\), 'error', \{ source: 'hwpx' \}\);\s*\} finally \{/);
     // 지금 규정이 아니라고 결과를 버리는 꼴(7차)은 남지 않는다
     expect(page).not.toContain('shownPolicy.current');
     expect(page).toMatch(/\} catch \{\s*\/\/[^\n]*\n\s*toolStatus\.failNow\(t\('policyDetail\.export\.copyFailed'\)\);\s*\}\s*\}, \[t, toolStatus\]\);/);
@@ -150,8 +151,8 @@ describe('조문 이동 — 전문 보기 안의 그 조로 (T-215 검토)', () 
       "toolStatus.flash(t('policyDetail.export.txtDone'), 2500);",
       "toolStatus.flash(t('policyDetail.export.copied'), 2500);",
       "toolStatus.flash(t('policyDetail.viewMenu.fontNow', { n: next }), 2500);",
-      "toolStatus.show(t('policyDetail.export.pdfMaking'));",
-      "toolStatus.show(t('policyDetail.export.hwpxMaking'));",
+      "toolStatus.show(t('policyDetail.export.pdfMaking'), 'pdf');",
+      "toolStatus.show(t('policyDetail.export.hwpxMaking'), 'hwpx');",
     ]) {
       expect(page, call).toContain(call);
     }
@@ -214,8 +215,8 @@ describe('내보내기 — 막힌 이유·연결·중복 실행 (T-215 검토)',
     expect(exportFailedMessage(t, 'pdf', undefined)).toBe(ko['policyDetail.export.pdfRequestFailed']);
     // 페이지는 이 문구를 결과 알림으로 보낸다(시작한 규정을 보고 있으면 도구 줄에 남기고, 떠났으면 화면 전체 알림)
     const page = src('apps/web/src/pages/PolicyDetailPage.tsx');
-    expect(page).toContain("reportResult(id, label, exportFailedMessage(t, 'pdf', err?.response?.status), 'error');");
-    expect(page).toContain("reportResult(id, label, exportFailedMessage(t, 'hwpx', err?.response?.status), 'error');");
+    expect(page).toContain("reportResult(id, label, exportFailedMessage(t, 'pdf', err?.response?.status), 'error', { source: 'pdf' });");
+    expect(page).toContain("reportResult(id, label, exportFailedMessage(t, 'hwpx', err?.response?.status), 'error', { source: 'hwpx' });");
   });
 
   it('같은 이름의 작업은 끝나기 전에 다시 시작하지 않는다 — 다른 이름은 따로', () => {

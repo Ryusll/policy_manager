@@ -70,7 +70,7 @@ describe('도구 줄에 남긴 실패 (T-215 9차 #1)', () => {
     const flash = vi.fn();
     const toast = vi.fn();
     const status: ToolStatus = capture(() => useToolStatus(setMsg, flash));
-    const sinks = { flash: status.flash, fail: status.fail, isSticky: status.isSticky, toast };
+    const sinks = { flash: status.flash, fail: status.fail, isSticky: status.isSticky, holds: status.holds, toast }; // holds — 칸을 남긴 실패·진행 문구가 쓰는가(T-224)
     const here = { id: 'A', mounted: true };
     deliverResult(here, sinks, t, { startedId: 'A', label: 'HR-01 취업규칙', message: '한/글 문서를 만들지 못했습니다.', kind: 'error' });
     deliverResult(here, sinks, t, { startedId: 'A', label: 'HR-01 취업규칙', message: 'PDF를 내려받았습니다.', kind: 'success', flashMs: 3000 });
@@ -146,16 +146,24 @@ describe('페이지 연결 (T-215 9차)', () => {
     expect(page).toContain('busy={publishBusy}');
   });
 
-  it('규정 정보 편집 — 저장·상태 전환은 시작한 규정으로 다시 읽고, 떠났으면 이름 붙은 알림, 상태 전환 실패도 알린다', () => {
-    // 다시 읽기는 16차부터 lib/policyRefresh — 시작한 규정(v.routeId)으로 읽는 것은 그대로(저장·상태 전환 둘)
-    expect(page.match(/await fetchPolicyNow\(qc, v\.routeId, inScope\);/g) ?? []).toHaveLength(2);
-    expect(page).toMatch(/const here = resultTarget\(v\.routeId, shownPolicy\) === 'toolbar';\s*if \(here && kind === 'success'\) return flashInfoMsg\(message, ms\);\s*toast\(here \? message : t\('policyDetail\.result\.forPolicy', \{ label: v\.label, message \}\), kind\);/);
-    expect(page).toContain("onError: (err, v) => reportInfo(v, apiErrorMessage(err, t('policyDetail.info.saveFailed')), 'error'),");
-    expect(page).toMatch(/if \(dialogErrorTarget\(v\.routeId, shownPolicy, toggleDialogOf\.current\) === 'dialog'\) return;\s*reportInfo\(v, apiErrorMessage\(err, t\('policyDetail\.status\.toggleFailed'\)\), 'error'\);/);
-    expect(page).toContain("if (resultTarget(v.routeId, shownPolicy) === 'toolbar') setActiveToggleTarget(null);");
+  it('규정 정보 편집 — 저장·상태 전환은 시작한 규정으로 다시 읽고, 결과는 도구 줄 하나(떠났으면 이름 붙은 알림), 상태 전환 실패도 알린다(T-224 ④)', () => {
+    // 다시 읽기는 16차부터 lib/policyRefresh — 시작한 규정(v.routeId)으로 읽는 것은 그대로(저장·상태 전환 둘). 받기를 시작한 때(since)를
+    // 함께 받는다(T-224 검토 #2 — 받는 중이던 첫 받기를 기다린 뒤에 잰다)
+    expect(page.match(/const \{ fresh, since \} = await fetchPolicyNowSince\(qc, v\.routeId, inScope\);/g) ?? []).toHaveLength(2);
+    expect(page).not.toMatch(/const since = Date\.now\(\);/);
+    // 결과 자리는 도구 줄 하나 — 성공·낡음 표시는 reportAfterRefresh, 실패는 reportResult(편집 칸 상태 줄·4초 알림으로 나누지 않는다).
+    // 실패·낡음 표시 줄은 작업 이름을 달아 같은 작업이 뒤에 성공하면 걷힌다(검토 #1 — 저장 실패가 다시 저장해 성공한 뒤에도 남지 않게)
+    expect(page).toContain("reportAfterRefresh(qc, reportResult, t, { startedId: v.routeId, label: v.label, done: t('policyDetail.info.saved'), received: fresh !== null, since, source: 'info' });");
+    expect(page).toContain("reportAfterRefresh(qc, reportResult, t, { startedId: v.routeId, label: v.label, done, received: fresh !== null, since, source: 'toggle' });");
+    expect(page).toContain("onError: (err, v) => reportResult(v.routeId, v.label, apiErrorMessage(err, t('policyDetail.info.saveFailed')), 'error', { source: 'info' }),");
+    expect(page).toMatch(/if \(dialogErrorTarget\(v\.routeId, shownPolicy, toggleDialogOf\.current\) === 'dialog'\) return;\s*reportResult\(v\.routeId, v\.label, apiErrorMessage\(err, t\('policyDetail\.status\.toggleFailed'\)\), 'error', \{ source: 'toggle' \}\);/);
+    // 도구 줄은 여러 작업이 함께 쓰는 칸이라 무엇을 저장했는지 적는다(검토 #5)
+    expect(ko['policyDetail.info.saved']).toBe('규정 정보를 저장했습니다.');
+    expect(page).toContain("if (resultTarget(v.routeId, shownPolicy) === 'toolbar') flushSync(() => setActiveToggleTarget(null));");
     expect(page).toContain('toggleActiveMutation.mutate({ ...infoTarget(), next: activeToggleTarget })');
-    expect(page).not.toMatch(/setTimeout\(\(\) => setPolicyDatesMsg/);
-    expect(page).toContain('const flashInfoMsg = useFlashMessage(setPolicyDatesMsg);');
+    expect(page).not.toMatch(/policyDatesMsg|flashInfoMsg|reportInfo/);
+    // 낡음 표시는 그 조회를 그 뒤에 받으면 걷힌다 — 지금 떠 있는 도구 줄에 받기 성공을 잇는다
+    expect(page).toMatch(/useShownToolbar\(id, toolStatus\);\s*(\/\/[^\n]*\n\s*)*useClearStaleOnReceive\(qc, toolStatus\);/);
   });
 });
 

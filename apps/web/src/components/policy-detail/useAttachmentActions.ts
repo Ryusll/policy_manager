@@ -1,11 +1,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { filesApi } from '../../api/policies';
 import { apiErrorMessage } from '../../lib/apiError';
-import { dialogErrorTarget, isRunning, openDialogFor, resultTarget, useOpenDialog, useRuns, type ShownPolicy } from '../../lib/policyResult';
+import { dialogErrorTarget, isRunning, openDialogFor, resultTarget, useOpenDialog, useRuns, type ReportFn, type ShownPolicy } from '../../lib/policyResult';
 import { useLatest } from '../../lib/useLatest';
 import { authScopeGuard, refetchReceived } from '../../lib/policyRefresh';
 
-type Report = (startedId: string, label: string, message: string, kind: 'success' | 'error', flashMs?: number) => void;
 type FileTarget = { policyId: string; label: string };
 
 /**
@@ -21,7 +20,7 @@ export function useAttachmentActions(o: {
   label: string;
   modalOpen: boolean;
   shown: Readonly<ShownPolicy>;
-  report: Report;
+  report: ReportFn;
   setError: (message: string) => void;
   t: (key: string) => string;
 }) {
@@ -30,11 +29,13 @@ export function useAttachmentActions(o: {
   const modalOf = useLatest(o.modalOpen ? o.id : null);
   useOpenDialog('attachments', o.id, o.modalOpen, o.setError);
   const { shown, report, setError, t } = o;
-  // 알릴 자리 — 시작한 규정의 첨부 창이 열려 있으면 창 안, 같은 규정을 다시 그린 화면의 열린 첨부 창, 아니면 결과 알림
-  const notify = (v: FileTarget, message: string) => {
+  // 알릴 자리 — 시작한 규정의 첨부 창이 열려 있으면 창 안, 같은 규정을 다시 그린 화면의 열린 첨부 창, 아니면 결과 알림. 목록을 받지
+  // 못한 알림(staleKeys)은 결과 알림에서 낡음 표시로 — 그 뒤 목록을 받으면 걷힌다(T-224 ④)
+  const notify = (v: FileTarget, message: string, staleKeys?: readonly (readonly unknown[])[]) => {
     if (dialogErrorTarget(v.policyId, shown, modalOf.current) === 'dialog') return setError(message);
     const elsewhere = openDialogFor('attachments', v.policyId);
     if (elsewhere) elsewhere(message);
+    else if (staleKeys?.length) report(v.policyId, v.label, message, 'stale', { staleKeys });
     else report(v.policyId, v.label, message, 'error');
   };
   const failed = (v: FileTarget, err: unknown, fallbackKey: string) => notify(v, apiErrorMessage(err, t(fallbackKey)));
@@ -47,7 +48,8 @@ export function useAttachmentActions(o: {
     if (resultTarget(v.policyId, shown) === 'toolbar') setError('');
     const inScope = authScopeGuard();
     const received = await refetchReceived(qc, ['files', v.policyId]);
-    if (inScope() && !received) notify(v, `${t(doneKey)} ${t('policyDetail.result.refreshFailed')}`);
+    // 받지 못했으면 낡음 표시로(T-224 ④) — 부른 뒤 다른 받기가 목록을 받았어도 받은 것으로 본다(refetchReceived)
+    if (inScope() && !received) notify(v, `${t(doneKey)} ${t('policyDetail.result.refreshFailed')}`, [['files', v.policyId]]);
   };
   const uploadMutation = useMutation({
     mutationFn: (v: FileTarget & { file: File }) => filesApi.upload(v.policyId, v.file),

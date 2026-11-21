@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { holdPrintRoot } from '../lib/printRoot';
 import { apiErrorMessage, serverMessage } from '../lib/apiError';
 import { useParams, Link } from 'react-router-dom';
@@ -111,8 +111,9 @@ import { PublishDraftsDialog } from '../components/policy-detail/PublishDraftsDi
 import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDialog';
 import { useFlashMessage } from '../lib/flashMessage';
 import { useLatest } from '../lib/useLatest';
-import { authScopeGuard, fetchPolicyNow } from '../lib/policyRefresh';
-import { dialogErrorTarget, exportBusyFor, isRunning, pendingJumpAction, policyLabel, resultTarget, useReportResult, useRuns, useShownPolicy, useShownToolbar, useToolStatus, type ToolStatusKind } from '../lib/policyResult';
+import { authScopeGuard, fetchPolicyNowSince } from '../lib/policyRefresh';
+import { useClearStaleOnReceive } from '../lib/toolStatus';
+import { dialogErrorTarget, exportBusyFor, isRunning, pendingJumpAction, policyLabel, reportAfterRefresh, resultTarget, useReportResult, useRuns, useShownPolicy, useShownToolbar, useToolStatus, type ToolStatusKind } from '../lib/policyResult';
 import { exportButtonLabel, exportFailedMessage, exportMenu, moreMenu, viewMenu } from '../lib/policyToolMenus';
 import PolicyTopBar from '../components/policy-detail/PolicyTopBar';
 import PolicyHeaderCard from '../components/policy-detail/PolicyHeaderCard';
@@ -654,6 +655,8 @@ function PolicyDetailView() {
   const reportResult = useReportResult(shownPolicy, toolStatus, t);
   // 이 화면이 그리는 규정의 도구 줄 — 앞 화면(옮겼다 돌아오기 전)이 시작한 작업의 결과도 여기에 남는다(12차)
   useShownToolbar(id, toolStatus);
+  // 낡음 표시(받기 실패)는 그 조회를 그 뒤에 받으면 걷힌다(T-224 ④)
+  useClearStaleOnReceive(qc, toolStatus);
   const [articleViewMode, setArticleViewMode] = useState<'full' | 'segment'>('full');
   /** 시점 조회 기준일(YYYY-MM-DD). 빈 문자열이면 현행 본문 */
   const [asOfDate, setAsOfDate] = useState('');
@@ -1115,7 +1118,6 @@ function PolicyDetailView() {
     userIds: [] as string[],
     groupIds: [] as string[],
   });
-  const [policyDatesMsg, setPolicyDatesMsg] = useState('');
 
   const { data: notifyGroups = [] } = useQuery({
     queryKey: ['notification-groups'],
@@ -1137,17 +1139,8 @@ function PolicyDetailView() {
   }, [policy?.id, policy?.revisionDate, policy?.effectiveDate, policy?.metadata]);
 
   // 규정 정보 편집(저장·상태 전환)의 결과는 시작한 규정에 묶는다(9차 — 진행 중인 mutation 은 나중 그리기의 옵션으로 불려 닫힌 id 가
-  // 옮긴 규정일 수 있다): 그 규정을 보고 있으면 편집 칸 상태 줄(잠깐 — 앞 알림 타이머가 뒤 알림을 지우지 않는다)·실패는 알림,
-  // 떠났으면 규정 이름을 붙인 화면 전체 알림
-  const flashInfoMsg = useFlashMessage(setPolicyDatesMsg);
-  const reportInfo = useCallback(
-    (v: { routeId: string; label: string }, message: string, kind: 'success' | 'error', ms = 2500) => {
-      const here = resultTarget(v.routeId, shownPolicy) === 'toolbar';
-      if (here && kind === 'success') return flashInfoMsg(message, ms);
-      toast(here ? message : t('policyDetail.result.forPolicy', { label: v.label, message }), kind);
-    },
-    [shownPolicy, flashInfoMsg, t],
-  );
+  // 옮긴 규정일 수 있다). 결과 자리는 도구 줄 하나 — 떠났으면 규정 이름을 붙인 화면 전체 알림(T-224 ④: 편집 칸 상태 줄·알림으로 나뉘어
+  // 받기 실패의 '새로 고침해 확인'이 다시 저장해 성공해도 남았다). 받기 실패는 낡음 표시로 남겨 그 뒤 이 규정을 받으면 걷힌다
   type InfoTarget = { routeId: string; policyId: string; label: string };
   const infoTarget = (): InfoTarget => ({ routeId: id!, policyId: policy!.id, label: policyLabel(policy) });
   const savePolicyDatesMutation = useMutation({
@@ -1158,13 +1151,12 @@ function PolicyDetailView() {
       // 그 사이 옛 날짜로 풀리지 않게(T-215 14·15차). 본 조회만 기다리고, 그 사이 로그아웃했으면 알리지 않는다(16차, lib/policyRefresh)
       // 다시 받지 못했으면 화면이 옛 값이라고 덧붙인다(17차)
       const inScope = authScopeGuard();
-      const fresh = await fetchPolicyNow(qc, v.routeId, inScope);
+      const { fresh, since } = await fetchPolicyNowSince(qc, v.routeId, inScope);
       if (!inScope()) return;
-      if (fresh) reportInfo(v, t('policyDetail.info.saved'), 'success');
-      // 남는 자리(도구 줄, 떠났으면 이름 붙은 알림)에 — 4초 뒤 사라지는 알림이 아니라(18차)
-      else reportResult(v.routeId, v.label, `${t('policyDetail.info.saved')} ${t('policyDetail.result.refreshFailed')}`, 'error');
+      reportAfterRefresh(qc, reportResult, t, { startedId: v.routeId, label: v.label, done: t('policyDetail.info.saved'), received: fresh !== null, since, source: 'info' });
     },
-    onError: (err, v) => reportInfo(v, apiErrorMessage(err, t('policyDetail.info.saveFailed')), 'error'),
+    // 실패 줄은 이 작업의 이름을 달아 남긴다 — 다시 저장해 성공하면 걷힌다(T-224)
+    onError: (err, v) => reportResult(v.routeId, v.label, apiErrorMessage(err, t('policyDetail.info.saveFailed')), 'error', { source: 'info' }),
     onSettled: (_res, _err, v) => endRun('info', v.routeId),
   });
 
@@ -1184,16 +1176,17 @@ function PolicyDetailView() {
       // 이 규정을 다시 받은 뒤에 창을 닫고 알리며 진행을 푼다 — 알림이 옛 상태 위에 뜨거나, 다시 그린 화면이 옛 상태로 풀려 같은 전환을
       // 또 보내지 않게(T-215 14·15차). 본 조회만 기다리고, 그 사이 로그아웃했으면 알리지 않는다(16차)
       const inScope = authScopeGuard();
-      const fresh = await fetchPolicyNow(qc, v.routeId, inScope);
+      const { fresh, since } = await fetchPolicyNowSince(qc, v.routeId, inScope);
       if (!inScope()) return;
-      if (resultTarget(v.routeId, shownPolicy) === 'toolbar') setActiveToggleTarget(null);
+      // 창 닫기는 진행을 풀기(onSettled 의 endRun — 진행 저장소 구독은 동기라 먼저 그려진다) 전에 그린다 — 풀린 그리기에서 창이 열린 채
+      // 확인 단추가 다시 살아나 같은 전환을 또 보내지 않게(T-224 — T-225 와 같은 까닭)
+      if (resultTarget(v.routeId, shownPolicy) === 'toolbar') flushSync(() => setActiveToggleTarget(null));
       const done = t(v.next ? 'policyDetail.status.madeActive' : 'policyDetail.status.madeInactive');
-      if (fresh) reportInfo(v, done, 'success', 3000);
-      else reportResult(v.routeId, v.label, `${done} ${t('policyDetail.result.refreshFailed')}`, 'error');
+      reportAfterRefresh(qc, reportResult, t, { startedId: v.routeId, label: v.label, done, received: fresh !== null, since, source: 'toggle' });
     },
     onError: (err, v) => {
       if (dialogErrorTarget(v.routeId, shownPolicy, toggleDialogOf.current) === 'dialog') return;
-      reportInfo(v, apiErrorMessage(err, t('policyDetail.status.toggleFailed')), 'error');
+      reportResult(v.routeId, v.label, apiErrorMessage(err, t('policyDetail.status.toggleFailed')), 'error', { source: 'toggle' });
     },
     onSettled: (_res, _err, v) => endRun('toggle', v.routeId),
   });
@@ -1317,17 +1310,17 @@ function PolicyDetailView() {
       // 다시 받은 뒤에 창을 닫고 알리며 진행을 푼다 — 그 사이 옛 초안 수로 시행 버튼이 풀려 같은 시행을 또 열지 않게(T-215 15차 #6).
       // 본 조회만 기다리고, 그 사이 로그아웃했으면 알리지 않는다(16차)
       const inScope = authScopeGuard();
-      const fresh = await fetchPolicyNow(qc, v.policyId, inScope);
+      const { fresh, since } = await fetchPolicyNowSince(qc, v.policyId, inScope);
       if (!inScope()) return;
-      setPublishDraftsForm((f) => (f?.policyId === v.policyId ? null : f));
+      // 창 닫기는 진행을 풀기 전에 그린다(상태 전환과 같은 까닭 — T-224)
+      flushSync(() => setPublishDraftsForm((f) => (f?.policyId === v.policyId ? null : f)));
       const done = t('policyDetail.publishDrafts.done', { n: res.published });
-      if (fresh) reportResult(v.policyId, v.label, done, 'success', 4000);
-      else reportResult(v.policyId, v.label, `${done} ${t('policyDetail.result.refreshFailed')}`, 'error');
+      reportAfterRefresh(qc, reportResult, t, { startedId: v.policyId, label: v.label, done, received: fresh !== null, since, flashMs: 4000, source: 'publish' });
     },
     // 그 규정의 시행 창이 떠 있으면 창 안에 적힌다 — 창을 닫았거나 다른 규정을 보고 있으면 도구 줄·화면 전체 알림으로
     onError: (err, v) => {
       if (dialogErrorTarget(v.policyId, shownPolicy, publishFormOf.current) === 'dialog') return;
-      reportResult(v.policyId, v.label, publishFailedText(err), 'error');
+      reportResult(v.policyId, v.label, publishFailedText(err), 'error', { source: 'publish' });
     },
     onSettled: (_res, _err, v) => endRun('publish', v.policyId),
   });
@@ -1919,7 +1912,7 @@ function PolicyDetailView() {
   const downloadPdf = useCallback(async () => {
     if (!policy || !id || asOfBlocked || !startRun('pdf', id)) return;
     const label = policyLabel(policy);
-    toolStatus.show(t('policyDetail.export.pdfMaking'));
+    toolStatus.show(t('policyDetail.export.pdfMaking'), 'pdf'); // 진행의 주인 — 그 사이 끝난 다른 작업의 성공은 이 문구를 덮지 않는다(T-224)
     try {
       // 전문 보기와 같은 빌더로 만든 HTML을 그대로 보낸다(화면 = 인쇄물 = PDF).
       const html = buildEnterprisePolicyBodyHtml(fullViewGroups, '');
@@ -1945,9 +1938,9 @@ function PolicyDetailView() {
       a.rel = 'noopener';
       a.click();
       URL.revokeObjectURL(url);
-      reportResult(id, label, exportDoneMessage('policyDetail.export.pdfDone'), 'success', 3000);
+      reportResult(id, label, exportDoneMessage('policyDetail.export.pdfDone'), 'success', { flashMs: 3000, source: 'pdf' });
     } catch (err: any) {
-      reportResult(id, label, exportFailedMessage(t, 'pdf', err?.response?.status), 'error');
+      reportResult(id, label, exportFailedMessage(t, 'pdf', err?.response?.status), 'error', { source: 'pdf' });
     } finally {
       endRun('pdf', id);
     }
@@ -1963,7 +1956,7 @@ function PolicyDetailView() {
   const downloadHwpx = useCallback(async () => {
     if (!policy || !id || asOfBlocked || !startRun('hwpx', id)) return;
     const label = policyLabel(policy);
-    toolStatus.show(t('policyDetail.export.hwpxMaking'));
+    toolStatus.show(t('policyDetail.export.hwpxMaking'), 'hwpx');
     try {
       // PDF 와 같은 빌더로 만든 HTML 을 보낸다(화면 = 인쇄물 = PDF = HWPX). 맨 위에 어느 날의 본문인지(T-180)
       const html = `<p>${basisLine}</p>${buildEnterprisePolicyBodyHtml(fullViewGroups, '')}`;
@@ -1975,9 +1968,9 @@ function PolicyDetailView() {
       a.rel = 'noopener';
       a.click();
       URL.revokeObjectURL(url);
-      reportResult(id, label, exportDoneMessage('policyDetail.export.hwpxDone'), 'success', 4000);
+      reportResult(id, label, exportDoneMessage('policyDetail.export.hwpxDone'), 'success', { flashMs: 4000, source: 'hwpx' });
     } catch (err: any) {
-      reportResult(id, label, exportFailedMessage(t, 'hwpx', err?.response?.status), 'error');
+      reportResult(id, label, exportFailedMessage(t, 'hwpx', err?.response?.status), 'error', { source: 'hwpx' });
     } finally {
       endRun('hwpx', id);
     }
@@ -2905,7 +2898,6 @@ function PolicyDetailView() {
                 if (!startRun('info', id!, JSON.stringify(sent))) return;
                 savePolicyDatesMutation.mutate({ ...infoTarget(), revisionDate: policyRevisionDate || null, effectiveDate: policyEffectiveDate || null, revisionNotify });
               }}
-              message={policyDatesMsg}
               notify={infoSent?.notify ?? revisionNotify}
               onNotify={setRevisionNotify}
               groups={notifyGroups}

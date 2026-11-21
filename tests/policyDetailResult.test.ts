@@ -27,7 +27,7 @@ describe('결과를 알릴 자리 (T-215 8차)', () => {
   });
 
   it('도구 줄이면 성공은 잠깐(시간을 넘긴다), 실패는 남긴다 — 떠났으면 규정 이름을 붙여 화면 전체 알림, 성공·실패 종류도 그대로', () => {
-    const sinks = () => ({ flash: vi.fn(), fail: vi.fn(), isSticky: () => false, toast: vi.fn() });
+    const sinks = () => ({ flash: vi.fn(), fail: vi.fn(), failStale: vi.fn(), settle: vi.fn(), isSticky: () => false, holds: () => false, toast: vi.fn() });
     const here = { id: 'A', mounted: true };
     const s1 = sinks();
     deliverResult(here, s1, t, { startedId: 'A', label: 'HR-01 취업규칙', message: 'PDF를 내려받았습니다.', kind: 'success', flashMs: 4000 });
@@ -36,7 +36,7 @@ describe('결과를 알릴 자리 (T-215 8차)', () => {
     expect(s1.toast).not.toHaveBeenCalled();
     const s2 = sinks();
     deliverResult(here, s2, t, { startedId: 'A', label: 'HR-01 취업규칙', message: '실패', kind: 'error' });
-    expect(s2.fail).toHaveBeenCalledWith('실패');
+    expect(s2.fail).toHaveBeenCalledWith('실패', undefined); // 작업 이름을 주지 않았다(T-224 — 주면 같은 작업의 성공이 걷는다)
     expect(s2.flash).not.toHaveBeenCalled();
     expect(s2.toast).not.toHaveBeenCalled();
     const s3 = sinks();
@@ -139,12 +139,14 @@ describe('지금 보는 규정 상자와 초안 일괄 시행·양식 저장 —
     const page = src('apps/web/src/pages/PolicyDetailPage.tsx');
     expect(page).toContain('versionsApi.publishDrafts(v.policyId, {');
     // 다시 읽기는 16차부터 lib/policyRefresh(본 조회만·로그아웃 뒤에는 알리지 않음) — 시작한 규정(v.policyId)으로 읽는 것은 그대로
-    expect(page).toContain('await fetchPolicyNow(qc, v.policyId, inScope);');
-    expect(page).toContain('setPublishDraftsForm((f) => (f?.policyId === v.policyId ? null : f));');
+    // T-224 검토 #2: 받기를 시작한 때(since)를 함께 받는다 — 받는 중이던 첫 받기를 기다린 뒤에 잰다
+    expect(page).toContain('const { fresh, since } = await fetchPolicyNowSince(qc, v.policyId, inScope);');
+    // 창 닫기는 진행을 풀기 전에 그린다, 받지 못했으면 낡음 표시(T-224 ④ — reportAfterRefresh)
+    expect(page).toContain('flushSync(() => setPublishDraftsForm((f) => (f?.policyId === v.policyId ? null : f)));');
     expect(page).toContain("const done = t('policyDetail.publishDrafts.done', { n: res.published });");
-    expect(page).toContain("if (fresh) reportResult(v.policyId, v.label, done, 'success', 4000);");
+    expect(page).toContain("reportAfterRefresh(qc, reportResult, t, { startedId: v.policyId, label: v.label, done, received: fresh !== null, since, flashMs: 4000, source: 'publish' });");
     expect(page).toMatch(
-      /onError: \(err, v\) => \{\s*if \(dialogErrorTarget\(v\.policyId, shownPolicy, publishFormOf\.current\) === 'dialog'\) return;\s*reportResult\(v\.policyId, v\.label, publishFailedText\(err\), 'error'\);/,
+      /onError: \(err, v\) => \{\s*if \(dialogErrorTarget\(v\.policyId, shownPolicy, publishFormOf\.current\) === 'dialog'\) return;\s*reportResult\(v\.policyId, v\.label, publishFailedText\(err\), 'error', \{ source: 'publish' \}\);/,
     );
     // 시행 창은 연 규정에서만 그린다
     expect(page).toContain('{publishDraftsForm && publishDraftsForm.policyId === id && (');

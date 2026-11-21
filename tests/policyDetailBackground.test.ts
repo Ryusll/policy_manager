@@ -133,13 +133,13 @@ describe('새로 그린 화면은 무엇을 저장 중인지 안다 (T-215 12차
 });
 
 describe('결과는 지금 그 규정을 그리는 화면의 도구 줄로 (T-215 12차 #3)', () => {
-  const sink = () => ({ flash: vi.fn(), fail: vi.fn(), isSticky: () => false });
+  const sink = () => ({ flash: vi.fn(), fail: vi.fn(), isSticky: () => false, holds: () => false });
   it('시작한 화면이 내려갔어도 같은 규정을 다시 그린 화면이 있으면 그 도구 줄, 없으면 규정 이름 붙은 알림', () => {
     const away = { id: 'A', mounted: false };
     const now = sink();
     const toast = vi.fn();
     deliverResult(away, { ...sink(), toast, screenFor: (id) => (id === 'A' ? now : undefined) }, t, { startedId: 'A', label: 'A-01', message: '실패', kind: 'error' });
-    expect(now.fail).toHaveBeenCalledWith('실패');
+    expect(now.fail).toHaveBeenCalledWith('실패', undefined); // 작업 이름 없이(T-224 — 주면 그 작업의 성공이 걷는다)
     expect(toast).not.toHaveBeenCalled();
     deliverResult(away, { ...sink(), toast, screenFor: () => undefined }, t, { startedId: 'A', label: 'A-01', message: '실패', kind: 'error' });
     expect(toast).toHaveBeenCalledWith('policyDetail.result.forPolicy', 'error');
