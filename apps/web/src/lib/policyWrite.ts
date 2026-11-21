@@ -46,8 +46,10 @@ export type WriteSpec<R> = {
   articleId?: string;
   /** 시작할 때 잡은 창(종류·번호) — 같은 번호의 창이 아직 열려 있을 때만 닫거나 창 안에 실패를 보인다 */
   dialog?: { kind: string; token: number | null };
-  /** 작업 이름 — 실패 줄은 같은 작업의 성공이 걷는다 */
-  source?: ResultSource;
+  /** 작업 이름 — 실패 줄은 같은 작업의 성공이 걷는다. 함수면 알릴 때 정한다(편집기의 새 초안은 만든 뒤에야 판 id 를 안다) */
+  source?: ResultSource | (() => ResultSource | undefined);
+  /** 반영된 갈래에서 이 이름들의 줄도 모든 자리에서 걷는다(편집기 검토 요청의 조문 줄 review:조문 id 등 — B2 검토) */
+  settleAlso?: readonly ResultSource[];
   /** 이 쓰기의 이름(확인 못 함·반영됨 문구에 들어간다, 예 '시행 승인') */
   action: string;
   call: () => Promise<R>;
@@ -61,11 +63,23 @@ export type WriteSpec<R> = {
   /** 거절(4xx) 문구 — 창 안에는 그대로, 결과 알림에는 대상을 붙인다 */
   refusedText: (err: unknown) => string;
   /**
+   * 실패를 어떻게 알릴지 이 쓰기가 정한다(편집기의 두 단계 검토 요청 — 설계 E5). 계획을 돌려주면 기본 갈래(4xx 창 안·5xx 반영 판정) 대신
+   * 그것을 쓰고, undefined 면 기본 갈래. 볼 값을 스스로 새로 읽어도 된다(그 뒤 범위를 다시 본다)
+   */
+  failed?: (err: unknown, ctx: { qc: QueryClient; missed: readonly QueryKey[] }) => FailurePlan | undefined | Promise<FailurePlan | undefined>;
+  /**
    * 응답 없음·5xx 뒤 — 반영됐으면 true, 아니면 false, 모르면 undefined. 볼 값을 스스로 새로 받는다(보는 화면이 없는 조회는 다시 받기가
    * 무효로 표시만 하고 받지 않아, 캐시에는 누를 때의 값이 남아 있다 — B1 검토)
    */
   landed?: (qc: QueryClient) => boolean | undefined | Promise<boolean | undefined>;
 };
+
+/**
+ * 실패를 알릴 계획 — 같은 번호의 창이 열려 있으면 error: 창 안에 보이고 둔다(adopt 면 먼저 그 초안을 고치는 상태로), close: 닫고 결과
+ * 자리에. 결과 자리로 갈 때(창이 닫혔거나 close)는 reportMessage 가 있으면 그 글(창 안에서만 맞는 말 — '쓰던 글은 그대로' 등 — 을 창 밖에
+ * 쓰지 않게, B2 재검토), kind 가 success 면 성공 쪽(이미 지워진 항목 등)
+ */
+export type FailurePlan = { message: string; reportMessage?: string; dialog: 'error' | 'close'; adopt?: string; applied?: boolean; kind?: 'success' | 'error' };
 
 /** 서버가 거절했다(4xx) — 반영되지 않았다. 응답이 없거나 5xx 면 반영됐는지 모른다 */
 export function refusedWrite(err: unknown): boolean {
@@ -91,10 +105,13 @@ export const readMs = (message: string) => Math.min(10000, Math.max(3000, 1500 +
  */
 function deliver(deps: WriteDeps, spec: WriteSpec<unknown>, message: string, kind: ResultKind, staleKeys?: readonly QueryKey[], applied = false) {
   const here = bannerFor(spec.policyId, spec.articleId) ?? deps.toolbar;
-  if (applied && spec.source) {
+  const source = typeof spec.source === 'function' ? spec.source() : spec.source;
+  if (applied && (source || spec.settleAlso?.length)) {
     const target = resultTarget(spec.policyId, deps.shown) === 'toolbar' ? here : (bannerFor(spec.policyId, spec.articleId) ?? toolbarFor(spec.policyId));
-    for (const place of new Set([deps.toolbar, toolbarFor(spec.policyId), ...bannersOf(spec.policyId)])) {
-      if (place && place !== target) place.settle(spec.source);
+    for (const place of new Set([deps.toolbar, toolbarFor(spec.policyId), ...bannersOf(spec.policyId), target])) {
+      if (!place) continue;
+      for (const also of spec.settleAlso ?? []) place.settle(also);
+      if (source && place !== target) place.settle(source);
     }
     const own = bannerOf(spec.policyId, spec.articleId);
     if (own && own !== target) own.clear();
@@ -111,8 +128,16 @@ function deliver(deps: WriteDeps, spec: WriteSpec<unknown>, message: string, kin
       screenFor: (policyId) => bannerFor(policyId, spec.articleId) ?? toolbarFor(policyId),
     },
     deps.t,
-    { startedId: spec.policyId, label: spec.label, message, kind, flashMs: readMs(message), staleKeys, source: spec.source },
+    { startedId: spec.policyId, label: spec.label, message, kind, flashMs: readMs(message), staleKeys, source },
   );
+}
+
+/** 이 이름들의 줄을 그 규정의 모든 자리(시작한 화면·다시 그린 화면의 도구 줄, 배너)에서 걷는다 */
+function settleEverywhere(deps: WriteDeps, spec: WriteSpec<unknown>, sources: readonly ResultSource[]) {
+  if (sources.length === 0) return;
+  for (const place of new Set([deps.toolbar, toolbarFor(spec.policyId), ...bannersOf(spec.policyId)])) {
+    if (place) for (const s of sources) place.settle(s);
+  }
 }
 
 /** 쓰기 하나를 끝까지 — 시작하지 못했으면(같은 규정의 같은 종류가 도는 중) false */
@@ -156,6 +181,31 @@ async function settle<R>(deps: WriteDeps, spec: WriteSpec<R>) {
     if (missed.length > 0) say(`${message} ${deps.t('policyDetail.result.refreshFailed')}`, 'stale', missed, true);
     else say(message, 'success', undefined, true);
     return;
+  }
+  if (spec.failed) {
+    const plan = await spec.failed(failure.err, { qc: deps.qc, missed });
+    if (!inScope()) return;
+    if (plan) {
+      // 초안을 확인했으면(이어받음) 앞 요청의 미확인 줄(조문 이름)은 이 결과가 대신한다 — 두 줄이 엇갈려 남지 않게(B2 재검토)
+      if (plan.adopt) settleEverywhere(deps, spec as WriteSpec<unknown>, spec.settleAlso ?? []);
+      // 기다리는 사이 창을 닫았을 수 있어 다시 찾는다
+      const open = spec.dialog ? sameDialog(spec.policyId, spec.dialog.kind, spec.dialog.token) : undefined;
+      if (open) {
+        flushSync(() => {
+          if (plan.adopt) open.adopt?.(plan.adopt);
+          if (plan.dialog === 'error') open.setError(plan.message);
+          else open.close();
+        });
+      }
+      // 반영이 확인됐는데 화면의 다시 받기는 실패했으면 낡음 표시로(기본 갈래와 같은 규칙 — B2 검토)
+      if (!open || plan.dialog === 'close') {
+        const text = subject(plan.reportMessage ?? plan.message);
+        const stale = plan.applied === true && missed.length > 0;
+        if (stale) say(`${text} ${deps.t('policyDetail.result.refreshFailed')}`, 'stale', missed, true);
+        else say(text, plan.kind ?? 'error', undefined, plan.applied ?? false);
+      }
+      return;
+    }
   }
   if (refusedWrite(failure.err)) {
     const message = spec.refusedText(failure.err);

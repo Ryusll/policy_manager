@@ -3,6 +3,7 @@ import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { versionsApi } from '../../api/policies';
 import { isRunning, runningNow, type RunKind, type ShownPolicy, type ToolStatus } from '../../lib/policyResult';
 import { koreanReason, runWrite, type WriteSpec } from '../../lib/policyWrite';
+import { reviewFailure, sameDraftText, StepError, type ReviewTarget, type ReviewVersion } from './reviewRequest';
 import { sameDialog } from '../../lib/writeDialogs';
 import { serviceToday } from '../../lib/serviceDate';
 import { useLatest } from '../../lib/useLatest';
@@ -17,7 +18,9 @@ import { useLatest } from '../../lib/useLatest';
 
 type T = (key: string, vars?: Record<string, string | number>) => string;
 type Version = { id: string; status?: string; repealedOn?: string | null };
-export type VersionAction = 'approve' | 'reject' | 'archive' | 'cancelRepeal' | 'withdraw';
+export { reviewFailure, sameDraftText, StepError, type ReviewTarget } from './reviewRequest';
+/** 판 쓰기 — 전환 다섯, 목록·카드의 검토 요청(submit), 편집기의 검토 요청(review — 초안 저장 뒤 제출, T-224 단계 B2) */
+export type VersionAction = 'approve' | 'reject' | 'archive' | 'cancelRepeal' | 'withdraw' | 'submit' | 'review';
 
 /** 대상 — 판 id·번호, 그 판의 조문(id·표기, 창을 연 때의 것), 열려 있던 창의 번호(창 없이 시작하면 token 없음) */
 export type VersionTarget = { versionId: string; versionNum: number | string; articleId: string; articleLabel: string; token?: number | null };
@@ -36,6 +39,8 @@ export const landedState: Record<VersionAction, (v: Version) => boolean> = {
   // 폐지일만 본다 — 다른 판이 시행 중이면 서버는 상태를 archived 그대로 두고 폐지일만 지운다(versions.service cancelRepeal)
   cancelRepeal: (v) => !v.repealedOn,
   withdraw: (v) => v.status === 'draft',
+  submit: (v) => v.status === 'review',
+  review: (v) => v.status === 'review',
 };
 
 /** 판 쓰기를 막는가 — 같은 규정의 판 쓰기 또는 초안 일괄 시행이 도는 중(E11). 여는 단추·창의 확인 단추가 같이 본다 */
@@ -70,6 +75,7 @@ export function useVersionActions(o: {
       call: () => Promise<R>,
       done: (res: R, t: T) => string,
       extraSide?: (res: R | undefined) => QueryKey[],
+      extra?: (t: T) => Partial<WriteSpec<R>>,
     ): Promise<boolean> => {
       // 누를 때의 값을 모두 여기서 잡는다 — 끝날 때 읽으면 그 사이 고른 다른 조문의 표기가 붙는다
       const { policyId, label, t, qc, shown, toolbar, start, end } = latest.current;
@@ -110,6 +116,7 @@ export function useVersionActions(o: {
               return found ? landedState[action](found) : undefined;
             })
             .catch(() => undefined),
+        ...extra?.(t),
       };
       return runWrite({ qc, shown, toolbar, t, start, end }, spec).then((started) => started || refuse('policyWrites.locked'));
     };
@@ -126,6 +133,68 @@ export function useVersionActions(o: {
         run('archive', v, () => versionsApi.archive(v.versionId, v.repealedOn), (res, t) => archivedText(res, t)),
       cancelRepeal: (v: VersionTarget) =>
         run('cancelRepeal', v, () => versionsApi.cancelRepeal(v.versionId), (_res, t) => t('policyWrites.version.repealCancelled')),
+      // 목록·카드의 검토 요청 — 반영되면 그 조문의 편집기 검토 요청 줄(review:조문 id)도 걷는다(같은 일의 결과다 — B2 검토)
+      submit: (v: VersionTarget) =>
+        run('submit', v, () => versionsApi.submit(v.versionId), (_res, t) => t('policyWrites.version.submitted'), undefined, () => ({
+          settleAlso: [`review:${v.articleId}` as const],
+        })),
+      // 편집기 — 초안을 고치거나 만든 뒤 제출한다. 진행 대상·작업 이름은 조문마다(새 초안은 누를 때 id 가 없다), 결과 글의 판 번호는 초안을
+      // 만들거나 찾은 뒤에 안다(holder). 실패는 단계마다의 계획(reviewFailure)
+      requestReview: (r: ReviewTarget) => {
+        const holder: { versionNum?: number | string; draftId?: string | null } = { versionNum: r.draftNum, draftId: r.draftId };
+        const payload = { content: r.content, changeNote: r.changeNote };
+        return run(
+          'review',
+          { versionId: r.draftId ?? '', versionNum: r.draftNum ?? '', articleId: r.articleId, articleLabel: r.articleLabel, token: r.token },
+          async () => {
+            let draftId = r.draftId;
+            // 새 초안이면 내가 만든 같은 글의 초안이 이미 있는지 먼저 본다 — 앞 요청이 응답 없이 끝났지만 저장됐으면 그것을 이어 쓴다(다시 눌러
+            // 초안이 둘이 되지 않게, B2 검토). 목록을 읽지 못하면 보내지 않는다(같은 장애로 앞 초안을 못 찾고 또 만들지 않게, B2 재검토)
+            if (!draftId) {
+              let list: ReviewVersion[];
+              try {
+                list = (await versionsApi.list(r.articleId)) as ReviewVersion[];
+              } catch (err) {
+                throw new StepError('lookup', err, null);
+              }
+              const same = list.find((x) => sameDraftText(x, r));
+              if (same) {
+                draftId = same.id;
+                holder.versionNum = same.versionNum;
+              }
+            }
+            try {
+              if (draftId) await versionsApi.update(draftId, payload);
+              else {
+                const created = (await versionsApi.create(r.articleId, payload)) as { id: string; versionNum?: number };
+                draftId = created.id;
+                holder.versionNum = created.versionNum;
+              }
+              holder.draftId = draftId;
+            } catch (err) {
+              throw new StepError('draft', err, draftId);
+            }
+            try {
+              return (await versionsApi.submit(draftId)) as unknown;
+            } catch (err) {
+              throw new StepError('submit', err, draftId);
+            }
+          },
+          (_res, t) => t('policyWrites.version.submitted'),
+          undefined,
+          (t) => ({
+            target: `review:${r.articleId}`,
+            // 판 id 를 알면 그 판의 이름으로(목록·카드의 검토 요청·판 전환과 같은 줄), 모르면 조문의 이름으로 — 반영되면 조문 줄도 걷는다
+            source: () => (holder.draftId ? (`version:${holder.draftId}` as const) : (`review:${r.articleId}` as const)),
+            settleAlso: [`review:${r.articleId}` as const],
+            subject: (m) =>
+              holder.versionNum
+                ? t('policyWrites.subject', { article: r.articleLabel, version: holder.versionNum, message: m })
+                : t('policyWrites.subjectArticle', { article: r.articleLabel, message: m }),
+            failed: (err) => reviewFailure(err, r, holder, t),
+          }),
+        );
+      },
       // 개정 후보로 승인한 판이면 후보가 작성 상태로 돌아간다(T-178) — 후보 화면·목록도 새로 받는다. 응답이 없어도 목록은 무효화
       withdraw: (v: VersionTarget & { reason: string }) =>
         run(

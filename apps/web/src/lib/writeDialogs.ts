@@ -8,7 +8,13 @@ import { useCallback, useLayoutEffect, useState } from 'react';
  * 같은 꼴).
  */
 
-export type WriteDialogControls = { token: number; setError: (message: string | null) => void; close: () => void };
+export type WriteDialogControls = {
+  token: number;
+  setError: (message: string | null) => void;
+  close: () => void;
+  /** 창을 이 초안을 고치는 상태로 바꾼다(편집기 — 초안은 저장됐는데 제출이 실패했을 때, 다시 눌러 초안이 또 생기지 않게) */
+  adopt?: (draftId: string) => void;
+};
 
 const dialogs = new Map<string, WriteDialogControls>();
 const keyOf = (policyId: string, kind: string) => `${kind}:${policyId}`;
@@ -34,9 +40,18 @@ export function registerWriteDialog(policyId: string, kind: string, controls: Wr
   };
 }
 
+/** 열려 있는(번호가 있는) 쓰기 창을 등록부에 건다 — 그린 직후(쓰기가 끝나는 때보다 늦지 않게). 함수들은 늘 같은 것을 넘긴다 */
+export function useWriteDialogRegistration(kind: string, policyId: string | undefined, token: number | null, controls: Omit<WriteDialogControls, 'token'>) {
+  const { setError, close, adopt } = controls;
+  useLayoutEffect(() => {
+    if (!policyId || token === null) return undefined;
+    return registerWriteDialog(policyId, kind, { token, setError, close, adopt });
+  }, [kind, policyId, token, setError, close, adopt]);
+}
+
 /**
  * 쓰기 창 하나의 상태 — 대상(target)·번호(token)·창 안 실패(error). 열면 실패를 비우고 새 번호를 매기며(E14), 열려 있는 동안 등록부에
- * 건다(그린 직후 — 쓰기가 끝나는 때보다 늦지 않게). close 는 늘 같은 함수다.
+ * 건다(useWriteDialogRegistration). close 는 늘 같은 함수다.
  */
 export function useWriteDialogState<T>(kind: string, policyId: string | undefined) {
   const [state, setState] = useState<{ target: T; token: number } | null>(null);
@@ -50,9 +65,6 @@ export function useWriteDialogState<T>(kind: string, policyId: string | undefine
     setError(null);
   }, []);
   const token = state?.token ?? null;
-  useLayoutEffect(() => {
-    if (!policyId || token === null) return undefined;
-    return registerWriteDialog(policyId, kind, { token, setError, close });
-  }, [kind, policyId, token, close]);
+  useWriteDialogRegistration(kind, policyId, token, { setError, close });
   return { target: state?.target ?? null, token, error, open, close };
 }

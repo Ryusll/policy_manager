@@ -230,8 +230,8 @@ describe('페이지 연결 (T-224 단계 B)', () => {
     expect(page).toContain('const versionLock = versionLocked(runs, id);');
   });
 
-  it('판 단추 일곱(현황 목록 승인·반려, 판 카드 승인·반려·철회·폐지 예정 취소·폐지)은 판 쓰기·초안 일괄 시행이 도는 동안 막히고 까닭을 알린다, 폐지 예정 취소의 확인 문구는 키', () => {
-    expect(page.match(/disabled=\{versionLock\}\s*title=\{versionLockTitle\}/g) ?? []).toHaveLength(7);
+  it('판 단추 열(현황 목록 승인·반려·검토 요청, 판 카드 승인·반려·검토 요청·철회·폐지 예정 취소·폐지, 편집기 열기)은 판 쓰기·초안 일괄 시행이 도는 동안 막히고 까닭을 알린다, 폐지 예정 취소의 확인 문구는 키', () => {
+    expect(page.match(/disabled=\{versionLock\}\s*title=\{versionLockTitle\}/g) ?? []).toHaveLength(10);
     expect(page).toContain("t('policyWrites.version.cancelRepealConfirm', { date: String(version.repealedOn).slice(0, 10) })");
     expect(page).toContain("runningNow('version', publishDraftsForm.policyId)");
   });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { holdPrintRoot } from '../lib/printRoot';
 import { apiErrorMessage, serverMessage } from '../lib/apiError';
@@ -112,7 +112,7 @@ import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDial
 import { ApproveDialog, ArchiveDialog, RejectDialog, WithdrawDialog } from '../components/policy-detail/VersionDialogs';
 import { useVersionActions, versionLocked, versionTargetArgs, type VersionDialogTarget } from '../components/policy-detail/useVersionActions';
 import { useArticleBanner } from '../lib/articleBanner';
-import { useWriteDialogState } from '../lib/writeDialogs';
+import { nextDialogToken, useWriteDialogRegistration, useWriteDialogState } from '../lib/writeDialogs';
 import { useFlashMessage } from '../lib/flashMessage';
 import { useLatest } from '../lib/useLatest';
 import { authScopeGuard, fetchPolicyNowSince } from '../lib/policyRefresh';
@@ -559,7 +559,7 @@ function FullViewSearchToolbar({
  * 규정 상세 — 규정마다 화면을 새로 그린다(T-215 11차). 경로(/policies/:id)에서 규정만 바뀌면 React 가 같은 화면을 다시 써서, 규정별
  * 상태(열어 둔 쓰기 창·입력·진행 표시·mutation 관찰자)가 앞 규정의 것으로 남았다 — 창을 하나씩 비우는 목록은 새 창이 생길 때마다 빠졌다.
  * 앞 규정에서 진행 중이던 작업 가운데 진행을 규정별로 두는 것(lib/policyResult RunKind — 내보내기·초안 일괄 시행·상태 전환·규정 정보·
- * 적용 양식·첨부·조 순서·판 전환)은 내려간 화면에서 끝나도 그 결과를 버리지 않고 알린다. 부칙·조문 추가·댓글·검토 요청은 아직 아니다(T-224).
+ * 적용 양식·첨부·조 순서·판 쓰기(전환·검토 요청))은 내려간 화면에서 끝나도 그 결과를 버리지 않고 알린다. 부칙·조문 추가·댓글은 아직 아니다(T-224).
  */
 export default function PolicyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -601,6 +601,12 @@ function PolicyDetailView() {
   const [revisionExternalReasons, setRevisionExternalReasons] = useState<string[]>([]);
   const [showVersionEditor, setShowVersionEditor] = useState(false);
   const [editingDraftVersionId, setEditingDraftVersionId] = useState<string | null>(null);
+  // 편집기도 쓰기 창 등록부에 건다(T-224 단계 B2) — 열 때마다 번호, 검토 요청이 거절되면 그 번호의 편집기 안에 실패를, 초안은 저장됐는데
+  // 제출이 실패하면 편집기를 그 초안을 고치는 상태로(adopt — 다시 눌러 초안이 또 생기지 않게)
+  const [editorToken, setEditorToken] = useState<number | null>(null);
+  const [editorError, setEditorError] = useState<string | null>(null);
+  // 편집기를 연 조문 — 고른 조문이 바뀌거나 풀리면 편집기를 닫는다(아래 효과)
+  const [editorArticleId, setEditorArticleId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fullViewMainRef = useRef<HTMLDivElement>(null);
   const fullViewModalRef = useRef<HTMLDivElement>(null);
@@ -1009,8 +1015,13 @@ function PolicyDetailView() {
   }, [versions]);
 
   const openVersionEditor = useCallback(() => {
-    if (!selectedArticle) return;
-    const draft = (versions as any[]).find((v) => v.status === 'draft');
+    // 판 쓰기·초안 일괄 시행이 도는 동안은 열지 않는다(T-224 E1·E11 — 여는 단추도 막힌다)
+    if (!selectedArticle || !id || runningNow('version', id) || runningNow('publish', id)) return;
+    // 재파싱 묶음 초안은 이어 쓰지 않는다 — 묶음의 검토가 적용할 본문을 편집기가 덮어쓰지 않게(B2 재검토, 서버 수정에는 묶음 검사가 없다)
+    const draft = (versions as any[]).find((v) => v.status === 'draft' && !v.reparseItem);
+    setEditorToken(nextDialogToken());
+    setEditorError(null);
+    setEditorArticleId(selectedArticle.id);
     setShowVersionEditor(true);
     setRevisionInternalReasons([]);
     setRevisionExternalReasons([]);
@@ -1023,7 +1034,7 @@ function PolicyDetailView() {
     setEditingDraftVersionId(null);
     setVersionChangeNote('');
     setVersionContent(selectedDraftBase.content.trim());
-  }, [selectedArticle, versions, selectedDraftBase]);
+  }, [selectedArticle, id, versions, selectedDraftBase]);
 
   const { data: comments = [], refetch: refetchComments } = useQuery({
     queryKey: ['comments', selectedArticle?.id],
@@ -1438,40 +1449,6 @@ function PolicyDetailView() {
     },
   });
 
-  const requestReviewMutation = useMutation({
-    mutationFn: async (payload: { content: string; changeNote?: string }) => {
-      if (!selectedArticle?.id) {
-        throw new Error('선택된 조문이 없습니다.');
-      }
-      if (editingDraftVersionId) {
-        await versionsApi.update(editingDraftVersionId, payload);
-        return versionsApi.submit(editingDraftVersionId);
-      }
-      const created = await versionsApi.create(selectedArticle.id, payload);
-      return versionsApi.submit(created.id);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      setShowVersionEditor(false);
-      setEditingDraftVersionId(null);
-      setVersionContent('');
-      setVersionChangeNote('');
-      setRevisionInternalReasons([]);
-      setRevisionExternalReasons([]);
-    },
-  });
-
-  const submitMutation = useMutation({
-    mutationFn: versionsApi.submit,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-    },
-    // 변수 표식의 값을 정할 수 없으면 서버가 까닭을 알려 준다(T-109)
-    onError: (err) => toast(apiErrorMessage(err, '검토를 요청하지 못했습니다.'), 'error'),
-  });
-
   // 판 전환 다섯(시행 승인·반려·폐지·폐지 예정 취소·시행 예정 철회, T-224) — 누를 때의 규정·조문·판을 잡아 끝까지 쓴다. 진행은 규정별
   // 저장소('version' — 판 쓰기는 한 규정에서 한 번에 하나, 초안 일괄 시행과도 서로 막는다), 결과는 조문 배너 → 도구 줄 → 이름 붙은 알림
   const versionActions = useVersionActions({
@@ -1485,6 +1462,31 @@ function PolicyDetailView() {
     end: endRun,
   });
   const versionLock = versionLocked(runs, id);
+  // 편집기 닫기 — 취소·X 는 열 때 다시 채우므로 창만 닫고, 검토 요청이 반영되면(등록부의 close) 쓰던 내용도 비운다
+  const closeVersionEditor = useCallback(() => {
+    setShowVersionEditor(false);
+    setEditingDraftVersionId(null);
+    setEditorToken(null);
+    setEditorError(null);
+    setEditorArticleId(null);
+  }, []);
+  const finishVersionEditor = useCallback(() => {
+    closeVersionEditor();
+    setVersionContent('');
+    setVersionChangeNote('');
+    setRevisionInternalReasons([]);
+    setRevisionExternalReasons([]);
+  }, [closeVersionEditor]);
+  useWriteDialogRegistration('review', id, editorToken, { setError: setEditorError, close: finishVersionEditor, adopt: setEditingDraftVersionId });
+  // 편집기가 보이지 않게 되면(고른 조문이 풀리거나 바뀜, 전문 보기로) 닫는다 — 보이지 않는 편집기가 등록부에 남아 결과를 삼키거나, 다른
+  // 조문에서 앞 조문의 글·초안으로 다시 나타나지 않게(B2 검토). 닫힌 뒤 끝난 결과는 배너·도구 줄로 간다
+  const editorShownFor = showVersionEditor && articleViewMode === 'segment' ? (selectedArticle?.id ?? null) : null;
+  useLayoutEffect(() => {
+    if (!showVersionEditor || editorShownFor === editorArticleId) return;
+    closeVersionEditor();
+    // 말없이 닫으면 다시 열 때 쓰던 글이 덮여도 모른다 — 보내지 않았다고 알린다(B2 재검토)
+    toast(t('versionDialog.editorClosed'), 'info');
+  }, [showVersionEditor, editorShownFor, editorArticleId, closeVersionEditor, t]);
   // 판 단추가 그리는 판의 대상 — 판 단추는 고른 조문의 패널 안에만 있다. 표기는 지금 받은 조문으로(고른 사본은 조 번호·제목을 고친 뒤
   // 옛 표기일 수 있다 — B1 재검토 #6)
   const versionTargetOf = (v: { id: string; versionNum: number }): VersionDialogTarget => {
@@ -3004,7 +3006,9 @@ function PolicyDetailView() {
                     {canEdit && (
                       <button
                         onClick={openVersionEditor}
-                        className="text-xs bg-navy-600 hover:bg-navy-500 px-3 py-1.5 rounded flex items-center gap-1"
+                        disabled={versionLock}
+                        title={versionLockTitle}
+                        className="text-xs bg-navy-600 hover:bg-navy-500 px-3 py-1.5 rounded flex items-center gap-1 disabled:opacity-50"
                       >
                         <FileText size={12} />
                         {segmentVersionWorkflow.drafts.length > 0 ? '편집(초안 이어쓰기)' : '편집'}
@@ -3150,11 +3154,13 @@ function PolicyDetailView() {
                         ) : canEdit && (
                           <button
                             type="button"
-                            onClick={() => submitMutation.mutate(v.id)}
-                            className="text-[11px] text-blue-700 font-medium hover:underline shrink-0 inline-flex items-center gap-1"
+                            disabled={versionLock}
+                            title={versionLockTitle}
+                            onClick={() => void versionActions.submit(versionTargetArgs(versionTargetOf(v)))}
+                            className="text-[11px] text-blue-700 font-medium hover:underline shrink-0 inline-flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                           >
                             <Clock size={12} aria-hidden />
-                            검토 요청
+                            {versionRun === `submit:${v.id}` ? t('versionDialog.busy') : t('versionDialog.requestReview')}
                           </button>
                         )}
                       </li>
@@ -3248,10 +3254,13 @@ function PolicyDetailView() {
                           )}
                           {version.status === 'draft' && canEdit && !version.reparseItem && (
                             <button
-                              onClick={() => submitMutation.mutate(version.id)}
-                              className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                              type="button"
+                              disabled={versionLock}
+                              title={versionLockTitle}
+                              onClick={() => void versionActions.submit(versionTargetArgs(versionTargetOf(version)))}
+                              className="text-xs text-blue-600 hover:underline flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                             >
-                              <Clock size={12} /> 검토 요청
+                              <Clock size={12} /> {versionRun === `submit:${version.id}` ? t('versionDialog.busy') : t('versionDialog.requestReview')}
                             </button>
                           )}
                           {version.status === 'review' && user?.role === 'admin' && !version.reparseItem && (
@@ -4696,10 +4705,7 @@ function PolicyDetailView() {
               <button
                 type="button"
                 className="text-navy-100 hover:text-white"
-                onClick={() => {
-                  setShowVersionEditor(false);
-                  setEditingDraftVersionId(null);
-                }}
+                onClick={closeVersionEditor}
                 aria-label="편집 창 닫기"
               >
                 <X size={16} />
@@ -4822,27 +4828,39 @@ function PolicyDetailView() {
                 value={versionContent}
                 onChange={(e) => setVersionContent(e.target.value)}
               />
+              {editorError && (
+                <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {editorError}
+                </p>
+              )}
               <div className="flex gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() =>
-                    requestReviewMutation.mutate({
+                  onClick={() => {
+                    // 누를 때의 조문·초안을 실어 보낸다 — 새 초안이면 누를 때 있던 초안들을 함께(응답 없이 끝나면 새로 생긴 초안을 찾는다)
+                    const article = liveSelectedArticle ?? selectedArticle;
+                    const list = versions as { id: string; status?: string; versionNum?: number }[];
+                    void versionActions.requestReview({
+                      articleId: article.id,
+                      articleLabel: articleRowHeading(article),
+                      draftId: editingDraftVersionId,
+                      draftNum: list.find((x) => x.id === editingDraftVersionId)?.versionNum,
                       content: versionContent,
                       changeNote: versionChangeNote.trim() || undefined,
-                    })
-                  }
-                  disabled={!versionContent.trim() || requestReviewMutation.isPending}
+                      token: editorToken,
+                      userId: user?.id,
+                    });
+                  }}
+                  disabled={!versionContent.trim() || versionLock}
+                  title={versionLockTitle}
                   className="btn-primary"
                 >
                   <Clock size={14} className="inline mr-1" />
-                  검토 요청
+                  {versionRun === `review:${selectedArticle.id}` ? t('versionDialog.busy') : t('versionDialog.requestReview')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowVersionEditor(false);
-                    setEditingDraftVersionId(null);
-                  }}
+                  onClick={closeVersionEditor}
                   className="btn-secondary"
                 >
                   취소

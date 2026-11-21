@@ -47,7 +47,8 @@ describe('창·배너 훅의 차례 (T-224 단계 B — 그리기는 DOM 시험 
     const s = src('writeDialogs.ts');
     expect(s).toMatch(/const open = useCallback\(\(target: T\) => \{\s*setError\(null\);\s*setState\(\{ target, token: nextDialogToken\(\) \}\);/);
     expect(s).toMatch(/const close = useCallback\(\(\) => \{\s*setState\(null\);\s*setError\(null\);/);
-    expect(s).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!policyId \|\| token === null\) return undefined;\s*return registerWriteDialog\(policyId, kind, \{ token, setError, close \}\);/);
+    expect(s).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!policyId \|\| token === null\) return undefined;\s*return registerWriteDialog\(policyId, kind, \{ token, setError, close, adopt \}\);/);
+    expect(s).toContain('useWriteDialogRegistration(kind, policyId, token, { setError, close });'); // 창 상태 훅도 같은 등록을 쓴다
   });
 
   it('조문을 바꾸면 배너를 걷고, 조문을 고른 동안 늘 등록해 보이는지는 표시로 둔다 — 받기 실패 줄은 받으면 걷힌다', () => {
