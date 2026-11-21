@@ -109,11 +109,15 @@ import { useAttachmentActions } from '../components/policy-detail/useAttachmentA
 import { joOrderSignature, reorderNotice, useReorderSave, type ReorderNote } from '../components/policy-detail/useReorderSave';
 import { PublishDraftsDialog } from '../components/policy-detail/PublishDraftsDialog';
 import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDialog';
+import { ApproveDialog, ArchiveDialog, RejectDialog, WithdrawDialog } from '../components/policy-detail/VersionDialogs';
+import { useVersionActions, versionLocked, versionTargetArgs, type VersionDialogTarget } from '../components/policy-detail/useVersionActions';
+import { useArticleBanner } from '../lib/articleBanner';
+import { useWriteDialogState } from '../lib/writeDialogs';
 import { useFlashMessage } from '../lib/flashMessage';
 import { useLatest } from '../lib/useLatest';
 import { authScopeGuard, fetchPolicyNowSince } from '../lib/policyRefresh';
 import { useClearStaleOnReceive } from '../lib/toolStatus';
-import { dialogErrorTarget, exportBusyFor, isRunning, pendingJumpAction, policyLabel, reportAfterRefresh, resultTarget, useReportResult, useRuns, useShownPolicy, useShownToolbar, useToolStatus, type ToolStatusKind } from '../lib/policyResult';
+import { dialogErrorTarget, exportBusyFor, isRunning, pendingJumpAction, policyLabel, reportAfterRefresh, resultTarget, runningNow, useReportResult, useRuns, useShownPolicy, useShownToolbar, useToolStatus, type ToolStatusKind } from '../lib/policyResult';
 import { exportButtonLabel, exportFailedMessage, exportMenu, moreMenu, viewMenu } from '../lib/policyToolMenus';
 import PolicyTopBar from '../components/policy-detail/PolicyTopBar';
 import PolicyHeaderCard from '../components/policy-detail/PolicyHeaderCard';
@@ -555,7 +559,7 @@ function FullViewSearchToolbar({
  * 규정 상세 — 규정마다 화면을 새로 그린다(T-215 11차). 경로(/policies/:id)에서 규정만 바뀌면 React 가 같은 화면을 다시 써서, 규정별
  * 상태(열어 둔 쓰기 창·입력·진행 표시·mutation 관찰자)가 앞 규정의 것으로 남았다 — 창을 하나씩 비우는 목록은 새 창이 생길 때마다 빠졌다.
  * 앞 규정에서 진행 중이던 작업 가운데 진행을 규정별로 두는 것(lib/policyResult RunKind — 내보내기·초안 일괄 시행·상태 전환·규정 정보·
- * 적용 양식·첨부·조 순서)은 내려간 화면에서 끝나도 그 결과를 버리지 않고 알린다. 본문 안의 다른 쓰기(승인·반려 등)는 아직 아니다(T-224).
+ * 적용 양식·첨부·조 순서·판 전환)은 내려간 화면에서 끝나도 그 결과를 버리지 않고 알린다. 부칙·조문 추가·댓글·검토 요청은 아직 아니다(T-224).
  */
 export default function PolicyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -608,18 +612,21 @@ function PolicyDetailView() {
   const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showFullTextModal, setShowFullTextModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
-  const [approveTargetId, setApproveTargetId] = useState<string | null>(null);
-  const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
+  // 판 확인 창 넷(T-224) — 창을 열 때마다 번호를 매겨 등록부에 건다. 쓰기는 시작할 때 그 번호를 잡아, 끝났을 때 같은 창이 아직 열려
+  // 있을 때만 닫거나 창 안에 실패를 보인다(lib/writeDialogs, lib/policyWrite)
+  // 대상에는 창을 연 때의 조문(id·표기)을 싣는다 — 창이 열린 사이 고른 조문이 바뀌거나 풀려도 그 판의 조문으로 보내고 알린다
+  // 승인 창은 그 조문의 가장 늦은 시행 예정일(그보다 이른 날로는 승인할 수 없다)도 연 때의 것으로 든다(B1 재검토 #4)
+  const approveDlg = useWriteDialogState<VersionDialogTarget & { minDate: string | null }>('approve', id);
+  const rejectDlg = useWriteDialogState<VersionDialogTarget>('reject', id);
   const [rejectReason, setRejectReason] = useState('');
-  const [archiveTarget, setArchiveTarget] = useState<any>(null);
+  const archiveDlg = useWriteDialogState<VersionDialogTarget>('archive', id);
   // 폐지 시행일(T-132 ③) — 비우면 오늘
   const [archiveDate, setArchiveDate] = useState('');
   // 시행 예정 철회(T-132 ②)
-  const [withdrawTarget, setWithdrawTarget] = useState<any>(null);
+  const withdrawDlg = useWriteDialogState<VersionDialogTarget & { effectiveDate: string }>('withdraw', id);
   const [withdrawReason, setWithdrawReason] = useState('');
   // 변수 연결 창(T-109) — 시행 중인 버전의 문구를 변수에 잇는다
   const [bindingTarget, setBindingTarget] = useState<{ id: string; versionNum: number; content: string; articleId: string } | null>(null);
-  const [versionActionMsg, setVersionActionMsg] = useState('');
   const [activeToggleTarget, setActiveToggleTarget] = useState<boolean | null>(null);
   const [approveNote, setApproveNote] = useState('');
   /** 시행 승인 시 확정할 시행일(YYYY-MM-DD). 비우면 서버가 승인일로 기록 */
@@ -658,6 +665,8 @@ function PolicyDetailView() {
   // 낡음 표시(받기 실패)는 그 조회를 그 뒤에 받으면 걷힌다(T-224 ④)
   useClearStaleOnReceive(qc, toolStatus);
   const [articleViewMode, setArticleViewMode] = useState<'full' | 'segment'>('full');
+  // 판 쓰기의 결과 띠(T-224) — 그 조문을 분절 보기로 보이는 동안 등록부에 걸고, 조문을 바꾸면 걷는다(lib/articleBanner)
+  const banner = useArticleBanner(qc, id, selectedArticle?.id, articleViewMode === 'segment' && !!selectedArticle);
   /** 시점 조회 기준일(YYYY-MM-DD). 빈 문자열이면 현행 본문 */
   const [asOfDate, setAsOfDate] = useState('');
   // PDF·한/글 내보내기·초안 일괄 시행 진행 — 규정마다 따로(다른 규정에서 시작한 작업이 이 규정의 버튼·항목을 막지 않는다)
@@ -894,10 +903,11 @@ function PolicyDetailView() {
     for (const v of (liveSelectedArticle?.scheduledVersions ?? []) as { id: string }[]) m.set(v.id, 'scheduled');
     return m;
   }, [currentVersionId, liveSelectedArticle]);
-  // 이 조문의 가장 늦은 시행 예정일 — 그보다 이른 날로는 승인할 수 없다(서버도 409, T-132 ①)
+  // 이 조문의 가장 늦은 시행 예정일 — 그보다 이른 날로는 승인할 수 없다(서버도 409, T-132 ①). 승인 창은 연 때의 값을 대상에 싣는다
   const approveMinDate: string | null = selectedDraftBase.kind === 'scheduled' ? selectedDraftBase.effectiveDate : null;
   // 비워 두면 오늘로 승인된다
-  const approveTooEarly = !!approveMinDate && (approveEffectiveDate || serviceToday()) < approveMinDate;
+  const approveDlgMin = approveDlg.target?.minDate ?? null;
+  const approveTooEarly = !!approveDlgMin && (approveEffectiveDate || serviceToday()) < approveDlgMin;
   // 미래 시행 구조 변경(재파싱 묶음, T-110 ②)으로 오늘 자리와 지금 행이 다른 조문·장이 있다(T-127). 목차·본문은 오늘 자리로
   // 보이고, 구조 편집은 지금 행 — 그날부터의 자리 — 을 고친다(T-132 ⑦). 자리가 바뀌는 중인 조에 조문을 넣거나 옮겨 넣는 것은
   // 서버가 막는다(`assertNotIntoMovingJo`). 화면은 미리 알리고, 편집 칸은 지금 행 값으로 채운다
@@ -1300,6 +1310,8 @@ function PolicyDetailView() {
   const publishFormOf = useLatest(publishDraftsForm?.policyId);
   // 이 규정의 일괄 시행이 끝나기 전에는 창을 다시 열거나 또 시행하지 않는다(9차 — 다시 열면 관찰이 끊겨 실패가 사라졌고, 겹쳐 시행됐다)
   const publishBusy = isRunning(runs, 'publish', id);
+  // 같은 규정의 판 쓰기가 도는 동안은 열지 않는다(T-224 E11 — 창에서 시행을 눌러도 아무 말 없이 무시되지 않게 여는 단추부터 막는다)
+  const publishLockedByVersion = isRunning(runs, 'version', id);
   // 실패 문구 — 창 안과 창 밖 알림이 같은 글(서버가 준 까닭이 있으면 붙인다)
   const publishFailedText = (err: unknown) => `${t('policyDetail.publishDrafts.failed')} ${serverMessage(err) ?? t('policyDetail.publishDrafts.retry')}`;
   // 결과는 시행을 시작한 규정(v.policyId)에 묶는다 — 진행 중인 요청의 콜백은 나중 그리기의 옵션으로 불려(TanStack Query v5) 닫힌 id 가 옮긴 규정일 수 있다
@@ -1326,12 +1338,13 @@ function PolicyDetailView() {
   });
   // 시행일은 비워 둔다 — 오늘로 채워 두면 옮겨 적은 기존 규정이 그대로 오늘 시행으로 들어간다(PAT-02)
   const openPublishDrafts = () => {
-    if (publishBusy) return;
+    if (publishBusy || publishLockedByVersion) return;
     publishDraftsMutation.reset();
     setPublishDraftsForm({ policyId: id!, changeNote: '제정', effectiveDate: '' });
   };
   const submitPublishDrafts = () => {
-    if (!publishDraftsForm || !startRun('publish', publishDraftsForm.policyId)) return;
+    // 같은 규정의 판 쓰기가 도는 동안은 시작하지 않는다(T-224 E11 — 판 쓰기 쪽도 일괄 시행이 돌면 시작하지 않는다)
+    if (!publishDraftsForm || runningNow('version', publishDraftsForm.policyId) || !startRun('publish', publishDraftsForm.policyId)) return;
     publishDraftsMutation.mutate({ ...publishDraftsForm, label: policyLabel(policy) });
   };
 
@@ -1459,93 +1472,27 @@ function PolicyDetailView() {
     onError: (err) => toast(apiErrorMessage(err, '검토를 요청하지 못했습니다.'), 'error'),
   });
 
-  const approveMutation = useMutation({
-    mutationFn: ({
-      id: versionId,
-      changeNote,
-      effectiveDate,
-    }: {
-      id: string;
-      changeNote: string;
-      effectiveDate?: string;
-    }) => versionsApi.approve(versionId, { changeNote, effectiveDate }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      // 시행일이 바뀌었으니 시점 조회 후보 날짜도 다시 받는다
-      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
-      setApproveTargetId(null);
-      setApproveNote('');
-      setApproveEffectiveDate('');
-    },
+  // 판 전환 다섯(시행 승인·반려·폐지·폐지 예정 취소·시행 예정 철회, T-224) — 누를 때의 규정·조문·판을 잡아 끝까지 쓴다. 진행은 규정별
+  // 저장소('version' — 판 쓰기는 한 규정에서 한 번에 하나, 초안 일괄 시행과도 서로 막는다), 결과는 조문 배너 → 도구 줄 → 이름 붙은 알림
+  const versionActions = useVersionActions({
+    policyId: id,
+    label: policyLabel(policy),
+    qc,
+    shown: shownPolicy,
+    toolbar: toolStatus,
+    t,
+    start: startRun,
+    end: endRun,
   });
-
-  const rejectMutation = useMutation({
-    mutationFn: ({ id: versionId, reason }: { id: string; reason: string }) =>
-      versionsApi.reject(versionId, reason),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      setRejectTargetId(null);
-      setRejectReason('');
-      setVersionActionMsg('초안으로 되돌렸습니다. 반려 사유가 버전에 기록됩니다.');
-    },
-  });
-
-  const archiveMutation = useMutation({
-    mutationFn: (p: { versionId: string; repealedOn?: string }) => versionsApi.archive(p.versionId, p.repealedOn),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
-      setArchiveTarget(null);
-      const day = res?.repealedOn ? String(res.repealedOn).slice(0, 10) : '';
-      // 미래 폐지(T-132 ③) — 그날까지는 지금 본문이 시행 중이다
-      if (day && day > serviceToday()) {
-        setVersionActionMsg(`폐지 예정으로 정했습니다 — ${day}부터 시행에서 빠지고, 그때까지는 지금 본문이 시행 중입니다. 그 전에는 취소할 수 있습니다.`);
-        return;
-      }
-      const from = day ? `${day}부터 시행에서 빠집니다` : '';
-      setVersionActionMsg(
-        res?.remainingPublished === 0
-          ? `폐지했습니다${from ? ` — ${from}` : ''}. 이 조문에는 게시된 본문이 남아 있지 않습니다 — 전문 보기·인쇄에서 본문 없이 나옵니다.`
-          : `폐지했습니다${from ? ` — ${from}` : ''}.`,
-      );
-    },
-  });
-
-  // 폐지 예정 취소(T-132 ③)
-  const cancelRepealMutation = useMutation({
-    mutationFn: (versionId: string) => versionsApi.cancelRepeal(versionId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
-      setVersionActionMsg('폐지 예정을 취소했습니다 — 이 조문은 그대로 시행됩니다.');
-    },
-    onError: (err) => toast(apiErrorMessage(err, '폐지 예정을 취소하지 못했습니다.'), 'error'),
-  });
-
-  // 시행 예정 철회(T-132 ②) — 초안으로 돌아간다
-  const withdrawMutation = useMutation({
-    mutationFn: (p: { versionId: string; reason: string }) => versionsApi.withdraw(p.versionId, p.reason),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['versions', selectedArticle?.id] });
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      qc.invalidateQueries({ queryKey: ['policy', id, 'effective-dates'] });
-      // 개정 후보로 승인한 버전이면 후보가 작성 상태로 돌아간다(T-178) — 후보 화면·목록도 새로 받는다
-      if (res.candidateId) {
-        qc.invalidateQueries({ queryKey: ['amendment', res.candidateId] });
-        qc.invalidateQueries({ queryKey: ['amendments'] });
-      }
-      setWithdrawTarget(null);
-      setWithdrawReason('');
-      setVersionActionMsg(
-        `시행 예정(${res.withdrawnEffectiveDate})을 철회했습니다 — 그 버전은 초안으로 돌아갔고, 지금 본문이 그대로 시행됩니다.` +
-          (res.candidateId ? ` ${t('versionWithdraw.candidateReopened')}` : ''),
-      );
-    },
-  });
+  const versionLock = versionLocked(runs, id);
+  // 판 단추가 그리는 판의 대상 — 판 단추는 고른 조문의 패널 안에만 있다. 표기는 지금 받은 조문으로(고른 사본은 조 번호·제목을 고친 뒤
+  // 옛 표기일 수 있다 — B1 재검토 #6)
+  const versionTargetOf = (v: { id: string; versionNum: number }): VersionDialogTarget => {
+    const article = liveSelectedArticle ?? selectedArticle;
+    return { id: v.id, versionNum: v.versionNum, articleId: article?.id ?? '', articleLabel: article ? articleRowHeading(article) : '' };
+  };
+  const versionRun = runTarget('version', id);
+  const versionLockTitle = versionLock ? t(versionRun ? 'policyWrites.locked' : 'policyWrites.lockedPublish') : undefined;
 
   const createCommentMutation = useMutation({
     mutationFn: (content: string) => commentsApi.create(selectedArticle.id, { content }),
@@ -1598,8 +1545,6 @@ function PolicyDetailView() {
   const selectTocArticle = useCallback(
     (article: any) => {
       setSelectedArticle(article);
-      // 다른 조문으로 옮기면 앞 조문의 처리 알림은 지운다 — 남아 있으면 이 조문 얘기로 읽힌다
-      setVersionActionMsg('');
       window.history.replaceState(null, '', `${window.location.pathname}#article-${article.id}`);
       // 전문 보기에서는 본문의 그 조로 스크롤한다 — 열람자는 분절 보기가 없어 목차가 본문을 움직이는 유일한 길이다(T-215)
       if (articleViewMode === 'full') jumpInFullView(article);
@@ -2916,7 +2861,8 @@ function PolicyDetailView() {
                 <button
                   type="button"
                   onClick={openPublishDrafts}
-                  disabled={publishBusy}
+                  disabled={publishBusy || publishLockedByVersion}
+                  title={publishLockedByVersion ? t('policyWrites.lockedVersion') : undefined}
                   className="shrink-0 rounded bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700 disabled:opacity-60"
                 >
                   {publishBusy ? t('policyDetail.publishDrafts.busy') : t('policyDetail.publishDrafts.open')}
@@ -3225,22 +3171,27 @@ function PolicyDetailView() {
                           <span className="shrink-0 inline-flex items-center gap-3">
                             <button
                               type="button"
+                              disabled={versionLock}
+                              title={versionLockTitle}
                               onClick={() => {
-                                setApproveTargetId(v.id); approveMutation.reset();
+                                approveDlg.open({ ...versionTargetOf(v), minDate: approveMinDate });
                                 setApproveNote('');
+                                setApproveEffectiveDate('');
                               }}
-                              className="text-[11px] text-green-800 font-medium hover:underline inline-flex items-center gap-1"
+                              className="text-[11px] text-green-800 font-medium hover:underline inline-flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                             >
                               <CheckCircle size={12} aria-hidden />
                               시행 승인
                             </button>
                             <button
                               type="button"
+                              disabled={versionLock}
+                              title={versionLockTitle}
                               onClick={() => {
-                                setRejectTargetId(v.id);
+                                rejectDlg.open(versionTargetOf(v));
                                 setRejectReason('');
                               }}
-                              className="text-[11px] text-red-700 font-medium hover:underline inline-flex items-center gap-1"
+                              className="text-[11px] text-red-700 font-medium hover:underline inline-flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                             >
                               <Undo2 size={12} aria-hidden />
                               반려
@@ -3256,14 +3207,18 @@ function PolicyDetailView() {
                   </p>
                 </div>
               )}
-              {articleViewMode === 'segment' && selectedArticle && versionActionMsg && (
-                <div className="px-4 py-2 border-b border-gray-200 bg-navy-50 flex items-start gap-2" role="status">
-                  <p className="text-xs text-navy-900 flex-1">{versionActionMsg}</p>
+              {articleViewMode === 'segment' && selectedArticle && banner.message && (
+                <div
+                  className={clsx('px-4 py-2 border-b flex items-start gap-2', banner.kind === 'error' ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-navy-50')}
+                  role="status"
+                  data-kind={banner.kind}
+                >
+                  <p className={clsx('text-xs flex-1', banner.kind === 'error' ? 'text-red-800' : 'text-navy-900')}>{banner.message}</p>
                   <button
                     type="button"
-                    onClick={() => setVersionActionMsg('')}
+                    onClick={banner.close}
                     className="text-navy-500 hover:text-navy-800 shrink-0"
-                    aria-label="알림 닫기"
+                    aria-label={t('policyWrites.bannerClose')}
                   >
                     <X size={13} />
                   </button>
@@ -3303,21 +3258,26 @@ function PolicyDetailView() {
                             <>
                               <button
                                 type="button"
+                                disabled={versionLock}
+                                title={versionLockTitle}
                                 onClick={() => {
-                                  setApproveTargetId(version.id); approveMutation.reset();
+                                  approveDlg.open({ ...versionTargetOf(version), minDate: approveMinDate });
                                   setApproveNote('');
+                                  setApproveEffectiveDate('');
                                 }}
-                                className="text-xs text-green-700 hover:underline flex items-center gap-1"
+                                className="text-xs text-green-700 hover:underline flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                               >
                                 <CheckCircle size={12} /> 시행 승인
                               </button>
                               <button
                                 type="button"
+                                disabled={versionLock}
+                                title={versionLockTitle}
                                 onClick={() => {
-                                  setRejectTargetId(version.id);
+                                  rejectDlg.open(versionTargetOf(version));
                                   setRejectReason('');
                                 }}
-                                className="text-xs text-red-700 hover:underline flex items-center gap-1"
+                                className="text-xs text-red-700 hover:underline flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                               >
                                 <Undo2 size={12} /> 반려
                               </button>
@@ -3340,12 +3300,13 @@ function PolicyDetailView() {
                             liveSelectedArticle?.scheduledVersions?.at(-1)?.id === version.id && (
                             <button
                               type="button"
+                              disabled={versionLock}
+                              title={versionLockTitle}
                               onClick={() => {
-                                withdrawMutation.reset();
                                 setWithdrawReason('');
-                                setWithdrawTarget(version);
+                                withdrawDlg.open({ ...versionTargetOf(version), effectiveDate: String(version.effectiveDate ?? '').slice(0, 10) });
                               }}
-                              className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1"
+                              className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                             >
                               <Undo2 size={12} /> 시행 예정 철회
                             </button>
@@ -3362,15 +3323,17 @@ function PolicyDetailView() {
                             user?.role === 'admin' && (
                             <button
                               type="button"
-                              disabled={cancelRepealMutation.isPending}
+                              disabled={versionLock}
+                              title={versionLockTitle}
                               onClick={() => {
-                                if (window.confirm(`${String(version.repealedOn).slice(0, 10)} 폐지 예정을 취소할까요? 이 조문은 그대로 시행됩니다.`)) {
-                                  cancelRepealMutation.mutate(version.id);
+                                if (window.confirm(t('policyWrites.version.cancelRepealConfirm', { date: String(version.repealedOn).slice(0, 10) }))) {
+                                  const target = versionTargetOf(version);
+                                  void versionActions.cancelRepeal({ versionId: target.id, versionNum: target.versionNum, articleId: target.articleId, articleLabel: target.articleLabel });
                                 }
                               }}
-                              className="text-xs text-gray-500 hover:text-navy-700 hover:underline flex items-center gap-1"
+                              className="text-xs text-gray-500 hover:text-navy-700 hover:underline flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                             >
-                              <Undo2 size={12} /> 폐지 예정 취소
+                              <Undo2 size={12} /> {versionRun === `cancelRepeal:${version.id}` ? t('versionDialog.busy') : t('versionDialog.cancelRepeal')}
                             </button>
                           )}
                           {/* 폐지는 오늘 시행 중인 게시본만 — 시행 예정 개정이 있는 동안은 지금 본문이 archived 라 서버가 받지 않는다 */}
@@ -3379,12 +3342,13 @@ function PolicyDetailView() {
                             user?.role === 'admin' && (
                             <button
                               type="button"
+                              disabled={versionLock}
+                              title={versionLockTitle}
                               onClick={() => {
-                                archiveMutation.reset();
                                 setArchiveDate('');
-                                setArchiveTarget(version);
+                                archiveDlg.open(versionTargetOf(version));
                               }}
-                              className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1"
+                              className="text-xs text-gray-500 hover:text-red-700 hover:underline flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
                             >
                               <Archive size={12} /> 폐지
                             </button>
@@ -4986,89 +4950,37 @@ function PolicyDetailView() {
         </div>
       )}
 
-      {approveTargetId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
-            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">시행 승인</div>
-            <div className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">개정·시행 사유</label>
-                <textarea
-                  className="input resize-none w-full"
-                  rows={4}
-                  placeholder="승인 시 기록될 사유를 입력하세요."
-                  value={approveNote}
-                  onChange={(e) => setApproveNote(e.target.value)}
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="approve-effective-date">
-                  시행일
-                </label>
-                <input
-                  id="approve-effective-date"
-                  type="date"
-                  className="input w-full"
-                  min={approveMinDate ?? undefined}
-                  value={approveEffectiveDate}
-                  onChange={(e) => setApproveEffectiveDate(e.target.value)}
-                />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  비워두면 오늘로 기록됩니다. 이 날짜가 <strong>시점 조회</strong>의 기준이 됩니다.
-                </p>
-                {approveEffectiveDate && approveEffectiveDate > serviceToday() && (
-                  <p className="text-[11px] text-amber-800 mt-1">
-                    그날까지는 지금 본문이 현행으로 보이고, 이 버전은 「시행 예정」으로 표시됩니다.
-                  </p>
-                )}
-                {approveMinDate && (
-                  <p
-                    className={clsx('text-[11px] mt-1', approveTooEarly ? 'text-red-700' : 'text-gray-500')}
-                    data-testid="approve-min-date"
-                  >
-                    이 조문에는 {approveMinDate}에 시행될 버전이 있어 그보다 이른 날로는 승인할 수 없습니다
-                    {approveTooEarly ? ' — 시행일을 그날이나 그 뒤로 정하세요.' : '.'}
-                  </p>
-                )}
-              </div>
-              {approveMutation.isError && (
-                <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
-                  {apiErrorMessage(approveMutation.error, '승인하지 못했습니다.')}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const note = approveNote.trim();
-                    if (!note) return;
-                    approveMutation.mutate({
-                      id: approveTargetId,
-                      changeNote: note,
-                      effectiveDate: approveEffectiveDate || undefined,
-                    });
-                  }}
-                  disabled={!approveNote.trim() || approveMutation.isPending || approveTooEarly}
-                  className="btn-primary"
-                >
-                  승인
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setApproveTargetId(null);
-                    setApproveNote('');
-                    approveMutation.reset();
-                  }}
-                  className="btn-secondary"
-                >
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {approveDlg.target && (
+        <ApproveDialog
+          note={approveNote}
+          onNote={setApproveNote}
+          date={approveEffectiveDate}
+          onDate={setApproveEffectiveDate}
+          minDate={approveDlgMin}
+          tooEarly={approveTooEarly}
+          today={serviceToday()}
+          busy={versionRun === `approve:${approveDlg.target.id}`}
+          locked={versionLock}
+          error={approveDlg.error}
+          onConfirm={() => {
+            const note = approveNote.trim();
+            if (!note || !approveDlg.target) return;
+            void versionActions.approve({
+              versionId: approveDlg.target.id,
+              versionNum: approveDlg.target.versionNum,
+              articleId: approveDlg.target.articleId,
+              articleLabel: approveDlg.target.articleLabel,
+              token: approveDlg.token,
+              changeNote: note,
+              effectiveDate: approveEffectiveDate || undefined,
+            });
+          }}
+          onCancel={() => {
+            approveDlg.close();
+            setApproveNote('');
+            setApproveEffectiveDate('');
+          }}
+        />
       )}
 
       {relatedDetail && (
@@ -5157,63 +5069,23 @@ function PolicyDetailView() {
         />
       )}
 
-      {rejectTargetId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
-            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">검토 반려</div>
-            <div className="p-5 space-y-4">
-              <p className="text-xs text-gray-600">
-                이 버전을 <strong>초안으로 되돌립니다.</strong> 내용은 지워지지 않고, 편집자가 고쳐서 다시 올릴 수 있습니다.
-              </p>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="reject-reason">
-                  반려 사유
-                </label>
-                <textarea
-                  id="reject-reason"
-                  className="input resize-none w-full"
-                  rows={4}
-                  placeholder="무엇을 고쳐야 하는지 적어 주세요. 편집자에게 그대로 보입니다."
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  autoFocus
-                />
-                <p className="text-[11px] text-gray-500 mt-1">
-                  사유는 되돌린 초안에 함께 표시됩니다. 감사 로그는 관리자만 볼 수 있어서 거기에만 적으면 편집자에게 닿지 않습니다.
-                </p>
-              </div>
-              {rejectMutation.isError && (
-                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
-                  {(rejectMutation.error as any)?.response?.data?.message || '반려하지 못했습니다.'}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const reason = rejectReason.trim();
-                    if (!reason) return;
-                    rejectMutation.mutate({ id: rejectTargetId, reason });
-                  }}
-                  disabled={!rejectReason.trim() || rejectMutation.isPending}
-                  className="btn-primary"
-                >
-                  {rejectMutation.isPending ? '처리 중…' : '반려'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRejectTargetId(null);
-                    setRejectReason('');
-                  }}
-                  className="btn-secondary"
-                >
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {rejectDlg.target && (
+        <RejectDialog
+          reason={rejectReason}
+          onReason={setRejectReason}
+          busy={versionRun === `reject:${rejectDlg.target.id}`}
+          locked={versionLock}
+          error={rejectDlg.error}
+          onConfirm={() => {
+            const reason = rejectReason.trim();
+            if (!reason || !rejectDlg.target) return;
+            void versionActions.reject({ ...versionTargetArgs(rejectDlg.target), token: rejectDlg.token, reason });
+          }}
+          onCancel={() => {
+            rejectDlg.close();
+            setRejectReason('');
+          }}
+        />
       )}
 
       {bindingTarget && (
@@ -5226,123 +5098,39 @@ function PolicyDetailView() {
         />
       )}
 
-      {withdrawTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
-            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">시행 예정 철회</div>
-            <div className="p-5 space-y-4">
-              <p className="text-sm text-gray-700">
-                <span className="font-mono text-xs bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">v{withdrawTarget.versionNum}</span>{' '}
-                ({String(withdrawTarget.effectiveDate ?? '').slice(0, 10)} 시행 예정)을 철회할까요?
-              </p>
-              <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
-                <p>이 버전은 <strong>초안으로 돌아가고</strong> 지금 본문이 그대로 시행됩니다. 초안을 고쳐 다시 검토·승인할 수 있습니다.</p>
-                <p>{t('versionWithdraw.dialogNotify')}</p>
-              </div>
-              <label className="block">
-                <span className="text-xs font-medium text-gray-600">철회 사유</span>
-                <textarea
-                  className="input resize-none w-full mt-1"
-                  rows={3}
-                  value={withdrawReason}
-                  onChange={(e) => setWithdrawReason(e.target.value)}
-                  placeholder="예: 시행일 재검토 — 노사 협의 뒤 다시 정함"
-                  autoFocus
-                />
-              </label>
-              {withdrawMutation.isError && (
-                <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
-                  {apiErrorMessage(withdrawMutation.error, '철회하지 못했습니다.')}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={!withdrawReason.trim() || withdrawMutation.isPending}
-                  onClick={() => withdrawMutation.mutate({ versionId: withdrawTarget.id, reason: withdrawReason.trim() })}
-                >
-                  {withdrawMutation.isPending ? '처리 중…' : '철회'}
-                </button>
-                <button type="button" className="btn-secondary" onClick={() => setWithdrawTarget(null)}>
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {withdrawDlg.target && (
+        <WithdrawDialog
+          versionNum={withdrawDlg.target.versionNum}
+          effectiveDate={withdrawDlg.target.effectiveDate}
+          reason={withdrawReason}
+          onReason={setWithdrawReason}
+          busy={versionRun === `withdraw:${withdrawDlg.target.id}`}
+          locked={versionLock}
+          error={withdrawDlg.error}
+          onConfirm={() => {
+            const reason = withdrawReason.trim();
+            if (!reason || !withdrawDlg.target) return;
+            void versionActions.withdraw({ ...versionTargetArgs(withdrawDlg.target), token: withdrawDlg.token, reason });
+          }}
+          onCancel={withdrawDlg.close}
+        />
       )}
 
-      {archiveTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md">
-            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">게시본 폐지</div>
-            <div className="p-5 space-y-4">
-              <p className="text-sm text-gray-700">
-                <span className="font-mono text-xs bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">
-                  v{archiveTarget.versionNum}
-                </span>{' '}
-                을(를) 폐지할까요?
-              </p>
-              {/* 폐지 시행일 — 비우면 오늘(한국 날짜), 미래 날짜면 그날부터 빠지고 그때까지는 시행 중(T-132 ③). 소급은 없다(T-126) */}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5" htmlFor="archive-date">
-                  폐지 시행일
-                </label>
-                <input
-                  id="archive-date"
-                  type="date"
-                  className="input w-full"
-                  min={serviceToday()}
-                  value={archiveDate}
-                  onChange={(e) => setArchiveDate(e.target.value)}
-                />
-                <p className="text-[11px] text-gray-500 mt-1">비워두면 오늘({serviceToday()})부터 빠집니다. 지난 날짜로는 폐지할 수 없습니다.</p>
-              </div>
-              {archiveDate && archiveDate > serviceToday() ? (
-                <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1" data-testid="archive-future-note">
-                  <p>
-                    <strong>{archiveDate}부터 이 조문은 시행에서 빠집니다.</strong> 그때까지는 지금 본문이 그대로 시행되고, 화면에
-                    「폐지 예정」으로 보입니다.
-                  </p>
-                  <p>그날 전에는 「폐지 예정 취소」로 되돌릴 수 있습니다. 그 사이 다른 시행일로 개정을 승인하려면 폐지 예정을 먼저 취소하세요.</p>
-                </div>
-              ) : (
-                <div className="bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs text-amber-900 space-y-1">
-                  <p>
-                    <strong>오늘({serviceToday()})부터 이 조문은 시행에서 빠집니다.</strong> 그날부터의 시점 조회·신구조문대비표·법령
-                    영향 분석에 나오지 않고, 그 전 날짜에는 지금 본문이 그대로 나옵니다.
-                  </p>
-                  <p>
-                    이 버전은 게시 상태에서 내려가고 내용과 이력은 남습니다. 폐지는 되돌릴 수 없습니다 — 다시 시행하려면 새
-                    버전을 올려 오늘이나 그 뒤 시행일로 승인하세요.
-                  </p>
-                  <p>
-                    이 조문의 <strong>마지막 게시본이면 전문 보기·인쇄에 본문 없이 나옵니다.</strong>
-                  </p>
-                </div>
-              )}
-              {archiveMutation.isError && (
-                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
-                  {(archiveMutation.error as any)?.response?.data?.message || '폐지하지 못했습니다.'}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => archiveMutation.mutate({ versionId: archiveTarget.id, repealedOn: archiveDate || undefined })}
-                  disabled={archiveMutation.isPending}
-                  className="btn-primary"
-                >
-                  {archiveMutation.isPending ? '처리 중…' : archiveDate && archiveDate > serviceToday() ? '폐지 예정으로 정하기' : '폐지'}
-                </button>
-                <button type="button" onClick={() => setArchiveTarget(null)} className="btn-secondary">
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {archiveDlg.target && (
+        <ArchiveDialog
+          versionNum={archiveDlg.target.versionNum}
+          date={archiveDate}
+          onDate={setArchiveDate}
+          today={serviceToday()}
+          busy={versionRun === `archive:${archiveDlg.target.id}`}
+          locked={versionLock}
+          error={archiveDlg.error}
+          onConfirm={() => {
+            if (!archiveDlg.target) return;
+            void versionActions.archive({ ...versionTargetArgs(archiveDlg.target), token: archiveDlg.token, repealedOn: archiveDate || undefined });
+          }}
+          onCancel={archiveDlg.close}
+        />
       )}
 
       {reorderOpen && (

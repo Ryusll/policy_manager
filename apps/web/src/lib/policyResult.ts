@@ -10,7 +10,8 @@ import { stillStale, type ResultSource, type ToolStatus } from './toolStatus';
  * 화면을 새로 그리므로(11차 — PolicyDetailPage 가 규정 id 로 key), 진행 중이던 앞 규정의 작업은 내려간 화면에서 끝난다 — 그 결과를 버리지
  * 않고, 같은 규정을 다시 그린 화면이 떠 있으면 그 화면(열린 창·도구 줄)에, 아니면 규정 이름을 붙여 화면 전체 알림으로 알린다. 진행
  * 표시는 화면 밖 저장소(stores/policyRunsStore)에 둬서 새로 그린 화면도 이어 본다(12차) — 같은 규정의 같은 작업은 끝날 때까지 다시
- * 시작하지 않는다. 본문 안의 다른 쓰기(승인·반려·폐지·철회·부칙·조문 추가·댓글)는 여기에 들지 않는다(T-224).
+ * 시작하지 않는다. 판 전환(승인·반려·폐지·폐지 예정 취소·철회)은 'version' 으로 든다(T-224 단계 B — lib/policyWrite). 부칙·조문 추가·
+ * 댓글·검토 요청은 아직 들지 않는다(T-224 단계 B·C).
  */
 
 /** 지금 보는 규정(경로의 id)과 화면이 떠 있는지 */
@@ -192,14 +193,20 @@ export function pendingJumpAction(
 }
 
 export type ExportKind = 'pdf' | 'hwpx';
-/** 규정별로 진행을 두는 작업 — 내보내기 둘, 초안 일괄 시행, 시행 상태 전환, 규정 정보(날짜·알림) 저장, 적용 양식 저장, 첨부 올리기·지우기, 조 순서 저장 */
-export type RunKind = ExportKind | 'publish' | 'toggle' | 'info' | 'template' | 'upload' | 'deleteFile' | 'reorder';
+/**
+ * 규정별로 진행을 두는 작업 — 내보내기 둘, 초안 일괄 시행, 시행 상태 전환, 규정 정보(날짜·알림) 저장, 적용 양식 저장, 첨부 올리기·지우기,
+ * 조 순서 저장, 판 전환(version — 한 규정에서 판 쓰기는 한 번에 하나, 초안 일괄 시행과 서로 막는다, T-224)
+ */
+export type RunKind = ExportKind | 'publish' | 'toggle' | 'info' | 'template' | 'upload' | 'deleteFile' | 'reorder' | 'version';
 
 /** 진행 이름 — 규정마다 따로 둔다(다른 규정에서 시작한 작업이 이 규정의 버튼·항목을 막지 않는다) */
 export const runKey = (kind: RunKind, policyId: string) => `${kind}:${policyId}`;
 
 /** 그 규정의 그 작업이 진행 중인가 */
 export const isRunning = (running: readonly string[], kind: RunKind, policyId: string | undefined) => policyId !== undefined && running.includes(runKey(kind, policyId));
+
+/** 지금(그린 값이 아니라 저장소의 지금 값으로) 그 규정의 그 작업이 진행 중인가 — 서로 막는 작업의 시작이 본다(한 번 그리는 사이에 둘 다 눌려도) */
+export const runningNow = (kind: RunKind, policyId: string) => usePolicyRunsStore.getState().running.includes(runKey(kind, policyId));
 
 /** 지금 보는 규정의 내보내기 진행 표시 */
 export function exportBusyFor(running: readonly string[], policyId: string | undefined): Record<ExportKind, boolean> {

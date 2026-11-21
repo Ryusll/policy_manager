@@ -3,6 +3,8 @@ import { dashboardMessages } from './messages.dashboard';
 import { policyDetailMessages } from './messages.policyDetail';
 import { policyDetailDialogMessages } from './messages.policyDetailDialogs';
 import { compareTableMessages } from './messages.compareTable';
+import { policyWritesMessages } from './messages.policyWrites';
+import { versionDialogMessages } from './messages.versionDialogs';
 
 type Msg = Record<string, string | string[] | Record<string, unknown>>;
 
@@ -12,6 +14,8 @@ export const messages: Record<Locale, Msg> = {
     ...policyDetailMessages.ko, // 규정 상세 머리·도구(T-215)
     ...policyDetailDialogMessages.ko, // 규정 상세 확인 창·안내 띠(T-215)
     ...compareTableMessages.ko, // 신구조문대비표의 표·요약(T-229)
+    ...policyWritesMessages.ko, // 규정 상세 본문 안 쓰기의 결과(T-224)
+    ...versionDialogMessages.ko, // 판 확인 창(T-224)
     'layout.appTitle': '베다(Veda)',
     'layout.productTitle': '규정관리 시스템',
     'layout.subtitle': '정책·규정 통합 플랫폼',
@@ -765,6 +769,8 @@ export const messages: Record<Locale, Msg> = {
     ...policyDetailMessages.en,
     ...policyDetailDialogMessages.en,
     ...compareTableMessages.en,
+    ...policyWritesMessages.en,
+    ...versionDialogMessages.en,
     'layout.appTitle': 'Veda',
     'layout.productTitle': 'Policy Management System',
     'layout.subtitle': 'Policy management platform',

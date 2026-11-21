@@ -138,10 +138,11 @@ describe('페이지 연결 (T-215 9차)', () => {
   const page = src('apps/web/src/pages/PolicyDetailPage.tsx');
   it('초안 일괄 시행 — 진행 중에는 다시 열거나 또 시행하지 않고, 끝나면 풀고, 실패는 창 밖이면 알린다', () => {
     expect(page).toContain("const publishBusy = isRunning(runs, 'publish', id);");
-    expect(page).toMatch(/const openPublishDrafts = \(\) => \{\s*if \(publishBusy\) return;\s*publishDraftsMutation\.reset\(\);/);
-    expect(page).toContain("if (!publishDraftsForm || !startRun('publish', publishDraftsForm.policyId)) return;");
+    // 같은 규정의 판 쓰기가 도는 동안도 열거나 시작하지 않는다(T-224 E11 — 판 쓰기 쪽도 일괄 시행이 돌면 시작하지 않는다)
+    expect(page).toMatch(/const openPublishDrafts = \(\) => \{\s*if \(publishBusy \|\| publishLockedByVersion\) return;\s*publishDraftsMutation\.reset\(\);/);
+    expect(page).toContain("if (!publishDraftsForm || runningNow('version', publishDraftsForm.policyId) || !startRun('publish', publishDraftsForm.policyId)) return;");
     expect(page).toContain("onSettled: (_res, _err, v) => endRun('publish', v.policyId),");
-    expect(page).toMatch(/onClick=\{openPublishDrafts\}\s*disabled=\{publishBusy\}/);
+    expect(page).toMatch(/onClick=\{openPublishDrafts\}\s*disabled=\{publishBusy \|\| publishLockedByVersion\}\s*title=\{publishLockedByVersion \? t\('policyWrites\.lockedVersion'\) : undefined\}/);
     expect(page).toContain('error={publishDraftsMutation.isError ? publishFailedText(publishDraftsMutation.error) : null}');
     expect(page).toContain('busy={publishBusy}');
   });
