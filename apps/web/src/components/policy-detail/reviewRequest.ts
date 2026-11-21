@@ -1,6 +1,6 @@
 import { versionsApi } from '../../api/policies';
 import { serverMessage } from '../../lib/apiError';
-import { koreanReason, refusedWrite, type FailurePlan } from '../../lib/policyWrite';
+import { goneWrite, koreanReason, refusedWrite, type FailurePlan } from '../../lib/policyWrite';
 
 /*
  * 편집기의 검토 요청(T-224 단계 B2, 설계 E5) — 초안을 고치거나 만든 뒤 제출하는 두 단계라, 실패한 단계에 따라 편집기를 어떻게 둘지 다르다.
@@ -56,6 +56,8 @@ export async function reviewFailure(err: unknown, r: ReviewTarget, holder: { ver
   const read = () => (versionsApi.list(r.articleId) as Promise<ReviewVersion[]>).catch(() => null);
   if (err.step === 'lookup') return { dialog: 'error', message: t('policyWrites.version.lookupFailed') };
   if (err.step === 'draft') {
+    // 고치던 초안이 이미 없으면(404 — 다른 사람·탭이 지움) 다시 눌러도 같다 — 편집기는 둬서 쓰던 글을 복사하고 다시 열게(단계 C 검토의 goneWrite 와 같은 규칙)
+    if (r.draftId && goneWrite(err.cause)) return { dialog: 'error', message: koreanReason(err.cause) ?? t('policyWrites.version.draftGone') };
     if (refusedWrite(err.cause)) return { dialog: 'error', message: koreanReason(err.cause) ?? t('policyWrites.version.draftFailed') };
     if (!r.draftId) {
       const created = (await read())?.find((x) => sameDraftText(x, r));

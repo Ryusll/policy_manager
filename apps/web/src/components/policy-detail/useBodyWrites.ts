@@ -5,6 +5,7 @@ import type { RunKind, ShownPolicy, ToolStatus } from '../../lib/policyResult';
 import { goneWrite, koreanReason, runWrite, type WriteSpec } from '../../lib/policyWrite';
 import { useLatest } from '../../lib/useLatest';
 import { sameDialog } from '../../lib/writeDialogs';
+import { toast } from '../../stores/toastStore';
 import { appendixPayload, type AppendixDraft } from './appendixDraft';
 import { ArticleStepError, addArticleFailure, appearedRow, articleIdsOf, positionKey } from './articleAddPlan';
 
@@ -40,9 +41,20 @@ export function useBodyWrites(o: {
       const { policyId, label, t, qc, shown, toolbar, start, end } = latest.current;
       if (!policyId) return Promise.resolve(false);
       const spec = build(t, policyId, qc);
-      // 다시 보내면 창 안의 앞 거절 문구를 걷는다(판 쓰기와 같은 규칙 — B1 재검토 #5)
-      if (spec.dialog) sameDialog(policyId, spec.dialog.kind, spec.dialog.token)?.setError(null);
-      return runWrite({ qc, shown, toolbar, t, start, end }, { policyId, label, ...spec });
+      const dialog = () => (spec.dialog ? sameDialog(policyId, spec.dialog.kind, spec.dialog.token) : undefined);
+      // 시작하면 창 안의 앞 거절 문구를 걷고(판 쓰기와 같은 규칙 — B1 재검토 #5), 시작하지 못하면(같은 종류가 도는 중 — 단추가 막혀 있어 겹친
+      // 누름일 때) 창 안이나 알림으로 까닭을 보인다 — 아무 말 없이 끝나지 않게(T-224 마지막 검토)
+      const begin = (kind: RunKind, pid: string, target?: string) => {
+        if (start(kind, pid, target)) {
+          dialog()?.setError(null);
+          return true;
+        }
+        const open = dialog();
+        if (open) open.setError(t('bodyWrites.running'));
+        else toast(t('bodyWrites.running'), 'info');
+        return false;
+      };
+      return runWrite({ qc, shown, toolbar, t, start: begin, end }, { policyId, label, ...spec });
     };
     const appendicesOf = (qc: QueryClient, policyId: string) => qc.getQueryData<{ appendices?: Appendix[] }>(['policy', policyId])?.appendices ?? [];
     return {

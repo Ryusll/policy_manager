@@ -42,6 +42,21 @@ describe('초안 저장 단계의 실패 (T-224 단계 B2, 설계 E5)', () => {
     e.off();
   });
 
+  it('고치던 초안이 이미 없으면(404) 입력이 아니라 그 까닭을 편집기 안에 — 다시 눌러도 같으니 닫고 다시 열게(T-224 마지막 검토)', async () => {
+    const s = setup();
+    const e = editor();
+    api.update.mockRejectedValue({ response: { status: 404, data: { message: 'Version not found' } } });
+    await s.actions().requestReview(review({ token: e.token, draftId: 'D5', draftNum: 5 }));
+    expect(e.controls.setError).toHaveBeenLastCalledWith(ko['policyWrites.version.draftGone']);
+    expect(e.controls.close).not.toHaveBeenCalled();
+    expect(api.submit).not.toHaveBeenCalled();
+    // 새 초안 만들기의 404(조문이 없어짐 등)는 이 갈래가 아니다
+    api.create.mockRejectedValue({ response: { status: 404, data: { message: 'Article not found' } } });
+    await s.actions().requestReview(review({ token: e.token }));
+    expect(e.controls.setError).toHaveBeenLastCalledWith(ko['policyWrites.version.draftFailed']);
+    e.off();
+  });
+
   it('새 초안이 응답 없이 끝났는데 다시 읽은 목록에 보낸 글의 초안이 생겼으면 — 그 초안을 이어받고 저장됐다고', async () => {
     const s = setup();
     const e = editor();

@@ -19,7 +19,7 @@ vi.mock('../apps/web/src/api/policies', () => ({
   policiesApi: { get: api.get, createAppendix: api.createAppendix, updateAppendix: api.updateAppendix, deleteAppendix: api.deleteAppendix, createArticle: api.createArticle },
   commentsApi: { create: api.commentCreate, update: api.commentUpdate, list: api.commentList },
 }));
-const { A1, DRAFT, down, setup, statusOf, t } = await import('./bodyWritesHarness');
+const { A1, DRAFT, dialog, down, setup, statusOf, t } = await import('./bodyWritesHarness');
 const { usePolicyRunsStore } = await import('../apps/web/src/stores/policyRunsStore');
 const { runKey } = await import('../apps/web/src/lib/policyResult');
 const { registerBanner } = await import('../apps/web/src/lib/articleBanner');
@@ -57,11 +57,30 @@ describe('진행 중 대상과 막힘 (T-224 단계 C, 완료 정의 ①)', () =
       const first = write();
       expect(usePolicyRunsStore.getState().targets[runKey(kind as never, 'P1')], name).toBe(target);
       expect(await write(), name).toBe(false); // 옮겼다 돌아와 다시 눌러도 같다 — 진행은 화면 밖 저장소에 있다
+      expect(useToastStore.getState().items.at(-1)?.message, name).toBe(t('bodyWrites.running')); // 아무 말 없이 끝나지 않는다
       release({ id: 'N' });
       expect(await first, name).toBe(true);
       expect(fn, name).toHaveBeenCalledTimes(1);
       expect(usePolicyRunsStore.getState().running, name).toEqual([]);
     }
+  });
+});
+
+describe('시작하지 못한 쓰기 (T-224 마지막 검토)', () => {
+  it('창에서 보낸 쓰기가 시작하지 못하면 창 안에 까닭을 보이고 앞 문구는 걷지 않는다 — 시작하면 걷는다', async () => {
+    const s = setup();
+    const d = dialog('appendix');
+    const save = () => s.w().saveAppendix({ mode: 'create', draft: DRAFT, kindLabel: '별표', idsBefore: [], token: d.token });
+    let release!: (v: unknown) => void;
+    api.createAppendix.mockReturnValueOnce(new Promise((r) => (release = r)));
+    const first = save();
+    expect(d.controls.setError.mock.calls).toEqual([[null]]);
+    expect(await save()).toBe(false);
+    expect(d.controls.setError.mock.calls).toEqual([[null], [t('bodyWrites.running')]]);
+    expect(useToastStore.getState().items).toEqual([]);
+    release({ id: 'X9' });
+    await first;
+    d.off();
   });
 });
 
