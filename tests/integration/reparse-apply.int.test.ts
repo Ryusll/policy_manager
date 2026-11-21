@@ -596,8 +596,8 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
       review = (await api(`/reparse-reviews/${review.id}/apply`, { method: 'POST', token: editorToken })).body;
       review = (await api(`/reparse-reviews/${review.id}/submit`, { method: 'POST', token: editorToken })).body;
       expect((await api(`/reparse-reviews/${review.id}/approve`, { method: 'POST', token: t.token, json: { effectiveDate: kstDay(), changeNote: '개정' } })).status).toBe(201);
-      const { order, basedOn } = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body;
-      const res = await api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [...order].reverse(), basedOn } });
+      const order = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.order;
+      const res = await api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [...order].reverse() } });
       expect(res.status).toBe(400);
       expect(String(res.body.message)).toContain('지난 계층 기록');
     });
