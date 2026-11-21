@@ -78,8 +78,12 @@ export function useBodyWrites(o: {
           // 제목이 곧 '별표 1'·'부칙'이라 구분을 또 붙이지 않는다 — 제목이 비었을 때만 구분
           subject: (m) => t('bodyWrites.appendix.subject', { title: payload.title || v.kindLabel, message: m }),
           done: () => t(create ? 'bodyWrites.appendix.created' : 'bodyWrites.appendix.updated'),
-          // 이미 지워진 항목(404)이면 입력값이 아니라 그 까닭을 — 창은 둬서 쓰던 내용을 복사할 수 있게
-          refusedText: (err) => koreanReason(err) ?? t(goneWrite(err) ? 'bodyWrites.appendix.gone' : 'bodyWrites.appendix.failed'),
+          refusedText: (err) => koreanReason(err) ?? t('bodyWrites.appendix.failed'),
+          // 고치려던 항목이 이미 지워졌으면(404) 입력값이 아니라 그 까닭을 — 창은 둬서 쓰던 내용을 복사하게, 창이 닫혔으면 결과 자리에 창 밖 글
+          failed: (err) =>
+            !create && goneWrite(err) && !koreanReason(err)
+              ? { dialog: 'error', message: t('bodyWrites.appendix.gone'), reportMessage: t('bodyWrites.appendix.goneClosed') }
+              : undefined,
           // 응답 없음·5xx — 다시 받은 규정에 그 항목이 보낸 대로 있으면 반영됨(추가는 누르기 전에 없던 항목이어야)
           landed: (qc) => {
             const list = appendicesOf(qc, policyId);

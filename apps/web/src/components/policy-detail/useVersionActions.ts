@@ -7,6 +7,7 @@ import { reviewFailure, sameDraftText, StepError, type ReviewTarget, type Review
 import { sameDialog } from '../../lib/writeDialogs';
 import { serviceToday } from '../../lib/serviceDate';
 import { useLatest } from '../../lib/useLatest';
+import { toast } from '../../stores/toastStore';
 
 /*
  * 판 전환 다섯 — 시행 승인·반려·폐지·폐지 예정 취소·시행 예정 철회(T-224 단계 B, 설계 E1·E2·E4·E11·E13). 페이지의 useMutation 을 옮겼다:
@@ -82,11 +83,14 @@ export function useVersionActions(o: {
       const { articleId, articleLabel } = v;
       if (!policyId) return Promise.resolve(false);
       // 다시 보내면 창 안의 앞 거절 문구를 걷는다(useMutation 은 다시 보내면 isError 가 꺼졌다 — B1 재검토 #5). 시작하지 못하면(다른 판
-      // 쓰기·초안 일괄 시행이 도는 중) 창 안에 까닭을 보인다 — 아무 말 없이 무시되지 않게(B1 검토)
+      // 쓰기·초안 일괄 시행이 도는 중) 창 안에, 창 없는 쓰기(목록·카드의 검토 요청)면 알림으로 까닭을 보인다 — 아무 말 없이 무시되지 않게(B1
+      // 검토, T-224 마지막 재검토)
       const dialog = () => sameDialog(policyId, action, v.token);
       dialog()?.setError(null);
       const refuse = (key: string) => {
-        dialog()?.setError(t(key));
+        const open = dialog();
+        if (open) open.setError(t(key));
+        else toast(t(key), 'info');
         return false;
       };
       // 초안 일괄 시행이 도는 동안은 시작하지 않는다(E11 — 반대쪽은 초안 일괄 시행의 시작이 본다)

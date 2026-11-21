@@ -112,6 +112,7 @@ import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDial
 import { ApproveDialog, ArchiveDialog, RejectDialog, WithdrawDialog } from '../components/policy-detail/VersionDialogs';
 import { AppendixDialog } from '../components/policy-detail/AppendixDialog';
 import { LengthCap } from '../components/policy-detail/LengthCap';
+import { koreanReason } from '../lib/policyWrite';
 import { COMMENT_MAX, useBodyWrites } from '../components/policy-detail/useBodyWrites';
 import { useVersionActions, versionLocked, versionTargetArgs, type VersionDialogTarget } from '../components/policy-detail/useVersionActions';
 import { useArticleBanner } from '../lib/articleBanner';
@@ -1242,12 +1243,17 @@ function PolicyDetailView() {
         return;
       }
       if (!ch) {
-        ch = await policiesApi.createChapter(id, {
-          number: 1,
-          title: '',
-          suppressHeader: true,
-        });
-        await qc.invalidateQueries({ queryKey: ['policy', id] });
+        // 장이 하나도 없으면 숨은 장을 먼저 만든다 — 조문 추가와 같은 진행에 걸어 겹쳐 누르거나 옮겼다 돌아와 다시 눌러도 두 번 만들지 않고,
+        // 실패하면 알린다(T-224 마지막 재검토 — 전에는 처리되지 않은 거절로 아무 말이 없었다)
+        if (!startRun('addArticle', id)) return toast(t('bodyWrites.article.running'), 'info');
+        try {
+          ch = await policiesApi.createChapter(id, { number: 1, title: '', suppressHeader: true });
+          await qc.invalidateQueries({ queryKey: ['policy', id] });
+        } catch (err) {
+          return toast(koreanReason(err) ?? t('bodyWrites.article.chapterFailed'), 'error');
+        } finally {
+          endRun('addArticle', id);
+        }
       }
       // 조 번호는 법령·규정 관례대로 문서 전체에서 이어진다(장이 바뀌어도 1로 돌아가지 않음). 구조 변경 예정 동안은 오늘 자리·
       // 지금 행·시행 예정 신설 조문 번호를 모두 넘겨야 어느 날에도 겹치지 않는다(T-132 ⑦)
@@ -1274,7 +1280,7 @@ function PolicyDetailView() {
         relatedRuleNote: '',
       });
     },
-    [id, canEdit, policyChapters, scheduledArticles, qc, t],
+    [id, canEdit, policyChapters, scheduledArticles, qc, t, startRun, endRun],
   );
 
   // 항 추가 — 지금 행의 장·조로(T-132 ⑦). 자리가 바뀌는 중인 조는 그날 뒤에(서버도 막는다)

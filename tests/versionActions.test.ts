@@ -22,6 +22,7 @@ const { runKey } = await import('../apps/web/src/lib/policyResult');
 const { nextDialogToken, registerWriteDialog } = await import('../apps/web/src/lib/writeDialogs');
 const { serviceToday } = await import('../apps/web/src/lib/serviceDate');
 const { messages } = await import('../apps/web/src/i18n/messages');
+const { useToastStore } = await import('../apps/web/src/stores/toastStore');
 
 const ko = messages.ko as Record<string, string>;
 const t = (k: string, v?: Record<string, string | number>) => (ko[k] ?? k).replace(/\{(\w+)\}/g, (_, n) => String(v?.[n] ?? `{${n}}`));
@@ -62,6 +63,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   for (const f of Object.values(api)) f.mockReset();
   usePolicyRunsStore.getState().clear();
+  useToastStore.getState().clear();
 });
 
 describe('판 전환 — 보내는 값과 완료 문구 (T-224 단계 B — useVersionActions)', () => {
@@ -154,6 +156,7 @@ describe('판 전환 — 누를 때의 값·막힘·반영 판정 (T-224 단계 
     expect(await s.actions().approve({ versionId: 'V1', versionNum: 4, ...A1, token, changeNote: '사유' })).toBe(false);
     expect(controls.setError).toHaveBeenLastCalledWith(ko['policyWrites.locked']);
     expect(api.approve).not.toHaveBeenCalled();
+    expect(useToastStore.getState().items).toEqual([]); // 창이 열려 있으면 창 안에만
     off();
   });
 
@@ -162,10 +165,13 @@ describe('판 전환 — 누를 때의 값·막힘·반영 판정 (T-224 단계 
     usePolicyRunsStore.getState().start(runKey('publish', 'P1'));
     expect(await s.actions().approve({ versionId: 'V1', versionNum: 4, ...A1, changeNote: '사유' })).toBe(false);
     expect(api.approve).not.toHaveBeenCalled();
+    // 창 없는 쓰기(목록·카드)는 알림으로 까닭을 — 아무 말 없이 끝나지 않게(T-224 마지막 재검토)
+    expect(useToastStore.getState().items.map((x) => x.message)).toEqual([ko['policyWrites.lockedPublish']]);
     expect(versionLocked(usePolicyRunsStore.getState().running, 'P1')).toBe(true);
     usePolicyRunsStore.getState().end(runKey('publish', 'P1'));
     usePolicyRunsStore.getState().start(runKey('version', 'P1'), 'reject:V2');
     expect(await s.actions().approve({ versionId: 'V1', versionNum: 4, ...A1, changeNote: '사유' })).toBe(false);
+    expect(useToastStore.getState().items.at(-1)?.message).toBe(ko['policyWrites.locked']);
     expect(versionLocked(usePolicyRunsStore.getState().running, 'P1')).toBe(true);
     expect(versionLocked(usePolicyRunsStore.getState().running, 'P2')).toBe(false); // 다른 규정은 막지 않는다
   });

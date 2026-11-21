@@ -50,6 +50,9 @@ describe('초안 저장 단계의 실패 (T-224 단계 B2, 설계 E5)', () => {
     expect(e.controls.setError).toHaveBeenLastCalledWith(ko['policyWrites.version.draftGone']);
     expect(e.controls.close).not.toHaveBeenCalled();
     expect(api.submit).not.toHaveBeenCalled();
+    // 편집기가 닫혔으면(다른 규정으로 옮김) 결과 자리에는 창 밖에서 맞는 글 — '편집기를 닫고'라 하지 않는다
+    await s.actions().requestReview(review({ draftId: 'D5', draftNum: 5 }));
+    expect(s.last()).toBe(`제3조(수당) v5 — ${ko['policyWrites.version.draftGoneClosed']}`);
     // 새 초안 만들기의 404(조문이 없어짐 등)는 이 갈래가 아니다
     api.create.mockRejectedValue({ response: { status: 404, data: { message: 'Article not found' } } });
     await s.actions().requestReview(review({ token: e.token }));

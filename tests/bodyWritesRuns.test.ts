@@ -56,6 +56,7 @@ describe('진행 중 대상과 막힘 (T-224 단계 C, 완료 정의 ①)', () =
       fn.mockReturnValueOnce(new Promise((r) => (release = r)));
       const first = write();
       expect(usePolicyRunsStore.getState().targets[runKey(kind as never, 'P1')], name).toBe(target);
+      useToastStore.getState().clear();
       expect(await write(), name).toBe(false); // 옮겼다 돌아와 다시 눌러도 같다 — 진행은 화면 밖 저장소에 있다
       expect(useToastStore.getState().items.at(-1)?.message, name).toBe(t('bodyWrites.running')); // 아무 말 없이 끝나지 않는다
       release({ id: 'N' });

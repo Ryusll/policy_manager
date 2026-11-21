@@ -94,6 +94,16 @@ describe('부칙·별표·서식 — 응답 없음 뒤 반영 판정 (T-224 단�
     expect(d.controls.setError).toHaveBeenLastCalledWith(ko['bodyWrites.appendix.gone']);
     expect(d.controls.close).not.toHaveBeenCalled();
     d.off();
+    // 창이 닫혔으면(옮김) 결과 자리에는 창 밖에서 맞는 글, 서버가 한국어로 까닭을 실었으면 그 글
+    await s.w().saveAppendix({ mode: 'edit', appendixId: 'X1', draft: DRAFT, kindLabel: '별표', idsBefore: ['X1'], token: null });
+    expect(s.last()).toBe(`별표 1 — ${ko['bodyWrites.appendix.goneClosed']}`);
+    api.updateAppendix.mockRejectedValue(refused('이 항목은 이미 지워졌습니다.', 404));
+    await s.w().saveAppendix({ mode: 'edit', appendixId: 'X1', draft: DRAFT, kindLabel: '별표', idsBefore: ['X1'], token: null });
+    expect(s.last()).toBe('별표 1 — 이 항목은 이미 지워졌습니다.');
+    // 추가의 404 는 고치려던 항목이 아니라 규정이 없어진 드문 경우 — 이 갈래가 아니다(보통 거절 문구)
+    api.createAppendix.mockRejectedValue(refused('Policy not found', 404));
+    await s.w().saveAppendix({ mode: 'create', draft: { ...DRAFT, title: '별표 2' }, kindLabel: '별표', idsBefore: [], token: null });
+    expect(s.last()).toContain(`별표 2 — ${ko['bodyWrites.appendix.failed']}`);
   });
 
   it('삭제 — 거절은 서버의 한국어 문구, 응답 없음 뒤 그 항목이 없어졌으면 반영(고른 항목을 푼다), 남아 있으면 모른다', async () => {

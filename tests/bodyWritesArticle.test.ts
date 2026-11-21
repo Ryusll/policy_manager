@@ -108,6 +108,15 @@ describe('조문 추가 — 응답 없음 뒤 반영 판정 (T-224 단계 C, 설
     expect(d.controls.setError).toHaveBeenLastCalledWith(ko['bodyWrites.article.gone']);
     expect(d.controls.close).not.toHaveBeenCalled();
     d.off();
+    // 양식이 닫혔으면(옮김) 결과 자리에는 창 밖에서 맞는 글 — '양식을 닫고'라 하지 않는다
+    await s.w().addArticle({ chapterId: 'CH', payloads: [{ number: 4, title: '상여' }], articleLabel: '제4조', token: null });
+    expect(s.last()).toBe(`제4조 — ${ko['bodyWrites.article.goneClosed']}`);
+    // 서버가 한국어로 까닭을 실었으면 그 글
+    const d2 = dialog('addArticle');
+    api.createArticle.mockRejectedValue({ response: { status: 404, data: { message: '해당 장을 찾을 수 없습니다.' } } });
+    await s.w().addArticle({ chapterId: 'CH', payloads: [{ number: 4, title: '상여' }], articleLabel: '제4조', token: d2.token });
+    expect(d2.controls.setError).toHaveBeenLastCalledWith('해당 장을 찾을 수 없습니다.');
+    d2.off();
   });
 
   it('첫 요청이 응답 없이 끝났는데 규정을 다시 받지 못했으면 캐시에 무엇이 있든 반영을 보지 않고 확인 못 함, 서버 까닭이 있으면 함께', async () => {

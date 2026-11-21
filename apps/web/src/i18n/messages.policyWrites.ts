@@ -48,6 +48,7 @@ export const policyWritesMessages = {
     'policyWrites.version.draftSavedSubmitFailed': '초안은 저장했지만 검토를 요청하지 못했습니다 — {reason}',
     'policyWrites.version.submitRefused': '화면을 새로 고쳐 버전 상태를 확인한 뒤 다시 요청하세요.',
     'policyWrites.version.draftGone': '고치던 초안이 이미 없어졌습니다. 쓰던 글을 복사해 둔 뒤 편집기를 닫고 다시 여세요.',
+    'policyWrites.version.draftGoneClosed': '고치던 초안이 이미 없어져 검토를 요청하지 못했습니다. 화면을 새로 고쳐 확인하세요.',
   },
   en: {
     'policyWrites.subject': '{article} v{version} — {message}',
@@ -92,5 +93,6 @@ export const policyWritesMessages = {
     'policyWrites.version.draftSavedSubmitFailed': 'The draft was saved, but the review request failed — {reason}',
     'policyWrites.version.submitRefused': 'reload the page to check the version status, then request again.',
     'policyWrites.version.draftGone': 'The draft you were editing no longer exists. Copy your text, then close the editor and open it again.',
+    'policyWrites.version.draftGoneClosed': 'The draft you were editing no longer exists, so the review was not requested. Reload the page to check.',
   },
 };

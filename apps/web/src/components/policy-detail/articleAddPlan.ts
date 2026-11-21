@@ -72,7 +72,12 @@ export function addArticleFailure(
   if (!(err instanceof ArticleStepError)) return undefined;
   const partial: FailurePlan = { dialog: 'close', message: c.t('bodyWrites.article.partial'), applied: true };
   if (err.index > 0) return partial;
-  if (refusedWrite(err.cause)) return { dialog: 'error', message: koreanReason(err.cause) ?? c.t(goneWrite(err.cause) ? 'bodyWrites.article.gone' : 'bodyWrites.article.failed') };
+  if (refusedWrite(err.cause)) {
+    const why = koreanReason(err.cause);
+    // 장이 이미 지워졌으면(404) 양식 안에는 복사해 두라는 글, 양식이 닫혔으면 결과 자리에 창 밖 글
+    if (!why && goneWrite(err.cause)) return { dialog: 'error', message: c.t('bodyWrites.article.gone'), reportMessage: c.t('bodyWrites.article.goneClosed') };
+    return { dialog: 'error', message: why ?? c.t('bodyWrites.article.failed') };
+  }
   const row = c.missed.length === 0 ? c.appeared() : undefined;
   const draft = row?.pendingVersion;
   // 내 행인가 — 첫 내용을 보냈으면 그 내용의 초안(초안이 없으면 일부만 만들어진 내 행), 보내지 않았으면 초안이 없어야

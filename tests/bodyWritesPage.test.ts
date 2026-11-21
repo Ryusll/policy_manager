@@ -106,6 +106,9 @@ describe('페이지 연결 (T-224 단계 C)', () => {
 
   it('조문 추가가 도는 동안은 양식을 열지 않고, 의견 단추의 처리 중은 고른 조문의 등록일 때만 — 다른 의견 쓰기가 막으면 까닭을 단다, 막힌 삭제 단추는 막힌 모양', () => {
     expect(page).toMatch(/if \(!id \|\| !canEdit\) return;\s*\/\/[^\n]*\n\s*if \(runningNow\('addArticle', id\)\) return toast\(t\('bodyWrites\.article\.running'\), 'info'\);/);
+    // 장이 없으면 만드는 숨은 장도 조문 추가의 진행에 걸고(두 번 만들지 않게), 실패하면 알린다
+    expect(page).toMatch(/if \(!startRun\('addArticle', id\)\) return toast\(t\('bodyWrites\.article\.running'\), 'info'\);\s*try \{\s*ch = await policiesApi\.createChapter\(id, \{ number: 1, title: '', suppressHeader: true \}\);/);
+    expect(page).toMatch(/\} catch \(err\) \{\s*return toast\(koreanReason\(err\) \?\? t\('bodyWrites\.article\.chapterFailed'\), 'error'\);\s*\} finally \{\s*endRun\('addArticle', id\);\s*\}/);
     expect(page).toContain("const commentPostRun = `comment:new:${(liveSelectedArticle ?? selectedArticle)?.id ?? ''}`;");
     expect(page).toContain("{commentRun === commentPostRun ? t('versionDialog.busy') : t('bodyWrites.comment.submit')}");
     expect(page).toContain("title={commentBusy && commentRun !== commentPostRun ? t('bodyWrites.comment.otherRunning') : undefined}");

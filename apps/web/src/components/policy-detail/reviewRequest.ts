@@ -57,7 +57,11 @@ export async function reviewFailure(err: unknown, r: ReviewTarget, holder: { ver
   if (err.step === 'lookup') return { dialog: 'error', message: t('policyWrites.version.lookupFailed') };
   if (err.step === 'draft') {
     // 고치던 초안이 이미 없으면(404 — 다른 사람·탭이 지움) 다시 눌러도 같다 — 편집기는 둬서 쓰던 글을 복사하고 다시 열게(단계 C 검토의 goneWrite 와 같은 규칙)
-    if (r.draftId && goneWrite(err.cause)) return { dialog: 'error', message: koreanReason(err.cause) ?? t('policyWrites.version.draftGone') };
+    if (r.draftId && goneWrite(err.cause)) {
+      // 편집기가 닫혔으면(다른 규정으로 옮김) 결과 자리에는 창 밖에서 맞는 글 — '편집기를 닫고'는 창 안에서만 맞는 말(B2 재검토 규칙)
+      const why = koreanReason(err.cause);
+      return { dialog: 'error', message: why ?? t('policyWrites.version.draftGone'), reportMessage: why ?? t('policyWrites.version.draftGoneClosed') };
+    }
     if (refusedWrite(err.cause)) return { dialog: 'error', message: koreanReason(err.cause) ?? t('policyWrites.version.draftFailed') };
     if (!r.draftId) {
       const created = (await read())?.find((x) => sameDraftText(x, r));
