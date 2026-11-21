@@ -31,11 +31,19 @@ type Row = {
   pendingVersion?: { content?: string | null } | null;
 };
 
-const chaptersOf = (qc: QueryClient, policyId: string) =>
-  qc.getQueryData<{ chapters?: { id: string; articles?: Row[] }[] }>(['policy', policyId])?.chapters ?? [];
+type Chapter = { id: string; suppressHeader?: boolean | null; virtual?: boolean | null; articles?: Row[] };
+
+const chaptersOf = (qc: QueryClient, policyId: string) => qc.getQueryData<{ chapters?: Chapter[] }>(['policy', policyId])?.chapters ?? [];
 
 /** 화면이 든 그 규정의 조문 행 id — 누를 때 잡아 두고 반영 판정에 쓴다 */
 export const articleIdsOf = (qc: QueryClient, policyId: string) => chaptersOf(qc, policyId).flatMap((ch) => (ch.articles ?? []).map((a) => a.id));
+
+/** 화면이 든 그 규정의 장 id — 숨은 장 만들기의 반영 판정에 쓴다 */
+export const chapterIdsOf = (qc: QueryClient, policyId: string) => chaptersOf(qc, policyId).map((c) => c.id);
+
+/** 다시 받은 규정에 누르기 전에 없던 숨은 장(장 머리 없이 조만 두는 장) — 없으면 undefined */
+export const newHiddenChapter = (qc: QueryClient, policyId: string, before: readonly string[]) =>
+  chaptersOf(qc, policyId).find((c) => !!c.suppressHeader && !c.virtual && !before.includes(c.id));
 
 /** 조문 자리(조·가지·항·목) — 결과 줄의 이름에 쓴다(다른 자리의 결과가 이 줄을 걷지 않게) */
 export const positionKey = (p: Readonly<Record<string, unknown>>) =>

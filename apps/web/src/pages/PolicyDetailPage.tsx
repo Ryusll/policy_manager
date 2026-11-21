@@ -112,7 +112,6 @@ import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDial
 import { ApproveDialog, ArchiveDialog, RejectDialog, WithdrawDialog } from '../components/policy-detail/VersionDialogs';
 import { AppendixDialog } from '../components/policy-detail/AppendixDialog';
 import { LengthCap } from '../components/policy-detail/LengthCap';
-import { koreanReason } from '../lib/policyWrite';
 import { COMMENT_MAX, useBodyWrites } from '../components/policy-detail/useBodyWrites';
 import { useVersionActions, versionLocked, versionTargetArgs, type VersionDialogTarget } from '../components/policy-detail/useVersionActions';
 import { useArticleBanner } from '../lib/articleBanner';
@@ -1224,9 +1223,11 @@ function PolicyDetailView() {
   // 저장 중이면 보낸 날짜·알림 설정을 그린다 — 다시 그린 화면은 캐시의 옛 값만 안다(T-215 13·14차)
   const infoSent = infoBusy ? (JSON.parse(runTarget('info', id) ?? 'null') as { revisionDate: string | null; effectiveDate: string | null; notify: typeof revisionNotify } | null) : null;
   const toggleBusy = isRunning(runs, 'toggle', id);
+  // 부칙·별표·서식·의견·조문 추가(T-224 단계 C) — 누를 때의 규정·조문·대상을 잡아 끝까지 쓴다(lib/policyWrite). 종류마다 한 규정에서 한 번에 하나
+  const bodyWrites = useBodyWrites({ policyId: id, label: policyLabel(policy), qc, shown: shownPolicy, toolbar: toolStatus, t, start: startRun, end: endRun });
 
   const openAddArticleForm = useCallback(
-    async (
+    (
       chapterId?: string,
       preset?: { number?: number; branchNumber?: number; clauseNumber?: number; itemNumber?: number },
       sectionId?: string,
@@ -1235,52 +1236,44 @@ function PolicyDetailView() {
       // 조문 추가가 도는 동안은 열지 않는다 — 다시 연 양식이 아직 받지 못한 새 조의 번호를 또 제안해 같은 조가 둘 생기지 않게(단계 C 검토)
       if (runningNow('addArticle', id)) return toast(t('bodyWrites.article.running'), 'info');
       // 장 id 는 지금 행의 장이다 — 오늘 화면에 없는 장(그날부터 생기는 장)일 수도 있어 못 찾아도 그대로 쓴다
-      let ch: any = chapterId
+      const ch: { id: string; virtual?: boolean } | undefined = chapterId
         ? policyChapters?.find((c) => c.id === chapterId) ?? { id: chapterId }
         : policyChapters?.find((c) => c.suppressHeader && !c.virtual);
       if (ch?.virtual) {
         toast(VIRTUAL_CHAPTER_MESSAGE, 'error');
         return;
       }
-      if (!ch) {
-        // 장이 하나도 없으면 숨은 장을 먼저 만든다 — 조문 추가와 같은 진행에 걸어 겹쳐 누르거나 옮겼다 돌아와 다시 눌러도 두 번 만들지 않고,
-        // 실패하면 알린다(T-224 마지막 재검토 — 전에는 처리되지 않은 거절로 아무 말이 없었다)
-        if (!startRun('addArticle', id)) return toast(t('bodyWrites.article.running'), 'info');
-        try {
-          ch = await policiesApi.createChapter(id, { number: 1, title: '', suppressHeader: true });
-          await qc.invalidateQueries({ queryKey: ['policy', id] });
-        } catch (err) {
-          return toast(koreanReason(err) ?? t('bodyWrites.article.chapterFailed'), 'error');
-        } finally {
-          endRun('addArticle', id);
-        }
-      }
-      // 조 번호는 법령·규정 관례대로 문서 전체에서 이어진다(장이 바뀌어도 1로 돌아가지 않음). 구조 변경 예정 동안은 오늘 자리·
-      // 지금 행·시행 예정 신설 조문 번호를 모두 넘겨야 어느 날에도 겹치지 않는다(T-132 ⑦)
-      const rows = (policyChapters ?? []).flatMap((c) => c.articles ?? []);
-      const jo =
-        preset?.number ??
-        nextJoNumberForPolicy([{ articles: rows }, { articles: rows.map(liveAnchorOf) }, { articles: scheduledArticles ?? [] }]);
-      setAddArticleToken(nextDialogToken());
-      setAddArticleError(null);
-      setNewArticle({
-        chapterId: ch.id,
-        sectionId,
-        number: jo,
-        branchNumber: preset?.branchNumber,
-        clauseNumber: preset?.clauseNumber,
-        itemNumber: preset?.itemNumber,
-        title: '',
-        content: '',
-        hasPrecedent: false,
-        hasRelatedLaw: false,
-        hasRelatedRule: false,
-        relatedPrecedentNote: '',
-        relatedLawNote: '',
-        relatedRuleNote: '',
-      });
+      const openFor = (chapterIdToOpen: string) => {
+        // 조 번호는 법령·규정 관례대로 문서 전체에서 이어진다(장이 바뀌어도 1로 돌아가지 않음). 구조 변경 예정 동안은 오늘 자리·
+        // 지금 행·시행 예정 신설 조문 번호를 모두 넘겨야 어느 날에도 겹치지 않는다(T-132 ⑦)
+        const rows = (policyChapters ?? []).flatMap((c) => c.articles ?? []);
+        const jo =
+          preset?.number ??
+          nextJoNumberForPolicy([{ articles: rows }, { articles: rows.map(liveAnchorOf) }, { articles: scheduledArticles ?? [] }]);
+        setAddArticleToken(nextDialogToken());
+        setAddArticleError(null);
+        setNewArticle({
+          chapterId: chapterIdToOpen,
+          sectionId,
+          number: jo,
+          branchNumber: preset?.branchNumber,
+          clauseNumber: preset?.clauseNumber,
+          itemNumber: preset?.itemNumber,
+          title: '',
+          content: '',
+          hasPrecedent: false,
+          hasRelatedLaw: false,
+          hasRelatedRule: false,
+          relatedPrecedentNote: '',
+          relatedLawNote: '',
+          relatedRuleNote: '',
+        });
+      };
+      // 장이 하나도 없으면 숨은 장을 먼저 만든다 — 다른 쓰기와 같은 진행·결과 규칙(useBodyWrites.ensureHiddenChapter), 만들어졌으면 그 장으로 연다
+      if (!ch) return void bodyWrites.ensureHiddenChapter({ onReady: openFor });
+      openFor(ch.id);
     },
-    [id, canEdit, policyChapters, scheduledArticles, qc, t, startRun, endRun],
+    [id, canEdit, policyChapters, scheduledArticles, t, bodyWrites],
   );
 
   // 항 추가 — 지금 행의 장·조로(T-132 ⑦). 자리가 바뀌는 중인 조는 그날 뒤에(서버도 막는다)
@@ -1480,8 +1473,6 @@ function PolicyDetailView() {
     setRevisionExternalReasons([]);
   }, [closeVersionEditor]);
   useWriteDialogRegistration('review', id, editorToken, { setError: setEditorError, close: finishVersionEditor, adopt: setEditingDraftVersionId });
-  // 부칙·별표·서식·의견·조문 추가(T-224 단계 C) — 누를 때의 규정·조문·대상을 잡아 끝까지 쓴다(lib/policyWrite). 종류마다 한 규정에서 한 번에 하나
-  const bodyWrites = useBodyWrites({ policyId: id, label: policyLabel(policy), qc, shown: shownPolicy, toolbar: toolStatus, t, start: startRun, end: endRun });
   const appendixRun = runTarget('appendix', id);
   const appendixBusy = isRunning(runs, 'appendix', id);
   const commentRun = runTarget('comment', id);

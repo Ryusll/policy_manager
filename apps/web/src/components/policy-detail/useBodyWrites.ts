@@ -7,7 +7,7 @@ import { useLatest } from '../../lib/useLatest';
 import { sameDialog } from '../../lib/writeDialogs';
 import { toast } from '../../stores/toastStore';
 import { appendixPayload, type AppendixDraft } from './appendixDraft';
-import { ArticleStepError, addArticleFailure, appearedRow, articleIdsOf, positionKey } from './articleAddPlan';
+import { ArticleStepError, addArticleFailure, appearedRow, articleIdsOf, chapterIdsOf, newHiddenChapter, positionKey } from './articleAddPlan';
 
 /*
  * 본문 안 쓰기 셋 — 부칙·별표·서식(추가·수정·삭제), 의견(등록·처리 표시), 조문 추가(T-224 단계 C, 설계 E3·E6·E7·E12·E14). 페이지의
@@ -79,11 +79,13 @@ export function useBodyWrites(o: {
           subject: (m) => t('bodyWrites.appendix.subject', { title: payload.title || v.kindLabel, message: m }),
           done: () => t(create ? 'bodyWrites.appendix.created' : 'bodyWrites.appendix.updated'),
           refusedText: (err) => koreanReason(err) ?? t('bodyWrites.appendix.failed'),
-          // 고치려던 항목이 이미 지워졌으면(404) 입력값이 아니라 그 까닭을 — 창은 둬서 쓰던 내용을 복사하게, 창이 닫혔으면 결과 자리에 창 밖 글
-          failed: (err) =>
-            !create && goneWrite(err) && !koreanReason(err)
-              ? { dialog: 'error', message: t('bodyWrites.appendix.gone'), reportMessage: t('bodyWrites.appendix.goneClosed') }
-              : undefined,
+          // 대상이 이미 없으면(404) 입력값이 아니라 그 까닭을 — 고치기는 그 항목이 지워진 것(창은 둬서 쓰던 내용을 복사하게, 창이 닫혔으면 결과
+          // 자리에 창 밖 글), 추가는 규정이 없어진 것(창 안과 밖 어디서나 맞는 글)
+          failed: (err) => {
+            if (!goneWrite(err) || koreanReason(err)) return undefined;
+            if (create) return { dialog: 'error', message: t('bodyWrites.appendix.policyGone') };
+            return { dialog: 'error', message: t('bodyWrites.appendix.gone'), reportMessage: t('bodyWrites.appendix.goneClosed') };
+          },
           // 응답 없음·5xx — 다시 받은 규정에 그 항목이 보낸 대로 있으면 반영됨(추가는 누르기 전에 없던 항목이어야)
           landed: (qc) => {
             const list = appendicesOf(qc, policyId);
@@ -156,6 +158,37 @@ export function useBodyWrites(o: {
               })
               .catch(() => undefined),
         })),
+      /**
+       * 장이 하나도 없는 규정의 조문 추가 — 먼저 숨은 장(장 머리 없이 조만 두는 장)을 만든다. 조문 추가의 진행에 걸어 겹쳐 누르거나 옮겼다
+       * 돌아와도 두 번 만들지 않고, 결과는 다른 쓰기와 같은 자리·규칙이다. 응답 없음·5xx 면 다시 받은 규정에 누르기 전에 없던 숨은 장이
+       * 생겼는지로 반영을 보고(서버에 같은 장을 막는 제약이 없어 그대로 다시 만들면 둘이 된다), 만들어졌으면 그 장으로 양식을 연다(onReady —
+       * 그 규정을 떠났으면 화면이 내려가 열리지 않는다). T-224 마지막 재검토
+       */
+      ensureHiddenChapter: (v: { onReady: (chapterId: string) => void }) =>
+        run<{ id?: string } | undefined>((t, policyId, qcNow) => {
+          const before = chapterIdsOf(qcNow, policyId);
+          let ready: string | undefined;
+          return {
+            kind: 'addArticle',
+            target: 'chapter',
+            source: 'addArticle:chapter',
+            action: t('bodyWrites.article.chapter'),
+            call: async () => {
+              const ch = (await policiesApi.createChapter(policyId, { number: 1, title: '', suppressHeader: true })) as { id?: string } | undefined;
+              ready = ch?.id;
+              return ch;
+            },
+            done: () => t('bodyWrites.article.chapterReady'),
+            refusedText: (err) => koreanReason(err) ?? t('bodyWrites.article.chapterRefused'),
+            landed: (qc) => {
+              ready = newHiddenChapter(qc, policyId, before)?.id;
+              return ready !== undefined;
+            },
+            onApplied: () => {
+              if (ready) v.onReady(ready);
+            },
+          };
+        }),
       /** 조문 추가 — 조 머리·항·목을 차례로(하나 또는 둘). 실패는 몇 번째 요청인지에 따라(articleAddPlan addArticleFailure) */
       addArticle: (v: { chapterId: string; payloads: readonly Record<string, unknown>[]; articleLabel: string; token: number | null }) =>
         run<unknown>((t, policyId, qcNow) => {

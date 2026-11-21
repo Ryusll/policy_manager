@@ -20,8 +20,8 @@ export const down = { response: { status: 502 } };
 export const DRAFT = { kind: 'annex' as const, title: '별표 1', body: '표 본문', sortOrder: '' };
 export const A1 = { articleId: 'a1', articleLabel: '제3조(수당)' };
 
-/** policyId 를 undefined 로 주면 규정을 아직 받지 못한 화면 */
-export function setup(opts: { policyId?: string } = {}) {
+/** policyId 를 undefined 로 주면 규정을 아직 받지 못한 화면, mounted false 면 시작한 화면이 내려간 뒤(다른 규정으로 옮김 — 결과는 이름 붙은 알림) */
+export function setup(opts: { policyId?: string; mounted?: boolean } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const setMsg = vi.fn();
   const flash = vi.fn();
@@ -30,7 +30,7 @@ export function setup(opts: { policyId?: string } = {}) {
     policyId: 'policyId' in opts ? opts.policyId : 'P1',
     label: 'HR-01 취업규칙',
     qc,
-    shown: { id: 'P1', mounted: true },
+    shown: { id: 'P1', mounted: opts.mounted ?? true },
     toolbar: undefined as unknown as ReturnType<typeof useToolStatus>,
     t,
     start: (k: string, p: string, target?: string) => store.start(runKey(k as never, p), target),

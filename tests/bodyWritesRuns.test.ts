@@ -11,12 +11,13 @@ const api = vi.hoisted(() => ({
   updateAppendix: vi.fn(),
   deleteAppendix: vi.fn(),
   createArticle: vi.fn(),
+  createChapter: vi.fn(),
   commentCreate: vi.fn(),
   commentUpdate: vi.fn(),
   commentList: vi.fn(),
 }));
 vi.mock('../apps/web/src/api/policies', () => ({
-  policiesApi: { get: api.get, createAppendix: api.createAppendix, updateAppendix: api.updateAppendix, deleteAppendix: api.deleteAppendix, createArticle: api.createArticle },
+  policiesApi: { get: api.get, createAppendix: api.createAppendix, updateAppendix: api.updateAppendix, deleteAppendix: api.deleteAppendix, createArticle: api.createArticle, createChapter: api.createChapter },
   commentsApi: { create: api.commentCreate, update: api.commentUpdate, list: api.commentList },
 }));
 const { A1, DRAFT, dialog, down, setup, statusOf, t } = await import('./bodyWritesHarness');
@@ -50,6 +51,7 @@ describe('진행 중 대상과 막힘 (T-224 단계 C, 완료 정의 ①)', () =
       ['의견 등록', api.commentCreate, () => w().postComment({ ...A1, content: '의견', idsBefore: [], userId: 'U1' }), 'comment', 'comment:new:a1'],
       ['처리 표시', api.commentUpdate, () => w().resolveComment({ ...A1, commentId: 'C1', resolve: true }), 'comment', 'resolve:C1'],
       ['조문 추가', api.createArticle, () => w().addArticle({ chapterId: 'CH', payloads: [{ number: 4, title: '상여' }], articleLabel: '제4조', token: null }), 'addArticle', 'addArticle'],
+      ['숨은 장 만들기', api.createChapter, () => w().ensureHiddenChapter({ onReady: () => undefined }), 'addArticle', 'chapter'],
     ];
     for (const [name, fn, write, kind, target] of rows) {
       let release!: (v: unknown) => void;
