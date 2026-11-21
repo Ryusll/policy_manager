@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { useI18n } from '../../i18n/useI18n';
+import { LengthCap } from './LengthCap';
 
 /*
  * 판(버전) 확인 창 넷 — 시행 승인·검토 반려·시행 예정 철회·게시본 폐지(T-224 단계 B). 페이지에서 떼어 문구를 키로 옮겼다
@@ -15,10 +16,18 @@ type Common = { busy: boolean; locked: boolean; error: string | null; onConfirm:
 export const REJECT_REASON_MAX = 2000;
 export const WITHDRAW_REASON_MAX = 500;
 
-function Frame(p: { id: string; title: string; children: ReactNode }) {
+/**
+ * 쓰기 확인 창의 틀 — 이름 붙은 창(role=dialog). 판 창 넷과 부칙·별표·서식 창(wide — 표를 평문으로 쓰는 본문 칸이 넓어야 한다)이 같이
+ * 쓴다. 낮은 화면·확대·늘린 본문 칸에서도 단추에 닿게 창 안에서 스크롤한다(단계 C 검토)
+ */
+export function Frame(p: { id: string; title: string; wide?: boolean; children: ReactNode }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white border border-gray-300 shadow-xl w-full max-w-md" role="dialog" aria-labelledby={p.id}>
+      <div
+        className={clsx('bg-white border border-gray-300 shadow-xl w-full max-h-[90vh] overflow-y-auto', p.wide ? 'max-w-2xl' : 'max-w-md')}
+        role="dialog"
+        aria-labelledby={p.id}
+      >
         <div id={p.id} className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">
           {p.title}
         </div>
@@ -28,7 +37,8 @@ function Frame(p: { id: string; title: string; children: ReactNode }) {
   );
 }
 
-function Failure({ error }: { error: string | null }) {
+/** 창 안 실패 줄(role=alert) — 넘겨받은 것만 */
+export function Failure({ error }: { error: string | null }) {
   if (!error) return null;
   return (
     <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
@@ -130,6 +140,7 @@ export function RejectDialog(p: Common & { reason: string; onReason: (v: string)
           onChange={(e) => p.onReason(e.target.value)}
           autoFocus
         />
+        <LengthCap value={p.reason} max={REJECT_REASON_MAX} />
         <p className="text-[11px] text-gray-500 mt-1">{t('versionDialog.reject.reasonHint')}</p>
       </div>
       <Failure error={p.error} />
@@ -165,6 +176,7 @@ export function WithdrawDialog(p: Common & { versionNum: number | string; effect
           placeholder={t('versionDialog.withdraw.reasonPlaceholder')}
           autoFocus
         />
+        <LengthCap value={p.reason} max={WITHDRAW_REASON_MAX} />
       </label>
       <Failure error={p.error} />
       <Buttons {...p} label={t('versionDialog.withdraw.confirm')} ready={!!p.reason.trim()} />

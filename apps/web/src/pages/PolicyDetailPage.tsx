@@ -110,6 +110,9 @@ import { joOrderSignature, reorderNotice, useReorderSave, type ReorderNote } fro
 import { PublishDraftsDialog } from '../components/policy-detail/PublishDraftsDialog';
 import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDialog';
 import { ApproveDialog, ArchiveDialog, RejectDialog, WithdrawDialog } from '../components/policy-detail/VersionDialogs';
+import { AppendixDialog } from '../components/policy-detail/AppendixDialog';
+import { LengthCap } from '../components/policy-detail/LengthCap';
+import { COMMENT_MAX, useBodyWrites } from '../components/policy-detail/useBodyWrites';
 import { useVersionActions, versionLocked, versionTargetArgs, type VersionDialogTarget } from '../components/policy-detail/useVersionActions';
 import { useArticleBanner } from '../lib/articleBanner';
 import { nextDialogToken, useWriteDialogRegistration, useWriteDialogState } from '../lib/writeDialogs';
@@ -559,7 +562,7 @@ function FullViewSearchToolbar({
  * 규정 상세 — 규정마다 화면을 새로 그린다(T-215 11차). 경로(/policies/:id)에서 규정만 바뀌면 React 가 같은 화면을 다시 써서, 규정별
  * 상태(열어 둔 쓰기 창·입력·진행 표시·mutation 관찰자)가 앞 규정의 것으로 남았다 — 창을 하나씩 비우는 목록은 새 창이 생길 때마다 빠졌다.
  * 앞 규정에서 진행 중이던 작업 가운데 진행을 규정별로 두는 것(lib/policyResult RunKind — 내보내기·초안 일괄 시행·상태 전환·규정 정보·
- * 적용 양식·첨부·조 순서·판 쓰기(전환·검토 요청))은 내려간 화면에서 끝나도 그 결과를 버리지 않고 알린다. 부칙·조문 추가·댓글은 아직 아니다(T-224).
+ * 적용 양식·첨부·조 순서·본문 안 쓰기(판 쓰기·부칙·별표·서식·의견·조문 추가))은 내려간 화면에서 끝나도 그 결과를 버리지 않고 알린다(T-224).
  */
 export default function PolicyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -649,7 +652,11 @@ function PolicyDetailView() {
   const [tocPinnedMode, setTocPinnedMode] = useState(false);
   const [leftSidebarTab, setLeftSidebarTab] = useState<'toc' | 'history' | 'appendices'>('toc');
   const [selectedAppendixId, setSelectedAppendixId] = useState<string | null>(null);
-  const [appendixModal, setAppendixModal] = useState<null | { mode: 'create' } | { mode: 'edit'; id: string }>(null);
+  // 부칙·별표·서식 창 — 쓰기 창 등록부에 건다(T-224 단계 C, 창을 열 때마다 번호·창 안 실패)
+  const appendixDlg = useWriteDialogState<{ mode: 'create' } | { mode: 'edit'; id: string }>('appendix', id);
+  // 조문 추가 양식(newArticle)도 등록부에 건다 — 열 때마다 번호, 거절은 양식 안에(T-224 단계 C)
+  const [addArticleToken, setAddArticleToken] = useState<number | null>(null);
+  const [addArticleError, setAddArticleError] = useState<string | null>(null);
   const [appendixDraft, setAppendixDraft] = useState<{
     kind: AppendixKind;
     title: string;
@@ -1036,7 +1043,7 @@ function PolicyDetailView() {
     setVersionContent(selectedDraftBase.content.trim());
   }, [selectedArticle, id, versions, selectedDraftBase]);
 
-  const { data: comments = [], refetch: refetchComments } = useQuery({
+  const { data: comments = [], isSuccess: commentsLoaded } = useQuery({
     queryKey: ['comments', selectedArticle?.id],
     queryFn: () => commentsApi.list(selectedArticle.id),
     enabled: !!selectedArticle,
@@ -1224,6 +1231,8 @@ function PolicyDetailView() {
       sectionId?: string,
     ) => {
       if (!id || !canEdit) return;
+      // 조문 추가가 도는 동안은 열지 않는다 — 다시 연 양식이 아직 받지 못한 새 조의 번호를 또 제안해 같은 조가 둘 생기지 않게(단계 C 검토)
+      if (runningNow('addArticle', id)) return toast(t('bodyWrites.article.running'), 'info');
       // 장 id 는 지금 행의 장이다 — 오늘 화면에 없는 장(그날부터 생기는 장)일 수도 있어 못 찾아도 그대로 쓴다
       let ch: any = chapterId
         ? policyChapters?.find((c) => c.id === chapterId) ?? { id: chapterId }
@@ -1246,6 +1255,8 @@ function PolicyDetailView() {
       const jo =
         preset?.number ??
         nextJoNumberForPolicy([{ articles: rows }, { articles: rows.map(liveAnchorOf) }, { articles: scheduledArticles ?? [] }]);
+      setAddArticleToken(nextDialogToken());
+      setAddArticleError(null);
       setNewArticle({
         chapterId: ch.id,
         sectionId,
@@ -1263,7 +1274,7 @@ function PolicyDetailView() {
         relatedRuleNote: '',
       });
     },
-    [id, canEdit, policyChapters, scheduledArticles, qc],
+    [id, canEdit, policyChapters, scheduledArticles, qc, t],
   );
 
   // 항 추가 — 지금 행의 장·조로(T-132 ⑦). 자리가 바뀌는 중인 조는 그날 뒤에(서버도 막는다)
@@ -1288,21 +1299,6 @@ function PolicyDetailView() {
     [movingJos, openAddArticleForm, liveRowsOf],
   );
 
-  const addArticleMutation = useMutation({
-    mutationFn: async (form: NonNullable<typeof newArticle>) => {
-      // 조 머리 유무는 지금 행으로 본다(구조 변경 예정 동안 화면 번호는 오늘 자리, T-132 ⑦)
-      const payloads = buildArticleCreateRequests(form, liveRowsOf(form.chapterId));
-      let last: any;
-      for (const body of payloads) {
-        last = await policiesApi.createArticle(id!, form.chapterId, body);
-      }
-      return last;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      setNewArticle(null);
-    },
-  });
 
   // 시행본 없이 초안만 있는 조문 — 넣은 내용이 열람자에게는 안 보이는 상태
   const draftOnlyCount = useMemo(
@@ -1478,6 +1474,24 @@ function PolicyDetailView() {
     setRevisionExternalReasons([]);
   }, [closeVersionEditor]);
   useWriteDialogRegistration('review', id, editorToken, { setError: setEditorError, close: finishVersionEditor, adopt: setEditingDraftVersionId });
+  // 부칙·별표·서식·의견·조문 추가(T-224 단계 C) — 누를 때의 규정·조문·대상을 잡아 끝까지 쓴다(lib/policyWrite). 종류마다 한 규정에서 한 번에 하나
+  const bodyWrites = useBodyWrites({ policyId: id, label: policyLabel(policy), qc, shown: shownPolicy, toolbar: toolStatus, t, start: startRun, end: endRun });
+  const appendixRun = runTarget('appendix', id);
+  const appendixBusy = isRunning(runs, 'appendix', id);
+  const commentRun = runTarget('comment', id);
+  const commentBusy = isRunning(runs, 'comment', id);
+  // 고른 조문의 의견 등록이 도는 중일 때만 그 단추에 '처리 중…'(다른 조문의 등록·처리 표시가 막을 때는 까닭을 단다)
+  const commentPostRun = `comment:new:${(liveSelectedArticle ?? selectedArticle)?.id ?? ''}`;
+  const addArticleBusy = isRunning(runs, 'addArticle', id);
+  const closeAddArticle = useCallback(() => {
+    setNewArticle(null);
+    setAddArticleToken(null);
+    setAddArticleError(null);
+  }, []);
+  useWriteDialogRegistration('addArticle', id, newArticle ? addArticleToken : null, { setError: setAddArticleError, close: closeAddArticle });
+  // 의견 입력칸은 보낸 글 그대로일 때만 비운다(설계 E7 — 그 사이 더 쓴 글은 둔다). 칸은 조문마다가 아니라 하나라서 조문을 옮겼어도 비운다 —
+  // 이미 등록한 글이 다른 조문의 칸에 남아 또 등록되지 않게(단계 C 검토)
+  const commentNow = useLatest({ draft: commentDraft });
   // 편집기가 보이지 않게 되면(고른 조문이 풀리거나 바뀜, 전문 보기로) 닫는다 — 보이지 않는 편집기가 등록부에 남아 결과를 삼키거나, 다른
   // 조문에서 앞 조문의 글·초안으로 다시 나타나지 않게(B2 검토). 닫힌 뒤 끝난 결과는 배너·도구 줄로 간다
   const editorShownFor = showVersionEditor && articleViewMode === 'segment' ? (selectedArticle?.id ?? null) : null;
@@ -1496,44 +1510,6 @@ function PolicyDetailView() {
   const versionRun = runTarget('version', id);
   const versionLockTitle = versionLock ? t(versionRun ? 'policyWrites.locked' : 'policyWrites.lockedPublish') : undefined;
 
-  const createCommentMutation = useMutation({
-    mutationFn: (content: string) => commentsApi.create(selectedArticle.id, { content }),
-    onSuccess: () => {
-      setCommentDraft('');
-      void refetchComments();
-    },
-  });
-
-  const resolveCommentMutation = useMutation({
-    mutationFn: ({ id, isResolved }: { id: string; isResolved: boolean }) =>
-      commentsApi.update(id, { isResolved }),
-    onSuccess: () => refetchComments(),
-  });
-
-  const createAppendixMutation = useMutation({
-    mutationFn: (payload: any) => policiesApi.createAppendix(id!, payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      setAppendixModal(null);
-    },
-  });
-
-  const updateAppendixMutation = useMutation({
-    mutationFn: ({ appendixId, payload }: { appendixId: string; payload: any }) =>
-      policiesApi.updateAppendix(id!, appendixId, payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      setAppendixModal(null);
-    },
-  });
-
-  const deleteAppendixMutation = useMutation({
-    mutationFn: (appendixId: string) => policiesApi.deleteAppendix(id!, appendixId),
-    onSuccess: (_, appendixId) => {
-      qc.invalidateQueries({ queryKey: ['policy', id] });
-      setSelectedAppendixId((prev) => (prev === appendixId ? null : prev));
-    },
-  });
 
   const toggleChapter = (chapterId: string) => {
     setExpandedChapters((prev) => {
@@ -2714,7 +2690,7 @@ function PolicyDetailView() {
                       type="button"
                       onClick={() => {
                         setAppendixDraft({ kind: 'supplementary', title: '', body: '', sortOrder: '' });
-                        setAppendixModal({ mode: 'create' });
+                        appendixDlg.open({ mode: 'create' });
                       }}
                       className="w-full inline-flex items-center justify-center gap-1 rounded border border-dashed border-gray-300 bg-white py-2 text-xs text-gray-600 hover:border-navy-400 hover:bg-navy-50/50 transition-colors"
                     >
@@ -2784,21 +2760,29 @@ function PolicyDetailView() {
                                     ? String(selectedAppendix.sortOrder)
                                     : '',
                               });
-                              setAppendixModal({ mode: 'edit', id: selectedAppendix.id });
+                              appendixDlg.open({ mode: 'edit', id: selectedAppendix.id });
                             }}
                           >
                             수정
                           </button>
                           <button
                             type="button"
-                            className="text-[11px] py-1 px-2 rounded border border-red-200 bg-white text-red-700 hover:bg-red-50"
-                            disabled={deleteAppendixMutation.isPending}
+                            className="text-[11px] py-1 px-2 rounded border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={appendixBusy}
                             onClick={() => {
-                              if (!window.confirm('이 항목을 삭제할까요?')) return;
-                              deleteAppendixMutation.mutate(selectedAppendix.id);
+                              const appendixId = selectedAppendix.id;
+                              const kindLabel = appendixKindLabel[selectedAppendix.kind as AppendixKind] ?? '';
+                              const title = selectedAppendix.title || kindLabel;
+                              if (!window.confirm(t('bodyWrites.appendix.confirmDelete', { title }))) return;
+                              void bodyWrites.deleteAppendix({
+                                appendixId,
+                                title,
+                                kindLabel,
+                                onApplied: () => setSelectedAppendixId((prev) => (prev === appendixId ? null : prev)),
+                              });
                             }}
                           >
-                            삭제
+                            {appendixRun === `delete:${selectedAppendix.id}` ? t('versionDialog.busy') : t('bodyWrites.appendix.deleteButton')}
                           </button>
                         </div>
                       )}
@@ -3424,10 +3408,16 @@ function PolicyDetailView() {
                         <div className="mt-2 text-right">
                           <button
                             type="button"
-                            className="text-xs text-navy-700 hover:underline"
-                            onClick={() => resolveCommentMutation.mutate({ id: c.id, isResolved: !c.isResolved })}
+                            className="text-xs text-navy-700 hover:underline disabled:opacity-50 disabled:no-underline"
+                            disabled={commentBusy}
+                            title={commentBusy && commentRun !== `resolve:${c.id}` ? t('bodyWrites.comment.otherRunning') : undefined}
+                            onClick={() => {
+                              const article = liveSelectedArticle ?? selectedArticle;
+                              if (!article) return;
+                              void bodyWrites.resolveComment({ articleId: article.id, articleLabel: articleRowHeading(article), commentId: c.id, resolve: !c.isResolved });
+                            }}
                           >
-                            {c.isResolved ? '미처리로 되돌리기' : '처리완료로 변경'}
+                            {commentRun === `resolve:${c.id}` ? t('versionDialog.busy') : t(c.isResolved ? 'bodyWrites.comment.markOpen' : 'bodyWrites.comment.markResolved')}
                           </button>
                         </div>
                       )}
@@ -3437,19 +3427,36 @@ function PolicyDetailView() {
                 <div className="mt-3 flex gap-2">
                   <input
                     className="input flex-1 text-sm"
-                    placeholder="이 조항에 대한 의견을 남겨주세요."
+                    placeholder={t('bodyWrites.comment.placeholder')}
+                    maxLength={COMMENT_MAX}
                     value={commentDraft}
                     onChange={(e) => setCommentDraft(e.target.value)}
                   />
                   <button
                     type="button"
                     className="btn-primary text-sm"
-                    disabled={!commentDraft.trim() || createCommentMutation.isPending}
-                    onClick={() => createCommentMutation.mutate(commentDraft.trim())}
+                    disabled={!commentDraft.trim() || commentBusy}
+                    title={commentBusy && commentRun !== commentPostRun ? t('bodyWrites.comment.otherRunning') : undefined}
+                    onClick={() => {
+                      const article = liveSelectedArticle ?? selectedArticle;
+                      if (!article) return;
+                      const content = commentDraft.trim();
+                      void bodyWrites.postComment({
+                        articleId: article.id,
+                        articleLabel: articleRowHeading(article),
+                        content,
+                        idsBefore: commentsLoaded ? (comments as { id: string }[]).map((x) => x.id) : null,
+                        userId: user?.id,
+                        clearInput: () => {
+                          if (commentNow.current.draft.trim() === content) setCommentDraft('');
+                        },
+                      });
+                    }}
                   >
-                    등록
+                    {commentRun === commentPostRun ? t('versionDialog.busy') : t('bodyWrites.comment.submit')}
                   </button>
                 </div>
+                <LengthCap value={commentDraft} max={COMMENT_MAX} />
               </div>
               )}
 
@@ -4675,16 +4682,25 @@ function PolicyDetailView() {
                   onChange={(e) => setNewArticle({ ...newArticle, content: e.target.value })}
                 />
               </div>
+              {addArticleError && (
+                <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                  {addArticleError}
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => addArticleMutation.mutate(newArticle)}
-                  disabled={!canSubmitNewArticleForm(newArticle) || addArticleMutation.isPending}
+                  onClick={() => {
+                    // 조 머리 유무는 지금 행으로 본다(구조 변경 예정 동안 화면 번호는 오늘 자리, T-132 ⑦)
+                    const payloads = buildArticleCreateRequests(newArticle, liveRowsOf(newArticle.chapterId));
+                    void bodyWrites.addArticle({ chapterId: newArticle.chapterId, payloads, articleLabel: articleRowHeading(newArticle), token: addArticleToken });
+                  }}
+                  disabled={!canSubmitNewArticleForm(newArticle) || addArticleBusy}
                   className="btn-primary"
                 >
-                  추가
+                  {addArticleBusy ? t('versionDialog.busy') : t('bodyWrites.article.submit')}
                 </button>
-                <button type="button" onClick={() => setNewArticle(null)} className="btn-secondary">취소</button>
+                <button type="button" onClick={closeAddArticle} className="btn-secondary">{t('versionDialog.cancel')}</button>
               </div>
             </div>
           </div>
@@ -4876,96 +4892,29 @@ function PolicyDetailView() {
         </div>
       )}
 
-      {appendixModal && canEdit && id && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white border border-gray-300 shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="bg-navy-800 text-white px-5 py-3 font-medium text-sm">
-              {appendixModal.mode === 'create' ? '부칙·별표·서식 추가' : '부칙·별표·서식 수정'}
-            </div>
-            <div className="p-5 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">구분</label>
-                  <select
-                    className="input text-sm"
-                    value={appendixDraft.kind}
-                    onChange={(e) =>
-                      setAppendixDraft((d) => ({ ...d, kind: e.target.value as AppendixKind }))
-                    }
-                  >
-                    <option value="supplementary">{appendixKindLabel.supplementary}</option>
-                    <option value="annex">{appendixKindLabel.annex}</option>
-                    <option value="form">{appendixKindLabel.form}</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">정렬 순서 (선택)</label>
-                  <input
-                    type="number"
-                    className="input text-sm"
-                    min={0}
-                    placeholder="비우면 0"
-                    value={appendixDraft.sortOrder}
-                    onChange={(e) => setAppendixDraft((d) => ({ ...d, sortOrder: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">제목</label>
-                <input
-                  className="input text-sm"
-                  placeholder="예) 부칙, 별표 1, 서식 제1호"
-                  value={appendixDraft.title}
-                  onChange={(e) => setAppendixDraft((d) => ({ ...d, title: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">본문</label>
-                <textarea
-                  className="input text-sm font-mono resize-y min-h-[200px]"
-                  placeholder="전문 또는 표 형태를 평문으로 입력하세요."
-                  value={appendixDraft.body}
-                  onChange={(e) => setAppendixDraft((d) => ({ ...d, body: e.target.value }))}
-                />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={
-                    !appendixDraft.title.trim() ||
-                    createAppendixMutation.isPending ||
-                    updateAppendixMutation.isPending
-                  }
-                  onClick={() => {
-                    const title = appendixDraft.title.trim();
-                    if (!title) return;
-                    const sortOrder =
-                      appendixDraft.sortOrder.trim() === ''
-                        ? undefined
-                        : Math.max(0, Math.floor(Number(appendixDraft.sortOrder)) || 0);
-                    const payload = {
-                      kind: appendixDraft.kind,
-                      title,
-                      body: appendixDraft.body,
-                      sortOrder,
-                    };
-                    if (appendixModal.mode === 'create') {
-                      createAppendixMutation.mutate(payload);
-                    } else {
-                      updateAppendixMutation.mutate({ appendixId: appendixModal.id, payload });
-                    }
-                  }}
-                >
-                  저장
-                </button>
-                <button type="button" className="btn-secondary" onClick={() => setAppendixModal(null)}>
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {appendixDlg.target && canEdit && id && (
+        <AppendixDialog
+          mode={appendixDlg.target.mode}
+          draft={appendixDraft}
+          onDraft={setAppendixDraft}
+          kindLabel={appendixKindLabel}
+          busy={appendixRun === (appendixDlg.target.mode === 'edit' ? `appendix:${appendixDlg.target.id}` : 'appendix:new')}
+          locked={appendixBusy}
+          error={appendixDlg.error}
+          onConfirm={() => {
+            const target = appendixDlg.target;
+            if (!target || !appendixDraft.title.trim()) return;
+            void bodyWrites.saveAppendix({
+              mode: target.mode,
+              appendixId: target.mode === 'edit' ? target.id : undefined,
+              draft: appendixDraft,
+              kindLabel: appendixKindLabel[appendixDraft.kind],
+              idsBefore: ((policy?.appendices ?? []) as { id: string }[]).map((a) => a.id),
+              token: appendixDlg.token,
+            });
+          }}
+          onCancel={appendixDlg.close}
+        />
       )}
 
       {approveDlg.target && (

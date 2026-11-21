@@ -12,7 +12,7 @@ import type { QueryClient, QueryKey } from '@tanstack/react-query';
  * 아무 말 없이 남의 줄을 걷거나 제 줄을 못 걷는다(재검토 #6) — 쓰는 이름을 여기에 모은다. 판 쓰기는 판마다(version:판 id), 편집기의
  * 검토 요청은 조문마다(review:조문 id — 새 초안은 누를 때 id 가 없다)
  */
-export type ResultSource = 'info' | 'toggle' | 'publish' | 'pdf' | 'hwpx' | `version:${string}` | `review:${string}`;
+export type ResultSource = 'info' | 'toggle' | 'publish' | 'pdf' | 'hwpx' | `addArticle:${string}` | `version:${string}` | `review:${string}` | `appendix:${string}` | `comment:${string}`;
 
 /** 도구 줄 상태 한 줄 — 실패는 남기고(오류 번호를 옮겨 적게), 사용자의 다음 동작(진행 문구·잠깐 알림)이 바꾼다 */
 export type ToolStatus = {

@@ -50,6 +50,10 @@ export type WriteSpec<R> = {
   source?: ResultSource | (() => ResultSource | undefined);
   /** 반영된 갈래에서 이 이름들의 줄도 모든 자리에서 걷는다(편집기 검토 요청의 조문 줄 review:조문 id 등 — B2 검토) */
   settleAlso?: readonly ResultSource[];
+  /** 반영된 갈래(성공·받지 못한 성공·반영 확인)에서 화면을 정리한다 — 진행을 풀기 전에 그린다(의견 입력칸 비우기·지운 부칙의 선택 풀기, 단계 C) */
+  onApplied?: () => void;
+  /** 반영됐는지 모르는 갈래(응답 없음·5xx 뒤 확인 못 함)에서 화면을 정리한다 — 그대로 다시 보내 겹치지 않게(의견 입력칸, 설계 E3) */
+  onUnknown?: () => void;
   /** 이 쓰기의 이름(확인 못 함·반영됨 문구에 들어간다, 예 '시행 승인') */
   action: string;
   call: () => Promise<R>;
@@ -87,6 +91,11 @@ export function refusedWrite(err: unknown): boolean {
   return typeof status === 'number' && status >= 400 && status < 500;
 }
 
+/** 대상이 이미 없다(404 — 다른 사람·탭이 지웠다). 입력값을 고쳐 다시 보내도 같아 '입력값을 확인하라'는 대체 문구를 쓰지 않는다(단계 C 검토) */
+export function goneWrite(err: unknown): boolean {
+  return (err as { response?: { status?: unknown } } | null)?.response?.status === 404;
+}
+
 /** 서버 거절 문구가 사람에게 보일 한국어면 그것 — 영문 기본 문구·검증 문구면 null(쓰기마다의 대체 문구를 쓴다, E12) */
 export function koreanReason(err: unknown): string | null {
   const m = serverMessage(err);
@@ -113,8 +122,9 @@ function deliver(deps: WriteDeps, spec: WriteSpec<unknown>, message: string, kin
       for (const also of spec.settleAlso ?? []) place.settle(also);
       if (source && place !== target) place.settle(source);
     }
+    // 남은 줄(다른 작업의 실패·확인 못 함)이 없을 때만 — 성공 글만 든 배너를 비운다. 같은 조문의 의견 쓰기가 판 쓰기의 줄을 지우지 않게(단계 C 검토)
     const own = bannerOf(spec.policyId, spec.articleId);
-    if (own && own !== target) own.clear();
+    if (own && own !== target && !own.holds()) own.clear();
   }
   deliverResult(
     deps.shown,
@@ -176,7 +186,10 @@ async function settle<R>(deps: WriteDeps, spec: WriteSpec<R>) {
   const say = (message: string, kind: ResultKind, stale?: readonly QueryKey[], applied = false) =>
     deliver(deps, spec as WriteSpec<unknown>, message, kind, stale, applied);
   if (!failure) {
-    if (dialog) flushSync(() => dialog.close());
+    flushSync(() => {
+      dialog?.close();
+      spec.onApplied?.();
+    });
     const message = subject(spec.done(res as R));
     if (missed.length > 0) say(`${message} ${deps.t('policyDetail.result.refreshFailed')}`, 'stale', missed, true);
     else say(message, 'success', undefined, true);
@@ -190,6 +203,7 @@ async function settle<R>(deps: WriteDeps, spec: WriteSpec<R>) {
       if (plan.adopt) settleEverywhere(deps, spec as WriteSpec<unknown>, spec.settleAlso ?? []);
       // 기다리는 사이 창을 닫았을 수 있어 다시 찾는다
       const open = spec.dialog ? sameDialog(spec.policyId, spec.dialog.kind, spec.dialog.token) : undefined;
+      if (plan.applied) flushSync(() => spec.onApplied?.());
       if (open) {
         flushSync(() => {
           if (plan.adopt) open.adopt?.(plan.adopt);
@@ -218,10 +232,12 @@ async function settle<R>(deps: WriteDeps, spec: WriteSpec<R>) {
   const landed = missed.length === 0 ? await spec.landed?.(deps.qc) : undefined;
   if (!inScope()) return;
   if (landed === true) {
+    flushSync(() => spec.onApplied?.());
     say(subject(deps.t('policyWrites.landed', { action: spec.action })), 'error', undefined, true);
     return;
   }
   // 확인하지 못했다는 줄은 받기로 걷지 않는다 — 뒤에 받은 값이 옛 상태여도 서버가 잠금을 기다렸다 나중에 반영할 수 있다(재검토 #2)
+  if (spec.onUnknown) flushSync(() => spec.onUnknown?.());
   const why = serverMessage(failure.err);
   say(subject(why ? deps.t('policyWrites.unknownWhy', { action: spec.action, reason: why }) : deps.t('policyWrites.unknown', { action: spec.action })), 'error');
 }
