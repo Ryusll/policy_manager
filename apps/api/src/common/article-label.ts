@@ -9,7 +9,7 @@ const OPEN_PARENS = '(（';
 const CLOSE_PARENS = ')）';
 
 /** 제목 전체를 감싼 괄호 한 겹만 벗긴다 — 제목 칸에 "(목적)"으로 적은 조문이 "제1조((목적))"이 되지 않게. 저장값은 그대로 둔다 */
-function bareTitle(title?: string | null): string {
+export function bareTitle(title?: string | null): string {
   const t = String(title ?? '').trim();
   if (t.length < 2 || !OPEN_PARENS.includes(t[0]) || !CLOSE_PARENS.includes(t[t.length - 1])) return t;
   // 첫 괄호가 맨 끝에서 닫힐 때만 겉 한 겹이다 — "(주)인사", "(정의) 및 (적용)"은 제목의 일부다

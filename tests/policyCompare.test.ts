@@ -104,3 +104,55 @@ describe('buildComparisonRows', () => {
     expect(summary).toEqual({ added: 0, removed: 0, changed: 0, same: 0 });
   });
 });
+
+describe('조 머리 행의 제목은 겉 괄호를 벗겨 견준다 (T-229)', () => {
+  it('조 머리 행의 (목적)·목적은 같은 제목이라 변동 없음, 항 부제는 그대로 견준다', () => {
+    const { rows } = buildComparisonRows(
+      [art({ id: 'jo', number: 1, title: '(목적)', content: 'A' }), art({ id: 'hang', number: 1, clauseNumber: 1, title: '(부제)', content: 'B' })],
+      [art({ id: 'jo', number: 1, title: '목적', content: 'A' }), art({ id: 'hang', number: 1, clauseNumber: 1, title: '부제', content: 'B' })],
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.articleId, r]));
+    expect([byId.jo.kind, byId.jo.titleChanged]).toEqual(['same', false]);
+    // 항의 부제는 칸 제목 줄에 저장값 그대로 보이므로 괄호도 바뀐 것이다
+    expect([byId.hang.kind, byId.hang.titleChanged]).toEqual(['changed', true]);
+  });
+});
+
+describe('구조문 날짜의 위치 movedFrom (T-229)', () => {
+  it('번호가 바뀐 행은 구조문 날짜의 위치를 함께 준다 — 조·가지·항·목 어느 칸이 바뀌어도', () => {
+    const { rows } = buildComparisonRows(
+      [
+        art({ id: 'jo', number: 5, title: '목적', content: '' }),
+        art({ id: 'hang', number: 5, clauseNumber: 2, content: '둘째 항' }),
+        art({ id: 'branch', number: 3, branchNumber: 2, content: '가지 조' }),
+      ],
+      [
+        art({ id: 'jo', number: 6, title: '목적', content: '' }),
+        art({ id: 'hang', number: 6, clauseNumber: 3, content: '둘째 항' }),
+        art({ id: 'branch', number: 4, content: '가지 조' }),
+      ],
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.articleId, r]));
+    expect(byId.jo.movedFrom).toEqual({ number: 5, branchNumber: null, clauseNumber: null, itemNumber: null });
+    expect(byId.hang.movedFrom).toEqual({ number: 5, branchNumber: null, clauseNumber: 2, itemNumber: null });
+    expect(byId.branch.movedFrom).toEqual({ number: 3, branchNumber: 2, clauseNumber: null, itemNumber: null });
+    // 표기 위치는 그대로 신조문 기준이고, 본문이 같으면 여전히 변동 없음이다(번호만 바뀐 것은 개정으로 세지 않는다)
+    expect(byId.hang).toMatchObject({ number: 6, clauseNumber: 3, kind: 'same' });
+  });
+
+  it('자리가 그대로인 행·신설·삭제 행에는 movedFrom 이 없다', () => {
+    const { rows } = buildComparisonRows(
+      [
+        art({ id: 'keep', number: 1, clauseNumber: 1, content: '옛 글' }),
+        art({ id: 'gone', number: 2, content: '삭제됨' }),
+        art({ id: 'nullBranch', number: 3, branchNumber: null, content: '같다' }),
+      ],
+      [
+        art({ id: 'keep', number: 1, clauseNumber: 1, content: '새 글' }),
+        art({ id: 'new', number: 2, content: '신설' }),
+        art({ id: 'nullBranch', number: 3, branchNumber: 0, content: '같다' }),
+      ],
+    );
+    for (const row of rows) expect(row).not.toHaveProperty('movedFrom');
+  });
+});

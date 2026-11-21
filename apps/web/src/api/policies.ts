@@ -264,12 +264,23 @@ export type CompareDiffPart = { value: string; added?: boolean; removed?: boolea
 
 export type CompareSide = { title: string; content: string; effectiveDate: string | null };
 
+/** 조문 행의 자리 — 조·가지·항·목 번호(API 의 ComparePosition 과 같다) */
+export type ComparePosition = {
+  number: number;
+  branchNumber: number | null;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+};
+
 export type CompareRow = {
   articleId: string;
+  /** 표기용 위치 — 신조문 날짜, 삭제 행은 구조문 날짜의 위치 */
   number: number;
   branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
+  /** 구조문 날짜의 위치 — 조 번호가 바뀐 행만(T-229) */
+  movedFrom?: ComparePosition;
   kind: CompareKind;
   before: CompareSide | null;
   after: CompareSide | null;

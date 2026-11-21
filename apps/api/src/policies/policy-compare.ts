@@ -9,6 +9,7 @@
  */
 
 import * as Diff from 'diff';
+import { bareTitle } from '../common/article-label';
 
 export type CompareArticleInput = {
   id: string;
@@ -26,6 +27,14 @@ export type CompareKind = 'added' | 'removed' | 'changed' | 'same';
 
 export type CompareDiffPart = { value: string; added?: boolean; removed?: boolean };
 
+/** 조문 행의 자리 — 조·가지·항·목 번호 */
+export type ComparePosition = {
+  number: number;
+  branchNumber: number | null;
+  clauseNumber: number | null;
+  itemNumber: number | null;
+};
+
 export type CompareRow = {
   articleId: string;
   /** 표기용 위치 — 신조문 기준, 삭제된 조문은 구조문 기준 */
@@ -33,6 +42,11 @@ export type CompareRow = {
   branchNumber?: number | null;
   clauseNumber: number | null;
   itemNumber: number | null;
+  /**
+   * 구조문 날짜의 위치 — 표기용 위치와 다를 때만(재파싱 묶음 등으로 조 번호가 바뀐 행, T-229).
+   * 대비표가 구조문 칸에 그때의 위치를 적는다. 신설·삭제 행과 자리가 그대로인 행에는 없다.
+   */
+  movedFrom?: ComparePosition;
   kind: CompareKind;
   before: { title: string; content: string; effectiveDate: string | null } | null;
   after: { title: string; content: string; effectiveDate: string | null } | null;
@@ -73,6 +87,22 @@ function compareSortKey(a: CompareRow, b: CompareRow): number {
   return 0;
 }
 
+function positionOf(a: CompareArticleInput): ComparePosition {
+  return {
+    number: a.number,
+    branchNumber: a.branchNumber ?? null,
+    clauseNumber: a.clauseNumber,
+    itemNumber: a.itemNumber,
+  };
+}
+
+/** 두 자리가 같은지 — 정렬 키와 같은 규칙(가지 번호 없음 = 0, 항·목 없음 = null) */
+function samePosition(a: CompareArticleInput, b: CompareArticleInput): boolean {
+  const ka = sortKey(a);
+  const kb = sortKey(b);
+  return ka.every((v, i) => v === kb[i]);
+}
+
 function normalize(text: string): string {
   // 줄바꿈·공백 차이만으로 "개정됨"이 되지 않도록 비교 전에만 정규화한다(표시는 원문 그대로).
   return String(text ?? '')
@@ -102,7 +132,9 @@ export function buildComparisonRows(
     else if (!a) kind = 'removed';
     else kind = normalize(b.content) === normalize(a.content) ? 'same' : 'changed';
 
-    const titleChanged = !!b && !!a && String(b.title ?? '').trim() !== String(a.title ?? '').trim();
+    // 조 머리 행은 겉 괄호 한 겹을 벗긴 제목끼리 — `(목적)`·`목적`은 같은 제목이다(POLICY-10 표시 규칙, T-229)
+    const shown = (t: string) => (anchor.clauseNumber == null && anchor.itemNumber == null ? bareTitle(t) : String(t ?? '').trim());
+    const titleChanged = !!b && !!a && shown(b.title) !== shown(a.title);
     // 본문은 같은데 제목만 바뀐 경우도 개정으로 본다
     if (kind === 'same' && titleChanged) kind = 'changed';
 
@@ -112,6 +144,7 @@ export function buildComparisonRows(
       branchNumber: anchor.branchNumber ?? null,
       clauseNumber: anchor.clauseNumber,
       itemNumber: anchor.itemNumber,
+      ...(b && a && !samePosition(b, a) ? { movedFrom: positionOf(b) } : {}),
       kind,
       before: b ? { title: b.title, content: b.content, effectiveDate: b.effectiveDate } : null,
       after: a ? { title: a.title, content: a.content, effectiveDate: a.effectiveDate } : null,

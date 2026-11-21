@@ -4,7 +4,7 @@ import { AlertTriangle, Columns2, X } from 'lucide-react';
 import { policiesApi, type CrossPolicyRow } from '../api/policies';
 import { LoadingBlock } from './ui/LoadingBlock';
 import { EmptyState } from './ui/EmptyState';
-import { formatArticleJo } from '../lib/legalArticleLabel';
+import { compareAddress } from '../lib/compareTableGroups';
 
 /**
  * 규정 간 비교 (T-91) — 서로 다른 두 규정을 나란히 본다.
@@ -32,12 +32,6 @@ const KIND_CLASS: Record<CrossPolicyRow['kind'], string> = {
   'left-only': 'bg-sky-100 text-sky-800',
   'right-only': 'bg-violet-100 text-violet-800',
 };
-
-function articleLabel(row: CrossPolicyRow): string {
-  if (row.itemNumber != null) return `${row.itemNumber}.`;
-  if (row.clauseNumber != null) return `제${row.clauseNumber}항`;
-  return formatArticleJo(row.number, row.branchNumber);
-}
 
 function SideCell({ side, diff, which }: {
   side: CrossPolicyRow['left'];
@@ -194,8 +188,9 @@ export default function CrossPolicyComparePanel({
                   <tbody>
                     {rows.map((row) => (
                       <tr key={row.key} className="align-top border-t border-gray-100">
-                        <td className="p-2">
-                          <div className="text-xs font-medium text-gray-800">{articleLabel(row)}</div>
+                        <td className="p-2 whitespace-nowrap">
+                          {/* 어느 조인지까지(`제3조 ② 1.`) — '다른 조문만'이 조 머리 행을 숨겨도 위치를 안다(T-229). 한 줄로 */}
+                          <div className="text-xs font-medium text-gray-800">{compareAddress(row)}</div>
                           <span className={`inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] ${KIND_CLASS[row.kind]}`}>
                             {KIND_LABEL[row.kind]}
                           </span>

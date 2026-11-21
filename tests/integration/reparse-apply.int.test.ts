@@ -242,6 +242,8 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
       // 신구조문대비표도 그날의 번호로 맞댄다
       const cmp = (await api(`/policies/${policyId}/compare?from=${yesterday}&to=${today}`, { token: t.token })).body;
       expect(cmp.rows.find((r: any) => r.articleId === ids['3'])).toMatchObject({ kind: 'same', number: 5 });
+      // 옛 날짜의 위치도 함께 준다 — 대비표가 구조문 칸에 그때 위치를 적는다(T-229)
+      expect(cmp.rows.find((r: any) => r.articleId === ids['3']).movedFrom).toMatchObject({ number: 3, clauseNumber: null, itemNumber: null });
     });
 
     it('바로잡기는 다른 조문의 얼린 자리로 옮기지 못한다', async () => {
@@ -261,6 +263,8 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
       expect((await api(`/versions/${current.id}/archive`, { method: 'POST', token: t.token })).status).toBe(200);
       const cmp = (await api(`/policies/${policyId}/compare?from=${kstDay(-1)}&to=${today}`, { token: t.token })).body;
       expect(cmp.rows.find((r: any) => r.articleId === ids['3'])).toMatchObject({ kind: 'removed', number: 3 });
+      // 삭제 행의 위치가 이미 구조문 날짜라 movedFrom 은 없다(T-229)
+      expect(cmp.rows.find((r: any) => r.articleId === ids['3'])).not.toHaveProperty('movedFrom');
     });
   });
 
@@ -592,8 +596,8 @@ describe('재파싱 반영·묶음 승인 (T-110 ②)', () => {
       review = (await api(`/reparse-reviews/${review.id}/apply`, { method: 'POST', token: editorToken })).body;
       review = (await api(`/reparse-reviews/${review.id}/submit`, { method: 'POST', token: editorToken })).body;
       expect((await api(`/reparse-reviews/${review.id}/approve`, { method: 'POST', token: t.token, json: { effectiveDate: kstDay(), changeNote: '개정' } })).status).toBe(201);
-      const order = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.order;
-      const res = await api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [...order].reverse() } });
+      const { order, basedOn } = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body;
+      const res = await api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [...order].reverse(), basedOn } });
       expect(res.status).toBe(400);
       expect(String(res.body.message)).toContain('지난 계층 기록');
     });

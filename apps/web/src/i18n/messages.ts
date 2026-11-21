@@ -2,6 +2,7 @@ import type { Locale } from '../stores/localeStore';
 import { dashboardMessages } from './messages.dashboard';
 import { policyDetailMessages } from './messages.policyDetail';
 import { policyDetailDialogMessages } from './messages.policyDetailDialogs';
+import { compareTableMessages } from './messages.compareTable';
 
 type Msg = Record<string, string | string[] | Record<string, unknown>>;
 
@@ -10,6 +11,7 @@ export const messages: Record<Locale, Msg> = {
     ...dashboardMessages.ko, // 화면별로 나눈 문구(T-213) — 같은 키를 아래에 또 두지 않는다
     ...policyDetailMessages.ko, // 규정 상세 머리·도구(T-215)
     ...policyDetailDialogMessages.ko, // 규정 상세 확인 창·안내 띠(T-215)
+    ...compareTableMessages.ko, // 신구조문대비표의 표·요약(T-229)
     'layout.appTitle': '베다(Veda)',
     'layout.productTitle': '규정관리 시스템',
     'layout.subtitle': '정책·규정 통합 플랫폼',
@@ -762,6 +764,7 @@ export const messages: Record<Locale, Msg> = {
     ...dashboardMessages.en,
     ...policyDetailMessages.en,
     ...policyDetailDialogMessages.en,
+    ...compareTableMessages.en,
     'layout.appTitle': 'Veda',
     'layout.productTitle': 'Policy Management System',
     'layout.subtitle': 'Policy management platform',
