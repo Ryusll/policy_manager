@@ -112,7 +112,7 @@ import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDial
 import { useFlashMessage } from '../lib/flashMessage';
 import { useLatest } from '../lib/useLatest';
 import { authScopeGuard, fetchPolicyNow } from '../lib/policyRefresh';
-import { dialogErrorTarget, exportBusyFor, isRunning, pendingJumpAction, policyLabel, resultTarget, useReportResult, useRuns, useShownPolicy, useShownToolbar, useToolStatus } from '../lib/policyResult';
+import { dialogErrorTarget, exportBusyFor, isRunning, pendingJumpAction, policyLabel, resultTarget, useReportResult, useRuns, useShownPolicy, useShownToolbar, useToolStatus, type ToolStatusKind } from '../lib/policyResult';
 import { exportButtonLabel, exportFailedMessage, exportMenu, moreMenu, viewMenu } from '../lib/policyToolMenus';
 import PolicyTopBar from '../components/policy-detail/PolicyTopBar';
 import PolicyHeaderCard from '../components/policy-detail/PolicyHeaderCard';
@@ -646,7 +646,8 @@ function PolicyDetailView() {
   // 도구 줄 알림을 잠깐 보이고 지운다 — 그사이 다른 알림(실패 문구 등)으로 바뀌었거나 같은 알림을 다시 띄웠으면 남긴다(T-215, lib/flashMessage)
   const flashToolMsg = useFlashMessage(setLawToolMsg);
   // 도구 줄 상태 — 남긴 실패는 다른 작업의 결과가 덮지 않는다(lib/policyResult.useToolStatus)
-  const toolStatus = useToolStatus(setLawToolMsg, flashToolMsg);
+  const [lawToolKind, setLawToolKind] = useState<ToolStatusKind>('info');
+  const toolStatus = useToolStatus(setLawToolMsg, flashToolMsg, setLawToolKind);
   // 지금 보이는 규정과 화면이 떠 있는지, 그리고 비동기 작업(내보내기·초안 시행·양식 저장)의 결과 알림 — 시작한 규정을 떠났으면
   // 그 규정 이름을 붙여 화면 전체 알림으로(lib/policyResult)
   const shownPolicy = useShownPolicy(id);
@@ -2975,6 +2976,7 @@ function PolicyDetailView() {
       {/* 도구 줄 — 늘 보이는 것과 메뉴 셋(내보내기·보기 설정·더보기, T-215 — components/policy-detail/PolicyToolbar·lib/policyToolMenus) */}
       <PolicyToolbar
         lawToolMsg={lawToolMsg || null}
+        lawToolKind={lawToolKind}
         view={{ mode: articleViewMode, canSegment: canUseSegmentMode, onChange: setArticleViewMode }}
         jump={{ value: selectedArticle?.id || '', options: flatArticlesForJump, onJump: jumpToArticle }}
         compare={{ hasDates: effectiveDates.length > 0, onOldNew: () => setShowComparison(true), onThreeWay: () => setShowThreeWay(true) }}

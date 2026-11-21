@@ -20,6 +20,10 @@ export const policyDetailDialogMessages = {
     'policyDetail.drafts.adminWill': ' 관리자가 시행하면 모두에게 보입니다.',
     'policyDetail.files.uploadFailed': '첨부파일을 올리지 못했습니다.',
     'policyDetail.files.deleteFailed': '첨부파일을 지우지 못했습니다.',
+    // 올리기·지우기는 됐는데 파일 목록을 다시 받지 못했을 때 먼저 말하는 것(T-227 — 다시 올리거나 지우지 않게). 뒤에 규정 정보 저장과
+    // 같은 policyDetail.result.refreshFailed 를 덧붙인다 — 첨부 창은 열 때 목록을 다시 받지 않아 '창을 다시 열라'고 하지 않는다
+    'policyDetail.files.uploaded': '첨부파일을 올렸습니다.',
+    'policyDetail.files.deleted': '첨부파일을 지웠습니다.',
     'policyDetail.reorder.failed': '조 순서를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.',
     'policyDetail.reorder.open': '조 순서 재정렬',
     'policyDetail.reorder.busy': '조 순서 저장 중…',
@@ -74,6 +78,8 @@ export const policyDetailDialogMessages = {
     'policyDetail.drafts.adminWill': ' Once an administrator puts them into force, everyone can see them.',
     'policyDetail.files.uploadFailed': 'Could not upload the attachment.',
     'policyDetail.files.deleteFailed': 'Could not delete the attachment.',
+    'policyDetail.files.uploaded': 'The attachment was uploaded.',
+    'policyDetail.files.deleted': 'The attachment was deleted.',
     'policyDetail.reorder.failed': 'Could not save the article order. Please try again shortly.',
     'policyDetail.reorder.open': 'Reorder articles',
     'policyDetail.reorder.busy': 'Saving the article order…',

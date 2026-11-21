@@ -120,14 +120,18 @@ describe('끝난 뒤 다시 받기 (T-215 16~20차 — lib/policyRefresh)', () =
     expect(client.getQueryData(['policy', 'A'])).toEqual({ chapters: before });
   });
 
-  it('값이 없는 채 받는 중이면(캐시가 지워졌다 다시 그린 첫 받기) 합류하지 않고 끊은 뒤 새로 받는다', async () => {
+  // T-227 로 바뀐 동작: 끊으면 그 받기를 기다리던 쪽(다른 작업의 이 함수)이 받지 못한 것으로 끝나서(21차), 끊지 않고 기다린다
+  it('값이 없는 채 받는 중이면(캐시가 지워졌다 다시 그린 첫 받기) 합류하지 않고 끝나기를 기다린 뒤 새로 받는다 — 그 받기의 옛 값은 쓰지 않는다', async () => {
     const client = quiet();
     const old = deferred();
     void client.fetchQuery({ queryKey: ['policy', 'A'], queryFn: () => old.promise }).catch(() => undefined);
     api.get.mockResolvedValueOnce({ chapters: ours });
-    expect(await fetchPolicyNow(client, 'A', always)).toEqual({ chapters: ours });
-    old.resolve({ chapters: before });
+    const result = fetchPolicyNow(client, 'A', always);
     await new Promise((r) => setTimeout(r, 0));
+    expect(api.get).not.toHaveBeenCalled(); // 끊고 새로 받지 않는다 — 끝나기를 기다린다
+    old.resolve({ chapters: before });
+    expect(await result).toEqual({ chapters: ours });
+    expect(api.get).toHaveBeenCalledTimes(1);
     expect(client.getQueryData(['policy', 'A'])).toEqual({ chapters: ours });
   });
 

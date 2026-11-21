@@ -7,6 +7,8 @@ import DropdownMenu, { type MenuItem } from '../DropdownMenu';
 type Props = {
   /** 내보내기·복사·일괄 시행 등의 결과 알림 — 상태 영역에 보인다(화면 읽기 프로그램도 읽는다) */
   lawToolMsg: string | null;
+  /** 그 글의 종류 — 실패는 붉은 계열로(T-227). 주지 않으면 진행·알림(초록) */
+  lawToolKind?: 'info' | 'error';
   view: { mode: 'full' | 'segment'; canSegment: boolean; onChange: (mode: 'full' | 'segment') => void };
   jump: { value: string; options: { id: string; label: string }[]; onJump: (id: string) => void };
   compare: { hasDates: boolean; onOldNew: () => void; onThreeWay: () => void };
@@ -37,7 +39,15 @@ export default function PolicyToolbar(p: Props) {
           <Layers size={16} className="text-slate-600 flex-shrink-0" aria-hidden />
           <span className="text-xs font-semibold text-slate-800">{t('policyDetail.tools.title')}</span>
         </div>
-        <span role="status" aria-live="polite" className={clsx(p.lawToolMsg && 'text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5')}>
+        <span
+          role="status"
+          aria-live="polite"
+          data-kind={p.lawToolMsg ? (p.lawToolKind ?? 'info') : undefined}
+          className={clsx(
+            p.lawToolMsg && 'text-[11px] border rounded px-2 py-0.5',
+            p.lawToolMsg && (p.lawToolKind === 'error' ? 'text-red-700 bg-red-50 border-red-200' : 'text-emerald-800 bg-emerald-50 border-emerald-200'),
+          )}
+        >
           {p.lawToolMsg ?? ''}
         </span>
       </div>

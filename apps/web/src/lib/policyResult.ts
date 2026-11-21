@@ -61,18 +61,27 @@ export type ToolStatus = {
   isSticky: () => boolean;
 };
 
+/** 도구 줄 상태 글의 종류 — 실패는 붉은 계열로 칠한다(T-227, C-116 ⑥: 전에는 실패 문구도 초록색이었다) */
+export type ToolStatusKind = 'info' | 'error';
+
 /**
  * 도구 줄 상태(ToolStatus) — 남긴 실패인지를 상자에 같이 적는다(9차 검토: 같은 규정에서 PDF·한/글을 함께 돌리면 나중에 끝난 성공이
  * 앞의 실패를 덮고 지웠다). 상자는 useState 로 고정한 객체(그리는 중에 넘기는 함수가 닫아 두므로 ref 를 쓰지 않는다 — useShownPolicy 와
- * 같은 방식). 돌려주는 객체는 인자가 같으면 늘 같다.
+ * 같은 방식). 돌려주는 객체는 인자가 같으면 늘 같다. setKind 를 주면 글의 종류(실패·그 밖)를 함께 알린다 — 글은 문자열 그대로 두고 종류만
+ * 따로(같은 글에서 종류만 바뀌어도 다시 그리게, T-227)
  */
-export function useToolStatus(setMsg: Dispatch<SetStateAction<string>>, flash: (message: string, ms: number) => void): ToolStatus {
+export function useToolStatus(
+  setMsg: Dispatch<SetStateAction<string>>,
+  flash: (message: string, ms: number) => void,
+  setKind?: (kind: ToolStatusKind) => void,
+): ToolStatus {
   // fails — 남긴 실패 글들(덧붙인 차례). 글을 ' / ' 로 잘라 같은지 보면 서버 문구에 ' / ' 가 들면 어긋나 목록으로 둔다(12차 #5)
   const [box] = useState(() => ({ sticky: false, fails: [] as string[] }));
   return useMemo(() => {
     const reset = () => {
       box.sticky = false;
       box.fails = [];
+      setKind?.('info');
     };
     return {
       show: (m: string) => {
@@ -84,11 +93,13 @@ export function useToolStatus(setMsg: Dispatch<SetStateAction<string>>, flash: (
         // 남긴 실패가 없으면 목록도 비어 있다(실패가 아닌 동작은 모두 reset 으로 비운다)
         if (!box.fails.includes(m)) box.fails = [...box.fails, m];
         box.sticky = true;
+        setKind?.('error');
         setMsg(box.fails.join(' / '));
       },
       failNow: (m: string) => {
         box.sticky = true;
         box.fails = [m];
+        setKind?.('error');
         setMsg(m);
       },
       flash: (m: string, ms: number) => {
@@ -101,7 +112,7 @@ export function useToolStatus(setMsg: Dispatch<SetStateAction<string>>, flash: (
       },
       isSticky: () => box.sticky,
     };
-  }, [box, setMsg, flash]);
+  }, [box, setMsg, flash, setKind]);
 }
 
 /**

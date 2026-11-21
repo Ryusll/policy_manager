@@ -136,7 +136,9 @@ describe('조문 이동 — 전문 보기 안의 그 조로 (T-215 검토)', () 
     expect(page).toContain('const flashToolMsg = useFlashMessage(setLawToolMsg);');
     expect(page).toContain('[asOfBlocked, asOfFailed, viewPolicy, jumpFullView, t, id]');
     expect(page).toContain('const shownPolicy = useShownPolicy(id);');
-    expect(page).toContain('const toolStatus = useToolStatus(setLawToolMsg, flashToolMsg);');
+    // T-227: 글의 종류(실패는 붉은 계열)를 함께 알린다
+    expect(page).toContain('const toolStatus = useToolStatus(setLawToolMsg, flashToolMsg, setLawToolKind);');
+    expect(page).toContain('lawToolKind={lawToolKind}');
     expect(page).toContain('const reportResult = useReportResult(shownPolicy, toolStatus, t);');
     expect(page).toMatch(/\} catch \(err: any\) \{\s*reportResult\(id, label, exportFailedMessage\(t, 'pdf', err\?\.response\?\.status\), 'error'\);\s*\} finally \{/);
     expect(page).toMatch(/\} catch \(err: any\) \{\s*reportResult\(id, label, exportFailedMessage\(t, 'hwpx', err\?\.response\?\.status\), 'error'\);\s*\} finally \{/);
