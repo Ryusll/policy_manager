@@ -29,8 +29,11 @@ import {
 } from './chapter-header';
 import {
   ReorderPlanError,
+  assertJoLayoutBasis,
   buildReorderPlan,
   currentJoOrder,
+  joLayoutDigest,
+  requireJoLayoutBasis,
   type ReorderTarget,
 } from './article-reorder';
 import { coerceNullableDate, parseDateOnly, toDateOnlyString, todayDateOnly } from '../common/date-only';
@@ -464,6 +467,12 @@ export class PoliciesService {
         scheduledCount: scheduledOf.size,
         // 오늘 자리가 지금 행과 다른 조문·장 수(미래 시행 구조 변경) — 0 이 아니면 화면이 구조 편집을 막는다
         structureChanges: built.displaced,
+        // 조 순서 저장이 견줄 지금 배치의 지문(T-225) — 응답에서 빠지는 행까지 DB 행 전부로 만든다
+        joOrderBasis: joLayoutDigest(
+          policy.chapters.flatMap((c) =>
+            c.articles.map((a) => ({ id: a.id, chapterId: a.chapterId, chapterNumber: c.number, number: a.number, branchNumber: a.branchNumber })),
+          ),
+        ),
         // 폐지 예정인 조문 수(T-132 ③) — 오늘은 시행 중
         repealScheduledCount: annotated.reduce(
           (n, c) => n + c.articles.filter((a) => a.currentState === 'in_force' && a.versions[0]?.repealedOn).length,
@@ -1322,18 +1331,27 @@ export class PoliciesService {
     policyId: string,
     order: ReorderTarget[],
     userId: string,
+    basedOn: string | null | undefined,
   ) {
     await this.assertPolicyInTenant(tenantId, policyId);
+    // 창이 그린 배치 지문이 없으면 견줄 수 없어 거절한다(T-225 — 배포 전에 연 옛 화면). 잠그기 전에
+    const basis = requireJoLayoutBasis(basedOn);
     // 규정을 잠근 뒤 읽고 계획을 세운다(T-131) — 그 사이 재파싱 승인이 조문을 옮기거나 새 조문을 넣었으면, 그 전 목록으로 세운
     // 계획이 승인을 되돌리지 않게(새 조가 빠진 차례면 계획 단계에서 400)
     const changed = await this.prisma.$transaction(
       async (tx) => {
         await lockPolicy(tx, policyId, LONG_LOCK_WAIT_MS);
-        const chapters = await tx.chapter.findMany({ where: { policyId }, select: { id: true } });
+        const chapters = await tx.chapter.findMany({ where: { policyId }, select: { id: true, number: true } });
         const rows = await tx.article.findMany({
           where: { chapter: { policyId } },
           select: { id: true, chapterId: true, sectionId: true, number: true, branchNumber: true, clauseNumber: true, itemNumber: true },
         });
+        // 창을 연 뒤에 배치가 바뀌었으면 409(T-225) — 옛 번호로 보낸 차례가 엉뚱한 조에 적용되지 않게. 계획·'바뀐 것 없음'보다 먼저
+        const chapterNumber = new Map(chapters.map((c) => [c.id, c.number]));
+        assertJoLayoutBasis(
+          rows.map((r) => ({ ...r, chapterNumber: chapterNumber.get(r.chapterId)! })),
+          basis,
+        );
         let changes;
         try {
           changes = buildReorderPlan(rows, order, chapters.map((c) => c.id));
@@ -1379,15 +1397,20 @@ export class PoliciesService {
     return { changed };
   }
 
-  /** 재정렬 화면이 시작점으로 쓸 현재 순서 */
+  /** 재정렬 화면이 시작점으로 쓸 현재 순서와 그 배치 지문(T-225 — 저장할 때 basedOn 으로 되돌려 보낸다) */
   async listJoOrder(tenantId: string, policyId: string) {
     await this.assertPolicyInTenant(tenantId, policyId);
-    const chapters = await this.prisma.chapter.findMany({
-      where: { policyId },
-      select: { id: true, number: true, title: true, articles: { select: { number: true, branchNumber: true } } },
-      orderBy: { number: 'asc' },
-    });
-    return { order: currentJoOrder(chapters) };
+    // 장과 조문을 한 시점으로 읽는다(T-225) — 관계를 펼치는 조회는 장·조문 질의가 따로 나가, 그 사이에 커밋된 저장(새 장으로 조문 옮기기
+    // 등)이 끼면 그 조문이 순서와 지문에서 함께 빠진다
+    const chapters = await readSnapshot(this.prisma, (db) =>
+      db.chapter.findMany({
+        where: { policyId },
+        select: { id: true, number: true, title: true, articles: { select: { id: true, number: true, branchNumber: true } } },
+        orderBy: { number: 'asc' },
+      }),
+    );
+    const basedOn = joLayoutDigest(chapters.flatMap((c) => c.articles.map((a) => ({ ...a, chapterId: c.id, chapterNumber: c.number }))));
+    return { order: currentJoOrder(chapters), basedOn };
   }
 
   async createAppendix(tenantId: string, policyId: string, dto: CreatePolicyAppendixDto) {

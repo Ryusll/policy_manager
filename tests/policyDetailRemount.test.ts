@@ -103,7 +103,7 @@ describe('다시 그린 화면의 열린 첨부 창·지우는 파일 (T-215 13�
     ];
     const client = new QueryClient();
     client.setQueryData(['policy', 'A'], { chapters: before });
-    const o = { id: 'A', label: 'A-01 가 규정', panelOpen: false, chapters: before, signature: joOrderSignature(before), shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), onSaved: vi.fn(), t };
+    const o = { id: 'A', label: 'A-01 가 규정', panelOpen: false, chapters: before, signature: joOrderSignature(before), shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), setNote: vi.fn(), onSaved: vi.fn(), t, note: null, basedOn: 'f'.repeat(64) };
     api.reorder.mockRejectedValueOnce({ response: { status: 409, data: {} } });
     api.get.mockResolvedValueOnce({ chapters: before });
     await capture(() => useReorderSave(o), client).save(order);
@@ -165,7 +165,8 @@ describe('조 순서 창·규정 정보·양식 메뉴 (T-215 13차 #1·#4·#5)'
     // 지켜보기의 판단은 reorderWatchStep(위 표), 훅은 그 결과로 onSaved 를 부르고 자기 저장을 표시한다(14차 #8 — 순수 함수로 뺐다)
     const hook = src('apps/web/src/components/policy-detail/useReorderSave.ts');
     expect(hook).toMatch(/const \{ next, settled \} = reorderWatchStep\(watch, saving, o\.signature\);\s*Object\.assign\(watch, next\);\s*if \(settled\) latest\.current\.onSaved\(\);/);
-    expect(hook).toMatch(/if \(!id \|\| !start\('reorder', id\)\) return;\s*watch\.mine = true;/);
+    // 진행을 건 바로 뒤에 자기 저장을 표시한다(T-225 — 그 앞에 지문이 없으면 보내지 않는 확인이 들어갔다)
+    expect(hook).toMatch(/if \(!start\('reorder', id\)\) return;\s*watch\.mine = true;/);
   });
 
   it('규정 정보 — 보낸 날짜를 저장소에 두고, 저장 중이면 그 날짜를 그린다(칸은 막는다)', () => {

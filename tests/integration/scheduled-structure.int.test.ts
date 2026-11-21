@@ -134,8 +134,8 @@ UPDATE articles SET number = 8 WHERE id IN ('${ids.duty}', '${ids.duty1}');`);
   });
 
   it('조 순서 재정렬은 그날 뒤에', async () => {
-    const order = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.order;
-    const res = await api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [...order].reverse() } });
+    const { order, basedOn } = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body;
+    const res = await api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [...order].reverse(), basedOn } });
     expect(res.status).toBe(400);
     expect(String(res.body.message)).toContain(`${FUTURE} 시행, 재파싱 묶음`);
     expect(String(res.body.message)).toContain('조 순서를 다시 매길 수 없습니다');

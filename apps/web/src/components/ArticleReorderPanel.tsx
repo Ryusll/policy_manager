@@ -27,14 +27,17 @@ export default function ArticleReorderPanel({
   saving,
   error,
   notice,
+  noticeAlert,
   onCancel,
   onSave,
 }: {
   chapters: any[] | undefined | null;
   saving?: boolean;
   error?: string;
-  /** 창을 연 뒤 조 순서가 바뀌어 새로 그렸을 때의 안내 — 옮기던 것이 사라진 까닭(T-215 15차 #5) */
+  /** 창 위 안내 — 연 뒤 조 순서가 바뀌어 새로 그렸을 때의 다시 열기 안내(옮기던 것이 사라진 까닭, T-215 15차 #5) 또는 저장이 반영되지 않았다는 거절 안내(T-225) */
   notice?: string;
+  /** 안내가 저장이 반영되지 않았다는 알림인가(T-225 거절 안내) — role=alert 로 읽힌다(아니면 status) */
+  noticeAlert?: boolean;
   onCancel: () => void;
   onSave: (order: { chapterId: string; jo: number; branch?: number }[]) => void;
 }) {
@@ -70,7 +73,7 @@ export default function ArticleReorderPanel({
         </div>
 
         {notice && (
-          <p role="status" className="px-5 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-200">
+          <p role={noticeAlert ? 'alert' : 'status'} className="px-5 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-200">
             {notice}
           </p>
         )}

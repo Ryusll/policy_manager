@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { policiesApi } from '../../api/policies';
-import { apiErrorMessage, serverMessage } from '../../lib/apiError';
+import { apiErrorMessage, errorCode, serverMessage } from '../../lib/apiError';
 import { dialogErrorTarget, isRunning, useRuns, type ShownPolicy } from '../../lib/policyResult';
 import { authScopeGuard, fetchPolicyNow } from '../../lib/policyRefresh';
 import { useLatest } from '../../lib/useLatest';
+import { baseStep, noteLeft, staleKey, type ReorderBase, type ReorderNote } from './reorderNotice';
+
+// 안내 칸의 규칙은 reorderNotice.ts — 페이지·시험이 여기서 함께 가져다 쓴다
+export { baseStep, noteLeft, reorderNotice, staleKey, type ReorderBase, type ReorderNote } from './reorderNotice';
 
 type Report = (startedId: string, label: string, message: string, kind: 'success' | 'error', flashMs?: number) => void;
 type Order = Parameters<typeof policiesApi.reorderArticles>[1];
@@ -79,7 +84,12 @@ export function reorderWatchStep(w: ReorderWatch, saving: boolean, signature: st
  * - 끝나면 성공이든 실패든 시작한 규정을 직접 다시 받는다(lib/policyRefresh — 화면을 옮겨 지켜보는 쪽이 없어도, 15차 #2·16차)
  * - 성공 — onSaved(선택한 조 놓기·창 닫기). 새 순서를 받지 못했으면 그렇다고 알린다(옛 순서가 남은 창을 다시 열어 같은 이동을 또
  *   보내지 않게, 16차 #5)
- * - 서버가 거절(4xx) — 반영되지 않았다. 그 사이 순서가 바뀌었어도 서버 문구 그대로 그 창 안에(창이 없으면 결과 알림, 15차 #1)
+ * - 서버가 거절(4xx) — 반영되지 않았다. 그 사이 순서가 바뀌었어도 서버 문구 그대로 그 창 안에(창이 없으면 결과 알림, 15차 #1). 창을 연
+ *   뒤에 다른 저장이 배치를 바꿨으면(409 POLICY_JO_ORDER_STALE — 창이 그린 규정의 배치 지문 basedOn 을 함께 보내 서버가 견준다, T-225)
+ *   화면 문구를 창 위 안내 칸에 하나만(setNote — 다시 받은 새 순서로 새로 그린 창의 다시 열기 안내 대신). 문구는 창에 무엇이 있는지에
+ *   따라 셋: 지금 순서로 새로 그렸으면 확인하고 다시 옮기라고, 받았는데 순서가 창과 같으면(바꿨다 되돌림·응답에서 빠지는 행만 바뀜) 옮긴
+ *   것이 그대로이니 다시 저장하라고, 받지 못해 옛 순서 그대로면 새로 고치라고(다시 저장해도 같은 거절이다). 안내는 그 순서를 떠나면 걷는다.
+ *   지문이 없으면(옛 응답) 보내지 않고 새로 고치라고 한다 — 서버가 400 으로 거절한다
  * - 응답이 없거나 5xx — 받은 규정에 보낸 차례가 보이면 반영된 것이고, 아니면 서버가 잠금을 기다렸다 나중에 반영할 수도 있어 반영됐는지
  *   모른다. 어느 쪽이든 창을 닫고 알린다 — 옛 순서를 든 창에서 다시 저장하면 두 번 적용된다(16차 #1)
  * - 인증 주체가 바뀌었으면(로그아웃·다른 사용자 로그인) 아무것도 알리지 않는다(T-181, 16차 #2)
@@ -91,10 +101,15 @@ export function useReorderSave(o: {
   panelOpen: boolean;
   /** 순서 창이 그린 규정의 장 — 보낸 차례가 가리키는 조문을 여기서 찾는다(창은 서명이 바뀌면 새로 그려 늘 이 값과 같다) */
   chapters: Chapters;
+  /** 창이 그린 규정의 배치 지문(GET :id 의 current.joOrderBasis, T-225) — 저장할 때 보내 서버가 잠근 뒤 지금 배치와 견준다 */
+  basedOn?: string;
   signature: string;
   shown: Readonly<ShownPolicy>;
   report: Report;
   setError: (message: string) => void;
+  /** 창 위 안내 칸의 거절 안내(T-225, reorderNotice 가 읽는다) — 저장을 시작하거나 그 순서를 떠나면 걷는다 */
+  note: ReorderNote | null;
+  setNote: (note: ReorderNote | null) => void;
   onSaved: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
@@ -109,37 +124,89 @@ export function useReorderSave(o: {
     Object.assign(watch, next);
     if (settled) latest.current.onSaved();
   }, [saving, o.signature, watch, latest]);
+  useEffect(() => {
+    if (noteLeft(o.note, o.signature)) latest.current.setNote(null);
+  }, [o.note, o.signature, latest]);
+  // 창 기준(baseStep) — 열고 닫을 때, 그린 순서가 바뀔 때. 저장을 시작할 때와 거절 안내를 달 때는 save 가 잡는다. 저장이 끝나 거절 문구를
+  // 고를 때는 그 사이 그린 것까지 반영된 지금 값을 읽는다(save 는 시작한 그리기의 값을 닫아 둔다). layout effect 라 그린 직후 같은 태스크
+  // 안에서 고친다 — passive effect 면 한 태스크 늦어, 그 사이 끝난 받기가 새로 그리기 전의 기준을 읽고 문구를 잘못 고른다
+  const [base, setBase] = useState<ReorderBase>({ sig: null, redrawn: false });
+  const baseNow = useLatest(base);
+  // latest.current 는 위 useLatest(o) 의 layout effect 가 먼저 고친 값이다 — 선언 차례를 바꾸지 말 것(아래로 옮기면, 앞 그리기 뒤에 순서가
+  // 바뀐 채 열 때 연 그리기의 서명 대신 앞 그리기의 서명을 기준으로 잡아 막 연 창에 '다시 열었습니다'가 뜬다)
+  useLayoutEffect(() => {
+    setBase((b) => baseStep(b, o.panelOpen ? { type: 'open', sig: latest.current.signature } : { type: 'close' }));
+  }, [o.panelOpen, latest]);
+  useLayoutEffect(() => {
+    setBase((b) => baseStep(b, { type: 'sig', sig: o.signature }));
+  }, [o.signature]);
   return {
     saving,
+    /** 기준(연 때·저장을 시작한 때·거절 안내를 단 때) 뒤에 창이 새로 그려졌는가 — 다시 열기 안내(reorderNotice) */
+    redrawn: base.redrawn,
     save: async (order: Order) => {
-      const { id, label, shown, report, setError, onSaved, t, chapters } = latest.current;
-      if (!id || !start('reorder', id)) return;
+      const { id, label, shown, report, setError, setNote, onSaved, t, chapters, basedOn } = latest.current;
+      if (!id) return;
+      if (!basedOn) {
+        const missing = t('policyDetail.reorder.basisMissing');
+        if (dialogErrorTarget(id, shown, panelOf.current) === 'dialog') setError(missing);
+        else report(id, label, missing, 'error');
+        return;
+      }
+      if (!start('reorder', id)) return;
       watch.mine = true;
+      setBase((b) => baseStep(b, { type: 'save', sig: joOrderSignature(chapters) }));
       setError('');
+      setNote(null);
       const inScope = authScopeGuard();
       const expected = expectedPlaces(chapters, order);
       try {
-        const failure = await policiesApi.reorderArticles(id, order).then(
+        const failure = await policiesApi.reorderArticles(id, order, basedOn).then(
           () => null,
           (err: unknown) => ({ err }),
         );
         const fresh = await fetchPolicyNow(qc, id, inScope);
         if (!inScope()) return;
+        // 창 닫기는 진행을 풀기 전에 그린다 — onSaved 의 setState 는 이벤트 밖(약속 이어짐)이라 다음 태스크로 밀리고, end 는 진행 저장소
+        // 구독(useSyncExternalStore)이라 마이크로태스크에서 먼저 그려진다. 그 그리기에서 창이 아직 열린 채 새 순서로 붙으면 '다시
+        // 열었습니다'가 한 번 끼어든다(거절 갈래의 안내와 같은 까닭)
         if (!failure) {
-          onSaved();
+          flushSync(() => onSaved());
           if (!fresh) report(id, label, t('policyDetail.reorder.savedStale'), 'error');
           return;
         }
         if (!refused(failure.err)) {
-          onSaved();
+          flushSync(() => onSaved());
           // 5xx 가 까닭을 실었으면 함께 적는다 — 반영됐는지는 모르지만 무엇이 실패했는지는 알게(문구 틀 안에, 17차 #6)
           const why = serverMessage(failure.err);
           const unverified = why ? t('policyDetail.reorder.unverifiedWhy', { reason: why }) : t('policyDetail.reorder.unverified');
           report(id, label, fresh !== null && orderApplied(fresh.chapters, expected) ? t('policyDetail.reorder.appliedAnyway') : unverified, 'error');
           return;
         }
-        const message = apiErrorMessage(failure.err, t('policyDetail.reorder.failed'));
-        if (dialogErrorTarget(id, shown, panelOf.current) === 'dialog') setError(message);
+        const toDialog = dialogErrorTarget(id, shown, panelOf.current) === 'dialog';
+        // 창을 연 뒤에 다른 저장이 배치를 바꿨다 — 서버 문구 대신 화면 문구로(영어 화면도, T-225). 창은 지금 캐시의 순서로 그려지므로 그
+        // 순서(서명)에 안내를 단다 — 다시 받았거나 그 사이 다른 받기로 순서가 바뀌었으면 지금 순서가 창에 있고, 아니면 옛 순서 그대로다
+        if (errorCode(failure.err) === 'POLICY_JO_ORDER_STALE') {
+          // 페이지의 순서 서명(reorderSig)과 같은 캐시 항목·같은 함수 — 페이지의 규정 조회는 select 없이 이 항목을 그대로 그린다(시험이 지킨다)
+          const sig = joOrderSignature(qc.getQueryData<{ chapters?: Chapters }>(['policy', id])?.chapters);
+          const redrawn = baseNow.current.redrawn || sig !== joOrderSignature(chapters);
+          const message = t(staleKey({ toDialog, fresh: fresh !== null, redrawn }));
+          // 진행을 풀기(end — 진행 저장소 구독은 동기 갱신) 전에 안내를 먼저 그린다 — 풀린 뒤 안내 없이 '다시 열었습니다'가 한 번 그려지지 않게.
+          // 안내를 단 순서를 창 기준으로 — 사용자는 그 순서를 안내와 함께 봤다
+          if (toDialog) {
+            flushSync(() => {
+              setNote({ sig, message });
+              setBase((b) => baseStep(b, { type: 'note', sig }));
+            });
+          } else report(id, label, message, 'error');
+          return;
+        }
+        // 지문 없는 저장의 거절(400 — 옛 응답을 들고 있던 화면)은 화면 문구로(영어 화면도)
+        const message =
+          errorCode(failure.err) === 'POLICY_JO_ORDER_BASIS_REQUIRED'
+            ? t('policyDetail.reorder.basisMissing')
+            : apiErrorMessage(failure.err, t('policyDetail.reorder.failed'));
+        if (toDialog) setError(message);
         else report(id, label, message, 'error');
       } finally {
         end('reorder', id);

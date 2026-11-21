@@ -1,4 +1,4 @@
-import { ValidateIf, IsString, IsOptional, IsBoolean, IsInt, Min, MaxLength, IsIn, IsDateString, ValidateNested, IsArray, ArrayMinSize, MinLength } from 'class-validator';
+import { ValidateIf, IsString, IsOptional, IsBoolean, IsInt, Min, MaxLength, IsIn, IsDateString, ValidateNested, IsArray, ArrayMinSize, MinLength, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { PolicyRevisionNotifyDto } from '../notifications/notifications.dto';
@@ -516,6 +516,16 @@ export class ReorderArticlesDto {
   @ValidateNested({ each: true })
   @Type(() => ReorderTargetDto)
   order: ReorderTargetDto[];
+
+  @ApiProperty({
+    description:
+      '창을 연 때의 조문 배치 지문(GET :id 의 current.joOrderBasis, GET :id/jo-order 의 basedOn, T-225). 규정을 잠근 뒤 지금 배치와 견줘 다르면 409(code POLICY_JO_ORDER_STALE). 꼭 보낸다 — 빠지거나 null 이면 400(code POLICY_JO_ORDER_BASIS_REQUIRED, 새로 고치라는 문구), 형식(소문자 16진 64자)이 틀리면 400',
+  })
+  // 빠짐·null 은 서비스가 code 와 고객 문구로 거절한다(requireJoLayoutBasis) — 옛 화면은 서버 문구를 그대로 보이므로 DTO 의 영어 검증 문구 대신
+  @IsOptional()
+  @IsString()
+  @Matches(/^[0-9a-f]{64}$/)
+  basedOn?: string | null;
 }
 
 export class ExportPolicyHwpxDto {

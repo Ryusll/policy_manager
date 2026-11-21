@@ -400,7 +400,7 @@ export class PoliciesController {
   @Roles('admin', 'editor')
   @ApiOperation({ summary: '조 순서 일괄 재정렬 · 번호 재부여 (T-60)' })
   reorderArticles(@Request() req: any, @Param('id') id: string, @Body() dto: ReorderArticlesDto) {
-    return this.policiesService.reorderArticles(req.user.tenantId, id, dto.order, req.user.id);
+    return this.policiesService.reorderArticles(req.user.tenantId, id, dto.order, req.user.id, dto.basedOn);
   }
 
   @Post(':id/files')

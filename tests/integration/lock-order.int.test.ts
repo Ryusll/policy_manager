@@ -94,8 +94,11 @@ describe('T-131 잠금 순서·세기·기다림', () => {
     expect(second.status).toBe(201);
     return { policyId: policy.id as string, chapterId: chapter.id as string, a1: article.id as string, a2: second.body.id as string };
   }
-  const swap = (policyId: string, chapterId: string) =>
-    api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [{ chapterId, jo: 2 }, { chapterId, jo: 1 }] } });
+  // 보내기 직전의 배치 지문을 싣는다(T-225, 없으면 400) — 겹치는 작업(한꺼번에 시행·시행일 보정)은 조문 자리를 바꾸지 않아 그대로 맞는다
+  const swap = async (policyId: string, chapterId: string) => {
+    const basedOn = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.basedOn;
+    return api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [{ chapterId, jo: 2 }, { chapterId, jo: 1 }], basedOn } });
+  };
   const numbersOf = (ids: string[]) => sql(`SELECT string_agg(number::text, ',' ORDER BY id) FROM articles WHERE id IN (${ids.map((i) => `'${i}'`).join(',')});`);
 
   describe('규정을 먼저 잠근다 — 규정 행을 고칠 수 있는 경로', () => {
@@ -218,6 +221,9 @@ describe('T-131 잠금 순서·세기·기다림', () => {
   describe('지우는 규정을 기다린 쓰기', () => {
     it('규정을 지우는 동안 기다린 장·조문 만들기와 조 재정렬은 404 — 지워진 규정에 쓰다 500 이 나지 않는다', async () => {
       const { policyId, chapterId } = await twoArticles('지우는 규정');
+      // 지문은 지우기 전에 받아 둔다(T-225) — 재정렬도 다른 둘처럼 곧바로 나가 잠금에서 기다리게(지문을 받느라 늦게 나가 지운 뒤 미리
+      // 확인의 404 로 지나가지 않게)
+      const basedOn = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.basedOn;
       // 규정을 지우는 트랜잭션이 장을 지우는 순간 멈춘다(규정 행은 이미 지우기 잠금)
       const drop = sleepTrigger('del', 'chapters', 'BEFORE', 'DELETE', `OLD.policy_id = '${policyId}'`, 2);
       try {
@@ -226,7 +232,7 @@ describe('T-131 잠금 순서·세기·기다림', () => {
         const waiting = Promise.all([
           api(`/policies/${policyId}/chapters`, { method: 'POST', token: t.token, json: { number: 2, title: '새 장' } }),
           api(`/policies/${policyId}/chapters/${chapterId}/articles`, { method: 'POST', token: t.token, json: { number: 3, title: '셋째', content: '셋째 본문' } }),
-          swap(policyId, chapterId),
+          api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [{ chapterId, jo: 2 }, { chapterId, jo: 1 }], basedOn } }),
         ]);
         // 지우기 전에 확인을 통과해 잠금에서 기다린다 — 지운 뒤에 들어와 미리 확인에서 404 가 난 것과 가른다
         await waitForBlockedBy('del');
@@ -623,7 +629,7 @@ describe('T-131 잠금 순서·세기·기다림', () => {
     });
 
     describe('계층 바로잡기와 묶음 승인', () => {
-      it('승인이 조를 옮기는 동안 그 전 목록으로 보낸 조 재정렬은 400 — 승인한 자리를 되돌리지 않는다', async () => {
+      it('승인이 조를 옮기는 동안 그 전 목록으로 보낸 조 재정렬은 거절(409) — 승인한 자리를 되돌리지 않는다', async () => {
         // 가·나 → 가·신설·나 — 나는 제2조에서 제3조로 밀리고 새 제2조가 생긴다
         const sid0 = await parseSession(t.token, [node('L1', '가', '가 본문'), node('L2', '나', '나 본문')]);
         const commit = await api(`/regulation-parse/${sid0}/commit`, {
@@ -648,12 +654,15 @@ describe('T-131 잠금 순서·세기·기다림', () => {
         try {
           const approving = api(`/reparse-reviews/${review.id}/approve`, { method: 'POST', token: t.token, json: { effectiveDate: today, changeNote: '원문 개정 반영' } });
           await waitForSleep('approve4');
-          // 승인 전 목록(가·나)으로 만든 재정렬 — 나를 앞으로
-          const reorder = api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [{ chapterId, jo: 2 }, { chapterId, jo: 1 }] } });
+          // 승인 전 목록(가·나)과 그때의 배치 지문으로 만든 재정렬 — 나를 앞으로
+          const basedOn = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.basedOn;
+          const reorder = api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [{ chapterId, jo: 2 }, { chapterId, jo: 1 }], basedOn } });
           await waitForBlockedBy('approve4');
           const [a, ro] = await Promise.all([approving, reorder]);
           expect(a.status, brief(a)).toBe(201);
-          expect(ro.status, brief(ro)).toBe(400);
+          // 잠근 뒤 지금 행의 지문이 달라 계획 전에 409(T-225 — 그 전에는 새 조가 빠진 차례라 계획 단계의 400)
+          expect(ro.status, brief(ro)).toBe(409);
+          expect(ro.body.code, brief(ro)).toBe('POLICY_JO_ORDER_STALE');
         } finally {
           drop();
         }
@@ -663,7 +672,7 @@ describe('T-131 잠금 순서·세기·기다림', () => {
         expect(after.find((x: any) => x.id === ga).number).toBe(1);
         expect(after.find((x: any) => x.id === na).number).toBe(3);
       });
-      it('승인이 조를 더하는 동안 그 전 목록으로 보낸 조 재정렬도 400 — 얼린 자리와 겹치지 않아도 새 조가 빠진 차례로 다시 매기지 않는다', async () => {
+      it('승인이 조를 더하는 동안 그 전 목록으로 보낸 조 재정렬도 거절(409) — 얼린 자리와 겹치지 않아도 새 조가 빠진 차례로 다시 매기지 않는다', async () => {
         // 가·나 → 가·나·다 — 옮겨지는 조 없이 끝에 새 조만 생긴다(얼린 자리 검사로는 막히지 않는 경우)
         const sid0 = await parseSession(t.token, [node('L1', '가', '가 본문'), node('L2', '나', '나 본문')]);
         const commit = await api(`/regulation-parse/${sid0}/commit`, {
@@ -686,11 +695,14 @@ describe('T-131 잠금 순서·세기·기다림', () => {
         try {
           const approving = api(`/reparse-reviews/${review.id}/approve`, { method: 'POST', token: t.token, json: { effectiveDate: today, changeNote: '원문 개정 반영' } });
           await waitForSleep('approve5');
-          const reorder = api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [{ chapterId, jo: 2 }, { chapterId, jo: 1 }] } });
+          const basedOn = (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.basedOn; // 승인 전 배치의 지문
+          const reorder = api(`/policies/${policyId}/jo-order`, { method: 'PUT', token: t.token, json: { order: [{ chapterId, jo: 2 }, { chapterId, jo: 1 }], basedOn } });
           await waitForBlockedBy('approve5');
           const [a, ro] = await Promise.all([approving, reorder]);
           expect(a.status, brief(a)).toBe(201);
-          expect(ro.status, brief(ro)).toBe(400);
+          // 새 조가 더해져 잠근 뒤 지문이 달라 계획 전에 409(T-225 — 그 전에는 계획 단계의 400)
+          expect(ro.status, brief(ro)).toBe(409);
+          expect(ro.body.code, brief(ro)).toBe('POLICY_JO_ORDER_STALE');
         } finally {
           drop();
         }

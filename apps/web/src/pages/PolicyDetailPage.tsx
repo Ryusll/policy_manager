@@ -106,7 +106,7 @@ import { POLICY_TOC_PANEL_ID, backToListLink, planFullViewJump } from '../lib/po
 import { useFullViewJump } from '../components/policy-detail/useFullViewJump';
 import { pickActiveTemplate, useTemplateSelection } from '../components/policy-detail/useTemplateSelection';
 import { useAttachmentActions } from '../components/policy-detail/useAttachmentActions';
-import { joOrderSignature, useReorderSave } from '../components/policy-detail/useReorderSave';
+import { joOrderSignature, reorderNotice, useReorderSave, type ReorderNote } from '../components/policy-detail/useReorderSave';
 import { PublishDraftsDialog } from '../components/policy-detail/PublishDraftsDialog';
 import { ActiveToggleDialog } from '../components/policy-detail/ActiveToggleDialog';
 import { useFlashMessage } from '../lib/flashMessage';
@@ -625,10 +625,10 @@ function PolicyDetailView() {
   const [approveEffectiveDate, setApproveEffectiveDate] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [tocQuery, setTocQuery] = useState('');
-  // 순서 창을 열 때의 순서 서명(닫혀 있으면 null) — 연 뒤에 순서가 바뀌어 창을 새로 그렸으면 그렇다고 알린다(T-215 15차 #5)
-  const [reorderOpenSig, setReorderOpenSig] = useState<string | null>(null);
-  const reorderOpen = reorderOpenSig !== null;
+  // 순서 창이 열렸는가 — 연 뒤에 창을 새로 그렸다는 안내는 훅의 창 기준(reorder.redrawn — 서명을 견주지 않는다, T-215 15차 #5·T-225)
+  const [reorderOpen, setReorderOpen] = useState(false);
   const [reorderError, setReorderError] = useState('');
+  const [reorderNote, setReorderNote] = useState<ReorderNote | null>(null);
   const [fullViewSearchQuery, setFullViewSearchQuery] = useState('');
   const [fullViewActiveMatchIndex, setFullViewActiveMatchIndex] = useState(0);
   const [tocOpen, setTocOpen] = useState(true);
@@ -1041,13 +1041,16 @@ function PolicyDetailView() {
     label: policyLabel(policy),
     panelOpen: reorderOpen,
     chapters: policy?.chapters,
+    basedOn: policy?.current?.joOrderBasis,
     signature: reorderSig,
     shown: shownPolicy,
     report: reportResult,
     setError: setReorderError,
+    note: reorderNote,
+    setNote: setReorderNote,
     onSaved: () => {
       setSelectedArticle(null);
-      setReorderOpenSig(null);
+      setReorderOpen(false);
     },
     t,
   });
@@ -2458,7 +2461,8 @@ function PolicyDetailView() {
                     onClick={() => {
                       if (!guardReorder()) return;
                       setReorderError('');
-                      setReorderOpenSig(reorderSig);
+                      setReorderNote(null);
+                      setReorderOpen(true);
                     }}
                     className="mt-2 w-full inline-flex items-center justify-center gap-1.5 text-[11px] text-gray-600 hover:text-navy-700 border border-gray-300 rounded py-1.5 hover:bg-white transition-colors disabled:opacity-60"
                   >
@@ -5355,8 +5359,8 @@ function PolicyDetailView() {
           chapters={policy?.chapters}
           saving={reorder.saving}
           error={reorderError}
-          notice={!reorder.saving && reorderOpenSig !== reorderSig ? t('policyDetail.reorder.reopened') : undefined}
-          onCancel={() => setReorderOpenSig(null)}
+          {...reorderNotice({ note: reorderNote, signature: reorderSig, redrawn: reorder.redrawn, saving: reorder.saving }, t)}
+          onCancel={() => setReorderOpen(false)}
           onSave={reorder.save}
         />
       )}

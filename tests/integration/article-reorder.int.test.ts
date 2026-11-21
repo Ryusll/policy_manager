@@ -49,6 +49,9 @@ describe('조 순서 재정렬 (T-60)', () => {
     await add(ch2, { number: 3, title: '운영원칙', content: '제3조 본문' });
   }
 
+  /** 지금 배치 지문 — 저장에 꼭 싣는다(T-225, 없으면 400) */
+  const basis = async () => (await api(`/policies/${policyId}/jo-order`, { token: t.token })).body.basedOn as string;
+
   /** 조 번호 → 장 배치를 평탄하게 훑는다 */
   async function readLayout() {
     const { body } = await api(`/policies/${policyId}`, { token: t.token });
@@ -87,6 +90,7 @@ describe('조 순서 재정렬 (T-60)', () => {
           { chapterId: ch1, jo: 1 },
           { chapterId: ch1, jo: 2 },
         ],
+        basedOn: await basis(),
       },
     });
     expect(status).toBe(200);
@@ -109,7 +113,7 @@ describe('조 순서 재정렬 (T-60)', () => {
   });
 
   it('장 경계를 넘겨 옮기면 그 장으로 이동한다', async () => {
-    await api(`/policies/${policyId}/jo-order`, {
+    const { status } = await api(`/policies/${policyId}/jo-order`, {
       method: 'PUT',
       token: t.token,
       json: {
@@ -118,8 +122,10 @@ describe('조 순서 재정렬 (T-60)', () => {
           { chapterId: ch2, jo: 2 },
           { chapterId: ch2, jo: 3 },
         ],
+        basedOn: await basis(),
       },
     });
+    expect(status).toBe(200);
     const rows = await readLayout();
     const moved = rows.filter((r) => r.jo === 2);
     expect(moved.length).toBeGreaterThan(0);
@@ -128,27 +134,29 @@ describe('조 순서 재정렬 (T-60)', () => {
 
   it('바뀐 것이 없으면 아무것도 쓰지 않는다', async () => {
     const current = await api(`/policies/${policyId}/jo-order`, { token: t.token });
-    const { body } = await api(`/policies/${policyId}/jo-order`, {
+    const { status, body } = await api(`/policies/${policyId}/jo-order`, {
       method: 'PUT',
       token: t.token,
-      json: { order: current.body.order },
+      json: { order: current.body.order, basedOn: current.body.basedOn },
     });
+    expect(status).toBe(200);
     expect(body.changed).toBe(0);
   });
 
   describe('거절해야 하는 입력', () => {
     it('조가 빠지면 400', async () => {
-      // 재정렬은 순서만 바꾸는 일이다. 빠뜨린 채 저장되면 번호에 구멍이 남는다.
-      const { status } = await api(`/policies/${policyId}/jo-order`, {
+      // 재정렬은 순서만 바꾸는 일이다. 빠뜨린 채 저장되면 번호에 구멍이 남는다. 지문은 맞게 실어 차례 검사의 400 인지 본다(T-225)
+      const { status, body } = await api(`/policies/${policyId}/jo-order`, {
         method: 'PUT',
         token: t.token,
-        json: { order: [{ chapterId: ch1, jo: 1 }, { chapterId: ch1, jo: 2 }] },
+        json: { order: [{ chapterId: ch1, jo: 1 }, { chapterId: ch1, jo: 2 }], basedOn: await basis() },
       });
       expect(status).toBe(400);
+      expect(body.message).toBe('규정의 모든 조를 빠짐없이 한 번씩 보내야 합니다.');
     });
 
     it('같은 조가 두 번 오면 400', async () => {
-      const { status } = await api(`/policies/${policyId}/jo-order`, {
+      const { status, body } = await api(`/policies/${policyId}/jo-order`, {
         method: 'PUT',
         token: t.token,
         json: {
@@ -157,9 +165,11 @@ describe('조 순서 재정렬 (T-60)', () => {
             { chapterId: ch1, jo: 1 },
             { chapterId: ch1, jo: 2 },
           ],
+          basedOn: await basis(),
         },
       });
       expect(status).toBe(400);
+      expect(body.message).toBe('같은 조가 두 번 들어 있습니다.');
     });
 
     it('남의 규정 장으로는 옮길 수 없다', async () => {
@@ -175,7 +185,7 @@ describe('조 순서 재정렬 (T-60)', () => {
         json: { number: 1, title: '남의 장' },
       });
 
-      const { status } = await api(`/policies/${policyId}/jo-order`, {
+      const { status, body } = await api(`/policies/${policyId}/jo-order`, {
         method: 'PUT',
         token: t.token,
         json: {
@@ -184,11 +194,14 @@ describe('조 순서 재정렬 (T-60)', () => {
             { chapterId: ch1, jo: 2 },
             { chapterId: ch2, jo: 3 },
           ],
+          basedOn: await basis(),
         },
       });
       expect(status).toBe(400);
+      expect(body.message).toBe('이 규정에 속하지 않은 장입니다.');
     });
 
+    // 아래 둘은 지문 없이 보낸다 — 권한·소속 확인이 지문 확인(400)보다 먼저다(T-225)
     it('남의 회사 규정은 재정렬할 수 없다', async () => {
       const other = await createTenant('reorder-c');
       const { status } = await api(`/policies/${policyId}/jo-order`, {

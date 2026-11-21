@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  */
 const api = vi.hoisted(() => ({ reorder: vi.fn(), get: vi.fn() }));
 vi.mock('../apps/web/src/api/policies', () => ({ policiesApi: { reorderArticles: api.reorder, get: api.get } }));
-const { expectedPlaces, joOrderSignature, orderApplied, useReorderSave } = await import('../apps/web/src/components/policy-detail/useReorderSave');
+const { expectedPlaces, joOrderSignature, orderApplied, reorderNotice, useReorderSave } = await import('../apps/web/src/components/policy-detail/useReorderSave');
 const { default: ArticleReorderPanel } = await import('../apps/web/src/components/ArticleReorderPanel');
 const { usePolicyRunsStore } = await import('../apps/web/src/stores/policyRunsStore');
 const { messages } = await import('../apps/web/src/i18n/messages');
@@ -49,7 +49,7 @@ function setup(fresh: unknown) {
   client.setQueryData(['policy', 'A'], { chapters: before });
   if (fresh instanceof Error) api.get.mockRejectedValueOnce(fresh);
   else api.get.mockResolvedValueOnce({ chapters: fresh });
-  const o = { id: 'A', label: 'A-01 가 규정', panelOpen: false, chapters: before, signature: joOrderSignature(before), shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), onSaved: vi.fn(), t };
+  const o = { id: 'A', label: 'A-01 가 규정', panelOpen: false, chapters: before, signature: joOrderSignature(before), shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), setNote: vi.fn(), onSaved: vi.fn(), t, note: null, basedOn: 'f'.repeat(64) };
   return { client, o, save: () => capture(() => useReorderSave(o), client).save(swap) };
 }
 
@@ -135,16 +135,25 @@ describe('보낸 차례가 갈 자리와 순서 서명 (T-215 15차 #1·#4)', ()
 });
 
 describe('창을 새로 그리면 알린다·초안 일괄 시행·영어 문구 (T-215 15차 #5·#6·#8)', () => {
-  it('순서 창은 연 때의 서명과 지금 서명이 다르면 안내를 보인다', () => {
+  it('순서 창은 기준(연 때·저장을 시작한 때·거절 안내를 단 때) 뒤에 새로 그려지면 안내를 보인다 — 저장 중에는 없다(T-225 로 서명 비교에서 바꿈)', () => {
     const page = src('apps/web/src/pages/PolicyDetailPage.tsx');
-    expect(page).toContain('const reorderOpen = reorderOpenSig !== null;');
-    expect(page).toContain('setReorderOpenSig(reorderSig);');
-    // 저장하는 동안은 안내하지 않는다 — 제 저장이 끝나 다시 받은 순서로 창이 잠깐 새로 그려져도 '옮기던 것이 있으면 다시 옮기세요'를 띄우지 않게(16차)
-    expect(page).toContain("notice={!reorder.saving && reorderOpenSig !== reorderSig ? t('policyDetail.reorder.reopened') : undefined}");
+    // 창이 열렸는지만 둔다 — 연 뒤 새로 그렸는지는 훅의 창 기준(서명을 견주지 않는다, T-225)
+    expect(page).toContain('const [reorderOpen, setReorderOpen] = useState(false);');
+    expect(page).toMatch(/setReorderNote\(null\);\s*setReorderOpen\(true\);/);
+    // 저장하는 동안은 안내하지 않는다 — 제 저장이 끝나 다시 받은 순서로 창이 잠깐 새로 그려져도 '옮기던 것이 있으면 다시 옮기세요'를 띄우지 않게(16차).
+    // 안내 칸은 reorderNotice 가 정한다(T-225 — 거절 안내가 그 순서의 것이면 그것 하나)
+    expect(page).toContain('{...reorderNotice({ note: reorderNote, signature: reorderSig, redrawn: reorder.redrawn, saving: reorder.saving }, t)}');
+    const k = (key: string) => key;
+    expect(reorderNotice({ note: null, signature: 'S2', redrawn: true, saving: true }, k)).toEqual({});
+    expect(reorderNotice({ note: null, signature: 'S2', redrawn: true, saving: false }, k)).toEqual({ notice: 'policyDetail.reorder.reopened', noticeAlert: false });
+    expect(reorderNotice({ note: null, signature: 'S1', redrawn: false, saving: false }, k)).toEqual({});
     expect(page).toMatch(/useReorderSave\(\{[^}]*chapters: policy\?\.chapters,/);
     const chapters = [{ id: 'c1', number: 1, title: '총칙', articles: [{ id: 'a1', number: 1, title: '목적' }] }];
     const html = renderToStaticMarkup(createElement(ArticleReorderPanel, { chapters, notice: '다시 열었습니다', onCancel: () => undefined, onSave: () => undefined }));
     expect(html).toMatch(/<p role="status"[^>]*>다시 열었습니다<\/p>/);
+    // 저장이 반영되지 않았다는 안내(T-225 거절)는 alert — 창이 새로 붙으며 끼워 넣는 status 칸은 화면 낭독기가 읽지 않을 수 있다
+    const alertHtml = renderToStaticMarkup(createElement(ArticleReorderPanel, { chapters, notice: '반영하지 않았습니다', noticeAlert: true, onCancel: () => undefined, onSave: () => undefined }));
+    expect(alertHtml).toMatch(/<p role="alert"[^>]*>반영하지 않았습니다<\/p>/);
     expect(renderToStaticMarkup(createElement(ArticleReorderPanel, { chapters, onCancel: () => undefined, onSave: () => undefined }))).not.toContain('role="status"');
     expect(messages.ko['policyDetail.reorder.reopened']).toBeTruthy();
     expect(messages.en['policyDetail.reorder.reopened']).toBeTruthy();

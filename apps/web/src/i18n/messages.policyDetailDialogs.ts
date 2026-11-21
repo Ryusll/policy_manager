@@ -49,6 +49,14 @@ export const policyDetailDialogMessages = {
     'policyDetail.reorder.unverifiedWhy': '조 순서 저장이 오류({reason})로 끝나 반영됐는지 확인하지 못했습니다 — 잠시 뒤 화면을 새로 고쳐 순서를 확인한 다음 다시 하세요.',
     'policyDetail.reorder.savedStale': '조 순서를 저장했지만 새 순서를 받아 오지 못했습니다 — 화면을 새로 고쳐 확인한 뒤 다시 옮기세요.',
     'policyDetail.reorder.reopened': '창을 연 뒤에 조 구성이 바뀌어 지금 순서로 다시 열었습니다 — 옮기던 것이 있으면 다시 옮기세요.',
+    // 창을 연 뒤에 다른 저장이 조 배치를 바꿔 서버가 거절함(409 POLICY_JO_ORDER_STALE, T-225)
+    'policyDetail.reorder.stale': '창을 연 뒤에 다른 저장이 조 순서나 조문을 바꿔 이 저장은 반영하지 않았습니다 — 지금 순서를 확인한 뒤 다시 옮기세요.',
+    // 같은 거절인데 지금 순서를 받아 오지 못해 창이 옛 순서 그대로일 때 — 다시 저장해도 같은 거절이라 새로 고치라고 한다
+    'policyDetail.reorder.staleUnfetched': '창을 연 뒤에 다른 저장이 조 순서나 조문을 바꿔 이 저장은 반영하지 않았습니다 — 지금 순서를 받아 오지 못했으니 화면을 새로 고친 뒤 다시 옮기세요.',
+    // 같은 거절인데 다시 받은 순서가 창과 같을 때(바꿨다 되돌림 등) — 창에 옮긴 것이 그대로 남아 있다
+    'policyDetail.reorder.staleSame': '창을 연 뒤에 다른 저장이 조 순서나 조문을 바꿔 이 저장은 반영하지 않았습니다 — 지금 순서가 이 창과 같으니 옮긴 그대로 다시 저장하세요.',
+    // 지문 없이는 저장하지 않는다(서버가 400 POLICY_JO_ORDER_BASIS_REQUIRED 로 거절 — 옛 응답을 들고 있던 화면)
+    'policyDetail.reorder.basisMissing': '화면이 최신이 아니어서 조 순서를 저장하지 않았습니다 — 화면을 새로 고친 뒤 다시 옮기세요.',
     'policyDetail.files.title': '첨부파일 확인',
     'policyDetail.files.close': '닫기',
     'policyDetail.files.empty': '등록된 첨부파일이 없습니다.',
@@ -105,6 +113,10 @@ export const policyDetailDialogMessages = {
     'policyDetail.reorder.unverifiedWhy': 'Saving the article order ended with an error ({reason}), and we could not confirm whether it was applied — wait a moment, reload the page and check the order before trying again.',
     'policyDetail.reorder.savedStale': 'The article order was saved, but the new order could not be loaded — reload the page and check it before moving articles again.',
     'policyDetail.reorder.reopened': 'The articles changed after you opened this panel, so it reopened with the current order — redo any moves you had made.',
+    'policyDetail.reorder.stale': 'Another save changed the article order or articles after you opened this panel, so this save was not applied — check the current order and move the articles again.',
+    'policyDetail.reorder.staleUnfetched': 'Another save changed the article order or articles after you opened this panel, so this save was not applied — the current order could not be loaded, so reload the page and move the articles again.',
+    'policyDetail.reorder.staleSame': 'Another save changed the article order or articles after you opened this panel, so this save was not applied — the current order matches this panel, so save your moves again.',
+    'policyDetail.reorder.basisMissing': 'This page is out of date, so the article order was not saved — reload the page and move the articles again.',
     'policyDetail.files.title': 'Attachments',
     'policyDetail.files.close': 'Close',
     'policyDetail.files.empty': 'No attachments yet.',

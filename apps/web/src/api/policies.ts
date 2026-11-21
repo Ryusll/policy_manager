@@ -118,9 +118,12 @@ export const policiesApi = {
     client
       .put('/policies/' + policyId + '/chapters/' + chapterId + '/articles/' + articleId, data)
       .then((r) => r.data),
-  /** 조 순서 일괄 재정렬 (T-60). `order` 는 문서에 나타날 차례대로, 규정의 모든 조를 한 번씩 */
-  reorderArticles: (policyId: string, order: { chapterId: string; jo: number; branch?: number }[]) =>
-    client.put(`/policies/${policyId}/jo-order`, { order }).then((r) => r.data as { changed: number }),
+  /**
+   * 조 순서 일괄 재정렬 (T-60). `order` 는 문서에 나타날 차례대로, 규정의 모든 조를 한 번씩. `basedOn` 은 창이 그린 규정의 배치 지문
+   * (GET :id 의 current.joOrderBasis, 꼭 보낸다) — 서버가 잠근 뒤 지금 배치와 견줘 다르면 409 POLICY_JO_ORDER_STALE, 없으면 400(T-225)
+   */
+  reorderArticles: (policyId: string, order: { chapterId: string; jo: number; branch?: number }[], basedOn: string) =>
+    client.put(`/policies/${policyId}/jo-order`, { order, basedOn }).then((r) => r.data as { changed: number }),
 
   deleteArticle: (policyId: string, chapterId: string, articleId: string) =>
     client.delete('/policies/' + policyId + '/chapters/' + chapterId + '/articles/' + articleId),

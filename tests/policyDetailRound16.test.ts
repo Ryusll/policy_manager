@@ -199,7 +199,7 @@ describe('조 순서 저장 — 로그아웃·성공 뒤 받기 (T-215 16차 #2�
   const setup = () => {
     const client = new QueryClient();
     client.setQueryData(['policy', 'A'], { chapters: before });
-    const o = { id: 'A', label: 'A-01 가 규정', panelOpen: false, chapters: before, signature: joOrderSignature(before), shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), onSaved: vi.fn(), t };
+    const o = { id: 'A', label: 'A-01 가 규정', panelOpen: false, chapters: before, signature: joOrderSignature(before), shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), setNote: vi.fn(), onSaved: vi.fn(), t, note: null, basedOn: 'f'.repeat(64) };
     return { o, save: () => capture(() => useReorderSave(o), client).save(swap) };
   };
 

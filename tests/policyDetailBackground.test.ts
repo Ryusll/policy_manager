@@ -91,7 +91,7 @@ describe('조 순서 저장 — 같은 규칙 (T-215 12차 #1)', () => {
     const client = new QueryClient();
     const call = pending();
     api.reorder.mockReturnValueOnce(call.p);
-    const o = { id: 'A', label: 'A-01 가 규정', panelOpen: true, shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), onSaved: vi.fn(), t };
+    const o = { id: 'A', label: 'A-01 가 규정', panelOpen: true, shown: { id: 'A', mounted: false }, report: vi.fn(), setError: vi.fn(), setNote: vi.fn(), onSaved: vi.fn(), t, note: null, basedOn: 'f'.repeat(64) };
     const saving = capture(() => useReorderSave(o), client).save([]);
     await capture(() => useReorderSave(o), client).save([]);
     expect(api.reorder).toHaveBeenCalledTimes(1);

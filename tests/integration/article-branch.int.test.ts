@@ -65,7 +65,7 @@ describe('가지 조문 (제3조의2)', () => {
     const res = await api(`/policies/${policyId}/jo-order`, {
       method: 'PUT',
       token: t.token,
-      json: { order: [jo1, jo3b2, jo3, jo4] },
+      json: { order: [jo1, jo3b2, jo3, jo4], basedOn: current.basedOn },
     });
     expect(res.status).toBe(200);
     expect(await positions()).toEqual([
