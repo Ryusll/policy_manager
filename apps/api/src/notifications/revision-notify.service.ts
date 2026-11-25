@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { toDateOnlyString, todayDateOnly } from '../common/date-only';
 import {
   parseRevisionNotifyFromMetadata,
   PolicyRevisionNotifyConfig,
@@ -40,15 +41,21 @@ export class RevisionNotifyService {
     changeNote: string;
     approvedByUserId: string;
     metadata: unknown;
+    /** 사내 규정 시행일 — 오늘 뒤면 "시행 예정"으로 알린다(개정 후보 승인 알림과 같은 표기, T-132 ④) */
+    effectiveDate?: Date | null;
   }) {
     const cfg = parseRevisionNotifyFromMetadata(params.metadata);
     const recipientIds = await this.resolveRecipientIds(params.tenantId, cfg);
     if (!recipientIds.length) return { sent: 0 };
 
-    const title = `[개정 시행] ${params.policyTitle}`;
+    const E = params.effectiveDate ? toDateOnlyString(params.effectiveDate) : null;
+    const future = !!params.effectiveDate && params.effectiveDate.getTime() > todayDateOnly().getTime();
+    // 미래 시행일로 승인했는데 "개정 시행"이라 하면 받는 사람이 지금 바뀐 줄 안다
+    const title = future ? `[개정 발행 · ${E} 시행 예정] ${params.policyTitle}` : `[개정 시행] ${params.policyTitle}`;
     const body = [
       `규정: ${params.policyCode} · ${params.policyTitle}`,
       `조문: ${params.articleLabel}`,
+      ...(E ? [`시행일: ${E}${future ? ' — 그때까지는 지금 본문이 시행 중입니다' : ''}`] : []),
       `개정 사유: ${params.changeNote}`,
     ].join('\n');
 
@@ -70,4 +77,46 @@ export class RevisionNotifyService {
     await this.prisma.userNotification.createMany({ data: rows });
     return { sent: rows.length };
   }
+
+  /**
+   * 시행 예정 철회 알림(T-132 ②) — 승인 때 "시행 예정"으로 알린 개정을 거뒀다는 것. 받는 사람은 승인 알림과 같다.
+   */
+  async dispatchPolicyRevisionWithdrawn(params: {
+    tenantId: string;
+    policyId: string;
+    policyTitle: string;
+    policyCode: string;
+    articleId: string;
+    articleLabel: string;
+    versionId: string;
+    /** 철회한 버전의 사내 시행일(YYYY-MM-DD) */
+    effectiveDate: string;
+    reason: string;
+    actorId: string;
+    metadata: unknown;
+  }) {
+    const cfg = parseRevisionNotifyFromMetadata(params.metadata);
+    const recipientIds = await this.resolveRecipientIds(params.tenantId, cfg);
+    const rows = recipientIds
+      .filter((uid) => uid !== params.actorId)
+      .map((userId) => ({
+        tenantId: params.tenantId,
+        userId,
+        kind: 'policy_revision',
+        title: `[개정 철회 · ${params.effectiveDate} 시행 예정이었음] ${params.policyTitle}`,
+        body: [
+          `규정: ${params.policyCode} · ${params.policyTitle}`,
+          `조문: ${params.articleLabel}`,
+          `철회한 시행일: ${params.effectiveDate} — 지금 본문이 그대로 시행됩니다`,
+          `철회 사유: ${params.reason}`,
+        ].join('\n'),
+        policyId: params.policyId,
+        articleId: params.articleId,
+        versionId: params.versionId,
+      }));
+    if (!rows.length) return { sent: 0 };
+    await this.prisma.userNotification.createMany({ data: rows });
+    return { sent: rows.length };
+  }
 }
+

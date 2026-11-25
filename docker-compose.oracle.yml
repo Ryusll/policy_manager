@@ -1,0 +1,144 @@
+# 독립된 운영 구성. docker-compose.override.yml과 개발용 .env를 읽지 않는다.
+# 사용: bash scripts/oracle/compose.sh up -d --build --wait
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./apps/api/prisma/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL is required}
+      TRUST_PROXY: "1"
+      CORS_ORIGIN: ${PUBLIC_URL:?PUBLIC_URL is required}
+      ENABLE_SWAGGER: "false"
+      SEED_DEMO_DATA: "false"
+      ALLOW_LEGACY_BASELINE: "false"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      LAW_GO_KR_OC: ${LAW_GO_KR_OC:-}
+      # T-130 규정 질문(AI). 제공사가 없으면 그 기능만 "설정 안 됨"으로 꺼진다. 질문할 때 관련 조문이 제공사로 간다.
+      # AI_QA_PROVIDER: 비우면 ANTHROPIC_API_KEY 가 있을 때 Anthropic, freellmapi 면 무료 제공사 묶음(T-208 — 런북 7-9)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_QA_MODEL: ${AI_QA_MODEL:-}
+      AI_QA_MONTHLY_LIMIT: ${AI_QA_MONTHLY_LIMIT:-}
+      AI_QA_USER_MONTHLY_LIMIT: ${AI_QA_USER_MONTHLY_LIMIT:-}
+      AI_QA_PROVIDER: ${AI_QA_PROVIDER:-}
+      AI_QA_MODELS: ${AI_QA_MODELS:-}
+      AI_QA_ALLOWED_PLATFORMS: ${AI_QA_ALLOWED_PLATFORMS:-}
+      # freellmapi 가 뜰 때 쓰는 통합 키(scripts/freellm/freellm-init.mjs) — 아래 freellm_shared 볼륨
+      AI_QA_API_KEY_FILE: /run/veda-freellm/unified-key
+      # 현재 코드의 공통 시크릿 가드가 요구하는 호환 값. 첨부는 아래 볼륨에 저장.
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    volumes:
+      - api_uploads:/app/uploads
+      - freellm_shared:/run/veda-freellm:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 60s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_PUBLIC_COMPANY_LEGAL_NAME: ${VITE_PUBLIC_COMPANY_LEGAL_NAME:-}
+        VITE_PUBLIC_COMPANY_REG_NO: ${VITE_PUBLIC_COMPANY_REG_NO:-}
+    restart: unless-stopped
+    logging: *logging
+    # 호스트의 Caddy 또는 Tailscale Funnel이 루프백으로 접속한다.
+    ports:
+      - "127.0.0.1:${ORACLE_WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # T-208 규정 질문 무료 제공사 묶음(freellmapi, ADR-0028) — .env.oracle 에 COMPOSE_PROFILES=ai 를 넣어야 뜬다(런북 7-9).
+  # 호스트 포트를 열지 않는다(api 가 내부 망으로만 부른다). 허용 제공사(Google·Groq) 키·관리자 계정은 .env.oracle 의 FREELLMAPI_*.
+  # 버전은 태그+digest 로 고정하고(arm64 포함) 자동 갱신은 쓰지 않는다. 대시보드는 필요할 때 ssh 터널로만 본다.
+  freellmapi:
+    profiles: ["ai"]
+    image: ghcr.io/tashfeenahmed/freellmapi:v0.16.23@sha256:845a4b568a20fffd5112e1b9c0258e7782d9eabbba2430612d2f7c811eee267e
+    restart: unless-stopped
+    logging: *logging
+    entrypoint: ["sh", "/veda/freellm-run.sh"]
+    environment:
+      PORT: "3001"
+      ENCRYPTION_KEY: ${FREELLMAPI_ENCRYPTION_KEY:-}
+      FREELLMAPI_ADMIN_EMAIL: ${FREELLMAPI_ADMIN_EMAIL:-}
+      FREELLMAPI_ADMIN_PASSWORD: ${FREELLMAPI_ADMIN_PASSWORD:-}
+      FREELLMAPI_GOOGLE_KEY: ${FREELLMAPI_GOOGLE_KEY:-}
+      FREELLMAPI_GROQ_KEY: ${FREELLMAPI_GROQ_KEY:-}
+      FREELLMAPI_ALLOWED_PLATFORMS: ${AI_QA_ALLOWED_PLATFORMS:-}
+      FREELLMAPI_UPDATE_CHECK: "off"
+      REQUEST_ANALYTICS_LOG_CLIENT: "false"
+      RESPONSE_CACHE: "false"
+    volumes:
+      - freellmapi_data:/app/server/data
+      - freellm_shared:/veda-shared
+      - ./scripts/freellm:/veda:ro
+    healthcheck:
+      # 서버가 살아 있고 통합 키가 공유 볼륨에 있어야 정상 — 부팅 정책(freellm-init)이 실패하면 배포에서 바로 보이게
+      test: ["CMD", "sh", "-c", "test -s /veda-shared/unified-key && node -e \"fetch('http://127.0.0.1:3001/api/ping').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  api_uploads:
+  freellmapi_data:
+  freellm_shared:

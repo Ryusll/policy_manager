@@ -1,0 +1,210 @@
+import { describe, it, expect } from 'vitest';
+import {
+  articleBadgeState,
+  articleDraftBase,
+  collectArticleChangeNotes,
+  groupScheduledByJo,
+  isDraftOnlyArticle,
+  nextScheduled,
+  noCurrentTextMarker,
+  statuteDate,
+  versionDisplayState,
+} from '../apps/web/src/lib/versionState';
+
+const today = '2026-10-10';
+
+describe('버전 표시 상태 (T-127)', () => {
+  it('미래 시행일로 개정을 승인하면 archived 인 지금 본문이 시행중, published 인 새 본문이 시행 예정', () => {
+    const v1 = { id: 'v1', status: 'archived', effectiveDate: '2024-01-01' };
+    const v2 = { id: 'v2', status: 'published', effectiveDate: '2099-01-01' };
+    expect(versionDisplayState(v1, { currentId: 'v1', today })).toBe('in_force');
+    expect(versionDisplayState(v2, { currentId: 'v1', today })).toBe('scheduled');
+  });
+
+  it('밀려 내려간 버전은 이전 버전, 폐지일이 지난 버전은 폐지', () => {
+    expect(versionDisplayState({ id: 'v0', status: 'archived', effectiveDate: '2020-01-01' }, { currentId: 'v1', today })).toBe('superseded');
+    expect(versionDisplayState({ id: 'v1', status: 'archived', repealedOn: '2026-10-10' }, { currentId: null, today })).toBe('repealed');
+    // 폐지 예정일 전이면 아직 시행중
+    expect(versionDisplayState({ id: 'v1', status: 'archived', repealedOn: '2026-12-01' }, { currentId: 'v1', today })).toBe('in_force');
+  });
+
+  it('초안·검토중은 그대로, 현재 id 를 모르면 날짜로만 가른다', () => {
+    expect(versionDisplayState({ status: 'draft' }, { today })).toBe('draft');
+    expect(versionDisplayState({ status: 'review' }, { today })).toBe('review');
+    expect(versionDisplayState({ status: 'published', effectiveDate: '2026-10-10' }, { today })).toBe('in_force');
+    expect(versionDisplayState({ status: 'published', effectiveDate: '2026-10-11' }, { today })).toBe('scheduled');
+    expect(versionDisplayState({ status: 'published', effectiveDate: null }, { today })).toBe('in_force');
+  });
+});
+
+describe('조문 상태 배지·초안 바탕', () => {
+  const current = { id: 'v1', versionNum: 1, content: '지금 본문', effectiveDate: '2024-01-01T00:00:00.000Z' };
+  const s1 = { id: 'v2', versionNum: 2, content: '첫 개정', effectiveDate: '2099-01-01T00:00:00.000Z' };
+  const s2 = { id: 'v3', versionNum: 3, content: '둘째 개정', effectiveDate: '2099-06-01T00:00:00.000Z' };
+
+  it('배지는 오늘 시행본 → 폐지 → 시행 예정 → 초안 순', () => {
+    expect(articleBadgeState({ versions: [current], scheduledVersions: [s1] })).toBe('in_force');
+    expect(articleBadgeState({ versions: [], currentState: 'repealed', scheduledVersions: [s1] })).toBe('repealed');
+    expect(articleBadgeState({ versions: [], scheduledVersions: [s1], pendingVersion: { status: 'draft' } })).toBe('scheduled');
+    expect(articleBadgeState({ versions: [], pendingVersion: { status: 'review' } })).toBe('review');
+    expect(articleBadgeState({ versions: [] })).toBeNull();
+  });
+
+  it('새 초안은 가장 늦은 시행 예정 본문에서 — 없으면 오늘 시행본', () => {
+    expect(articleDraftBase({ versions: [current], scheduledVersions: [s1, s2] })).toEqual({
+      content: '둘째 개정',
+      kind: 'scheduled',
+      versionNum: 3,
+      effectiveDate: '2099-06-01',
+    });
+    expect(articleDraftBase({ versions: [current] })).toMatchObject({ content: '지금 본문', kind: 'current', versionNum: 1 });
+    expect(articleDraftBase({ versions: [] })).toEqual({ content: '', kind: 'none', versionNum: null, effectiveDate: null });
+    expect(nextScheduled({ scheduledVersions: [s1, s2] })).toBe(s1);
+  });
+
+  it('시행 예정 버전이 있는 조문의 초안은 "시행 전 초안만"이 아니다(한꺼번에 시행 대상 아님)', () => {
+    expect(isDraftOnlyArticle({ versions: [], pendingVersion: { status: 'draft' } })).toBe(true);
+    expect(isDraftOnlyArticle({ versions: [], scheduledVersions: [s1], pendingVersion: { status: 'draft' } })).toBe(false);
+    expect(isDraftOnlyArticle({ versions: [current], pendingVersion: { status: 'draft' } })).toBe(false);
+  });
+});
+
+describe('공식 문서(인쇄·PDF·한글·TXT·읽어주기)에 적는 말 — 시행 예정 본문은 넣지 않는다', () => {
+  const s1 = { id: 'v2', versionNum: 2, content: '새 조문 본문', effectiveDate: '2099-03-01T00:00:00.000Z' };
+
+  it('법령 표기 날짜', () => {
+    expect(statuteDate('2026-10-10')).toBe('2026. 10. 10.');
+    expect(statuteDate('2026-01-05T00:00:00.000Z')).toBe('2026. 1. 5.');
+    expect(statuteDate(null)).toBe('');
+  });
+
+  it('오늘 시행 중인 본문이 있으면 적을 말이 없다(본문을 쓴다)', () => {
+    expect(noCurrentTextMarker({ versions: [{ content: '지금' }], scheduledVersions: [s1] })).toBeNull();
+  });
+
+  it('폐지는 "삭제 <날짜>" — 그 뒤 다시 시행할 판이 있어도', () => {
+    expect(noCurrentTextMarker({ versions: [], currentState: 'repealed', repealedOn: '2026-10-10' })).toBe('삭제 <2026. 10. 10.>');
+    expect(noCurrentTextMarker({ versions: [], currentState: 'repealed', repealedOn: '2026-10-10', scheduledVersions: [s1] })).toBe(
+      '삭제 <2026. 10. 10.>',
+    );
+  });
+
+  it('아직 시행 전인 새 조문은 "날짜 시행 예정" — 본문은 넣지 않는다', () => {
+    const marker = noCurrentTextMarker({ versions: [], currentState: 'scheduled', scheduledVersions: [s1] });
+    expect(marker).toBe('2099-03-01 시행 예정');
+    expect(marker).not.toContain('새 조문 본문');
+  });
+
+  it('둘 다 아니면 null — 쓰는 쪽의 기본 문구(초안만 있는 조문 등)', () => {
+    expect(noCurrentTextMarker({ versions: [], pendingVersion: { status: 'draft', content: '초안' } })).toBeNull();
+    expect(noCurrentTextMarker({})).toBeNull();
+  });
+});
+
+describe('조문별 개정 사유 — 시행 예정 개정의 사유도 함께', () => {
+  it('오늘 시행본과 시행 예정 버전의 사유를 시행일 늦은 순으로, 사유 없는 버전은 뺀다', () => {
+    const policy = {
+      chapters: [
+        {
+          articles: [
+            {
+              number: 2,
+              title: '수당',
+              versions: [{ id: 'v1', changeNote: '제정', effectiveDate: '2024-01-01T00:00:00.000Z' }],
+              scheduledVersions: [
+                { id: 'v2', changeNote: '수당 인상', effectiveDate: '2099-01-01T00:00:00.000Z' },
+                { id: 'v3', changeNote: '  ', effectiveDate: '2099-06-01T00:00:00.000Z' },
+              ],
+            },
+            { number: 3, branchNumber: 2, title: '', versions: [], scheduledVersions: [{ id: 'v9', changeNote: '신설', effectiveDate: '2099-03-01' }] },
+          ],
+        },
+      ],
+    };
+    expect(collectArticleChangeNotes(policy)).toEqual([
+      { key: 'v9', label: '제3조의2', note: '신설', effectiveDate: '2099-03-01', scheduled: true },
+      { key: 'v2', label: '제2조(수당)', note: '수당 인상', effectiveDate: '2099-01-01T00:00:00.000Z', scheduled: true },
+      { key: 'v1', label: '제2조(수당)', note: '제정', effectiveDate: '2024-01-01T00:00:00.000Z', scheduled: false },
+    ]);
+  });
+});
+
+describe('제정·개정이유 — 본문 목록에서 빠진 시행 예정 신설 조문의 사유도(T-132 ⑧)', () => {
+  it('current.scheduledArticles 의 사유를 함께 모은다', () => {
+    const policy = {
+      chapters: [{ articles: [{ number: 1, title: '목적', versions: [{ id: 'v1', changeNote: '제정', effectiveDate: '2024-01-01' }] }] }],
+      current: {
+        scheduledArticles: [
+          { number: 2, title: '끼어든 조', versionId: 'n1', changeNote: '다음 달 시행', effectiveDate: '2099-03-01' },
+          { number: 3, title: '사유 없음', versionId: 'n2', changeNote: '', effectiveDate: '2099-03-01' },
+        ],
+      },
+    };
+    expect(collectArticleChangeNotes(policy)).toEqual([
+      { key: 'n1', label: '제2조(끼어든 조)', note: '다음 달 시행', effectiveDate: '2099-03-01', scheduled: true },
+      { key: 'v1', label: '제1조(목적)', note: '제정', effectiveDate: '2024-01-01', scheduled: false },
+    ]);
+  });
+});
+
+describe('본문에서 빠진 시행 예정 신설 조문 — 조 단위로 한 줄', () => {
+  it('조 머리 제목·가장 이른 시행일로 묶는다(항만 있으면 "①"처럼 조 번호가 빠졌다)', () => {
+    const rows = [
+      { liveChapterId: 'c', number: 2, branchNumber: null, clauseNumber: 1, itemNumber: null, title: '', effectiveDate: '2099-03-01' },
+      { liveChapterId: 'c', number: 2, branchNumber: null, clauseNumber: null, itemNumber: null, title: '끼어든 조', effectiveDate: null },
+      { liveChapterId: 'c', number: 2, branchNumber: null, clauseNumber: 2, itemNumber: null, title: '', effectiveDate: '2099-02-01' },
+      { liveChapterId: 'c', number: 5, branchNumber: 2, clauseNumber: null, itemNumber: null, title: '가지', effectiveDate: '2099-04-01' },
+    ];
+    expect(groupScheduledByJo(rows)).toEqual([
+      { key: 'c|2|0', number: 2, branchNumber: null, title: '끼어든 조', effectiveDate: '2099-02-01', rows: 3 },
+      { key: 'c|5|2', number: 5, branchNumber: 2, title: '가지', effectiveDate: '2099-04-01', rows: 1 },
+    ]);
+  });
+});
+
+
+describe('시행 예정 띠의 조 제목 — 조 머리 행의 제목만 (T-211)', () => {
+  const r = (clauseNumber: number | null, title: string) => ({
+    liveChapterId: 'c', number: 5, branchNumber: null, clauseNumber, itemNumber: null, title, effectiveDate: '2099-01-01',
+  });
+
+  it('제2항의 부제는 조 제목으로 올리지 않는다', () => {
+    expect(groupScheduledByJo([r(null, ''), r(1, ''), r(2, '예외')])[0].title).toBe('');
+  });
+
+  it('조 머리 행의 제목만 쓴다 — 신설 항만 있으면 번호만(기존 조에 새 항만 끼어든 것일 수 있다)', () => {
+    expect(groupScheduledByJo([r(1, '지급 기준')])[0].title).toBe('');
+    expect(groupScheduledByJo([r(null, ' 수당 '), r(1, '지급 기준')])[0].title).toBe('수당');
+  });
+});
+
+describe('조문별 개정 사유의 라벨 — 항·목은 어느 조인지까지 (T-211 ③)', () => {
+  it('본문에서 빠진 시행 예정 신설 조문의 항 행도 본문 행과 같은 라벨', () => {
+    const policy = {
+      chapters: [],
+      current: {
+        scheduledArticles: [
+          { number: 3, clauseNumber: 2, itemNumber: null, title: '부제', versionId: 's1', changeNote: '신설', effectiveDate: '2099-01-01' },
+          { number: 3, clauseNumber: null, itemNumber: null, title: '(수당)', versionId: 's2', changeNote: '신설', effectiveDate: '2099-01-01' },
+        ],
+      },
+    };
+    expect(collectArticleChangeNotes(policy).map((n) => n.label)).toEqual(['제3조 ② 부제', '제3조(수당)']);
+  });
+
+  it('조는 제N조(제목), 항의 부제는 조 제목 자리에 넣지 않는다', () => {
+    const v = (id: string) => [{ id, changeNote: '개정', effectiveDate: '2024-01-01' }];
+    const policy = {
+      chapters: [
+        {
+          articles: [
+            { number: 2, title: '(수당)', versions: v('a') },
+            { number: 2, clauseNumber: 2, title: '입증', versions: v('b') },
+            { number: 2, clauseNumber: 1, itemNumber: 3, title: '', versions: v('c') },
+          ],
+        },
+      ],
+    };
+    expect(collectArticleChangeNotes(policy).map((n) => n.label)).toEqual(['제2조(수당)', '제2조 ② 입증', '제2조 ① 3.']);
+  });
+});

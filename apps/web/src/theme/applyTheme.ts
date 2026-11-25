@@ -71,10 +71,10 @@ export function buildCustomPalette(primaryHex: string, accentHex: string): Theme
 
 export function applyPalette(palette: ThemePalette): void {
   const root = document.documentElement;
-  (Object.entries(palette.navy) as [string, string][]).forEach(([k, v]) => {
+  Object.entries(palette.navy).forEach(([k, v]) => {
     root.style.setProperty(`--color-navy-${k}`, v);
   });
-  (Object.entries(palette.gold) as [string, string][]).forEach(([k, v]) => {
+  Object.entries(palette.gold).forEach(([k, v]) => {
     root.style.setProperty(`--color-gold-${k}`, v);
   });
 }

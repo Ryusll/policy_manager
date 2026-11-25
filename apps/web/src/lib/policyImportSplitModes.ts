@@ -5,8 +5,9 @@ export type ImportSplitMode = 'auto' | 'blank_block' | 'line_each' | 'delimiter'
 type ParsedChapter = ParsedPolicyDraft['chapters'][number];
 type ParsedArticle = ParsedChapter['articles'][number];
 
+/** 원문에 장 표기가 없을 때 쓰는 단일 장. `auto`로 표시해 등록 시 숨김 장이 되게 한다 */
 function singleChapter(title: string, articles: ParsedArticle[]): ParsedPolicyDraft {
-  return { chapters: [{ number: 1, title, articles }] };
+  return { chapters: [{ number: 1, title, articles, auto: true }] };
 }
 
 /** 구분 모드에 따라 원문 → 장/조 초안 */
@@ -89,16 +90,17 @@ export function parsePolicyTextWithSplitMode(
       article = null;
     };
 
-    const startChapter = (title: string) => {
+    const startChapter = (title: string, auto = false) => {
       flushArticle();
       chapterNum += 1;
       articleNum = 0;
-      chapter = { number: chapterNum, title, articles: [] };
+      chapter = { number: chapterNum, title, articles: [], ...(auto ? { auto: true } : {}) };
       chapters.push(chapter);
     };
 
+    // 원문에 장 표기가 없어 임의로 만드는 장 → 등록 시 숨김 장으로 처리
     const ensureDefaultChapter = () => {
-      if (!chapter) startChapter('원문');
+      if (!chapter) startChapter('원문', true);
     };
 
     for (const rawLine of lines) {

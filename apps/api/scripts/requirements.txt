@@ -1,2 +1,4 @@
 pdfplumber>=0.11.0
 pymupdf>=1.24.0
+# HWPX(한/글) 내보내기 — .hwp 는 독점 바이너리라 생성 불가, HWPX(KS X 6101)로 간다 (T-85 · ADR-0016)
+pyhwpxlib>=0.18.0

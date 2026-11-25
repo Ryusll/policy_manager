@@ -3,18 +3,32 @@ import { clsx } from 'clsx';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { policiesApi } from '../api/policies';
-import { Plus, FileText, Trash2, Search, ChevronDown } from 'lucide-react';
+import { Plus, FileText, FileUp, Trash2, Search, ChevronDown } from 'lucide-react';
 import { PageHeader } from '../components/ui/PageHeader';
 import { LoadingBlock } from '../components/ui/LoadingBlock';
+import { PolicyHierarchyPanel } from '../components/PolicyHierarchyPanel';
+import { FavoriteButton } from '../components/FavoriteButton';
+import { INDEX_KEYS, compareKo, countByIndexKey, indexKeyOf } from '../lib/hangulIndex';
 import { EmptyState } from '../components/ui/EmptyState';
 import { toast } from '../stores/toastStore';
+import { apiErrorMessage } from '../lib/apiError';
+import { limitFeedback, policyLimitFromError, policySlotsFull } from '../lib/policyLimit';
+import { PolicyLimitNotice, PolicySaveError } from '../components/PolicyLimitNotice';
+import { usePolicySlots } from '../hooks/usePolicySlots';
 import { useI18n } from '../i18n/useI18n';
 import { type ParseProfile, type ParsedPolicyDraft } from '../lib/policyImportParser';
 import { parsePolicyTextWithSplitMode, type ImportSplitMode } from '../lib/policyImportSplitModes';
 import { defaultImportRefineOptions, refineImportRawText, type ImportRefineOptions } from '../lib/policyImportRefine';
+import {
+  countInferredHierarchy,
+  expandChaptersWithHierarchy,
+  renumberChapters,
+  type HierarchyArticleRow,
+} from '../lib/policyImportHierarchy';
 import { extractPolicyText } from '../lib/policyTextExtract';
 import { useAuthStore } from '../stores/authStore';
 import { ArticleBodyInline } from '../components/ArticleBodyInline';
+import { formatArticleJo } from '../lib/legalArticleLabel';
 
 function getPolicyMeta(policy: any) {
   const meta = policy?.metadata && typeof policy.metadata === 'object' ? policy.metadata : {};
@@ -30,6 +44,12 @@ export default function PoliciesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [showCreate, setShowCreate] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [view, setView] = useState<'list' | 'tree'>('list');
+  /** 가나다 색인 (T-77). null 이면 전체 */
+  const [indexKey, setIndexKey] = useState<string | null>(null);
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
+  // 규정 자리(T-198) — 다 찼으면 등록 창이 처음부터 알리고 등록 버튼을 막는다. 끝까지 입력한 뒤에야 막혀 "등록이 안 된다"로 보였다
+  const slotsFull = policySlotsFull(usePolicySlots(canEdit && showCreate).data);
   const [showImportAdvanced, setShowImportAdvanced] = useState(false);
   const [createMode, setCreateMode] = useState<'manual' | 'import'>('manual');
   const [form, setForm] = useState({
@@ -40,6 +60,8 @@ export default function PoliciesPage() {
     category: '',
   });
   const [importRawText, setImportRawText] = useState('');
+  // 관리자가 가져오면 바로 시행된다 — 그 본문이 실제로 시행된 날(필수, "오늘"로 채우지 않는다)
+  const [importEffectiveDate, setImportEffectiveDate] = useState('');
   const [parseProfile, setParseProfile] = useState<ParseProfile>('mixed');
   const [parsedDraft, setParsedDraft] = useState<ParsedPolicyDraft>({ chapters: [] });
   const [importExtracting, setImportExtracting] = useState(false);
@@ -47,8 +69,14 @@ export default function PoliciesPage() {
   const [search, setSearch] = useState(searchParams.get('q') || '');
   const [selectedDepartment, setSelectedDepartment] = useState(searchParams.get('department') || 'all');
   const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || 'all');
+  /** 시행 상태 필터 (T-15). 비활성 규정을 지우지 않고 일하는 목록에서만 빼려면 필요하다 */
+  const [selectedStatus, setSelectedStatus] = useState(searchParams.get('status') || 'all');
   const [activeIssueTarget, setActiveIssueTarget] = useState<string>('');
-  const [cleanupOptions, setCleanupOptions] = useState({ renumber: true, trimEmptyArticles: true });
+  const [cleanupOptions, setCleanupOptions] = useState({
+    renumber: true,
+    trimEmptyArticles: true,
+    inferHierarchy: true,
+  });
   const [importSplitMode, setImportSplitMode] = useState<ImportSplitMode>('auto');
   const [importDelimiter, setImportDelimiter] = useState('');
   const [importRefineOptions, setImportRefineOptions] = useState<ImportRefineOptions>(() => defaultImportRefineOptions());
@@ -74,6 +102,7 @@ export default function PoliciesPage() {
         {
           number: 1,
           title: '원문',
+          auto: true,
           articles: [{ number: 1, title: '본문', content: text }],
         },
       ],
@@ -87,8 +116,11 @@ export default function PoliciesPage() {
       rawText,
       splitMode,
       splitDelimiter,
+      effectiveDate,
     }: {
       mode: 'manual' | 'import';
+      /** 관리자 가져오기의 시행일(YYYY-MM-DD) */
+      effectiveDate?: string;
       payload: {
         code: string;
         title: string;
@@ -100,8 +132,7 @@ export default function PoliciesPage() {
       splitMode?: ImportSplitMode;
       splitDelimiter?: string;
     }) => {
-      const policy = await policiesApi.create(payload);
-      if (mode !== 'import') return policy;
+      if (mode !== 'import') return policiesApi.create(payload);
 
       const parsed = parsePolicyTextWithSplitMode(
         rawText || '',
@@ -113,16 +144,6 @@ export default function PoliciesPage() {
       if (!chaptersToCreate.length) {
         chaptersToCreate = buildRawFallbackDraft(rawText).chapters;
       }
-      if (cleanupOptions.renumber) {
-        chaptersToCreate = chaptersToCreate.map((chapter, chapterIdx) => ({
-          ...chapter,
-          number: chapterIdx + 1,
-          articles: chapter.articles.map((article, articleIdx) => ({
-            ...article,
-            number: articleIdx + 1,
-          })),
-        }));
-      }
       if (cleanupOptions.trimEmptyArticles) {
         chaptersToCreate = chaptersToCreate
           .map((chapter) => ({
@@ -131,29 +152,49 @@ export default function PoliciesPage() {
           }))
           .filter((chapter) => chapter.articles.length > 0);
       }
-      for (const chapter of chaptersToCreate) {
-        const createdChapter = await policiesApi.createChapter(policy.id, {
-          number: chapter.number,
-          title: chapter.title || '총칙',
-        });
-        for (const article of chapter.articles) {
-          await policiesApi.createArticle(policy.id, createdChapter.id, {
-            number: article.number,
-            title: article.title || '조문',
-            content: article.content || '',
-          });
-        }
+      // 빈 조를 걷어낸 뒤에 번호를 매겨야 1, 2, 4… 처럼 구멍이 남지 않는다
+      if (cleanupOptions.renumber) {
+        chaptersToCreate = renumberChapters(chaptersToCreate);
       }
-      await policiesApi.createImportLog({
-        policyId: policy.id,
-        sourceName: mode === 'import' ? 'manual-import' : 'manual',
-        parseProfile,
-        chapterCount: chaptersToCreate.length,
-        articleCount: chaptersToCreate.reduce((acc, chapter) => acc + chapter.articles.length, 0),
-        cleanupOptions,
-        status: 'success',
+      // 항(①②…)·목(1. 2. …) 자동 추론: 조 번호를 유지하므로 renumber 이후에 적용해야 한다
+      const chaptersForCreate: { number: number; title?: string; articles: HierarchyArticleRow[] }[] =
+        cleanupOptions.inferHierarchy ? expandChaptersWithHierarchy(chaptersToCreate) : chaptersToCreate;
+
+      // 한 번에 저장한다(T-135) — 예전에는 규정·장·조문·한꺼번에 시행·규정 시행일·가져오기 이력을 차례로 불러, 중간에 하나라도
+      // 실패하면 반쪽 규정이 남았다. 관리자가 가져오면 시행일로 바로 시행되고(이미 시행 중인 내용이다), 편집자가 가져오면 초안으로
+      // 남아 관리자가 상세 화면에서 한꺼번에 시행한다 — 서버가 역할로 정한다. 시행일은 "오늘"이 아니라 그 본문이 실제로 시행된 날(PAT-02)
+      return policiesApi.importDocument({
+        ...payload,
+        effectiveDate: user?.role === 'admin' ? effectiveDate : undefined,
+        chapters: chaptersForCreate.map((chapter) => {
+          // 원문에 장 표기가 없어 파서가 만든 장(auto)은 숨김 장으로 등록한다.
+          // 없는 "제1장 총칙"을 임의로 만들어 붙이지 않기 위함 (SRS POLICY-6)
+          const isAutoChapter = (chapter as { auto?: boolean }).auto === true;
+          return {
+            number: chapter.number,
+            title: isAutoChapter ? '' : chapter.title || '본문',
+            suppressHeader: isAutoChapter,
+            articles: chapter.articles.map((article) => {
+              const isJoRoot = article.clauseNumber == null && article.itemNumber == null;
+              return {
+                number: article.number,
+                ...(article.branch ? { branchNumber: article.branch } : {}),
+                // 항·목 행은 제목 없이 본문만 등록한다(조 제목과 중복 방지)
+                title: isJoRoot ? article.title || '조문' : '',
+                content: article.content || '',
+                ...(article.clauseNumber != null ? { clauseNumber: article.clauseNumber } : {}),
+                ...(article.itemNumber != null ? { itemNumber: article.itemNumber } : {}),
+              };
+            }),
+          };
+        }),
+        log: {
+          sourceName: 'manual-import',
+          parseProfile,
+          articleCount: chaptersToCreate.reduce((acc, chapter) => acc + chapter.articles.length, 0),
+          cleanupOptions,
+        },
       });
-      return policy;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['policies'] });
@@ -162,18 +203,44 @@ export default function PoliciesPage() {
       setCreateMode('manual');
       setForm({ code: '', title: '', description: '', department: '', category: '' });
       setImportRawText('');
+      setImportEffectiveDate('');
       setParsedDraft({ chapters: [] });
       setImportError('');
-      setCleanupOptions({ renumber: true, trimEmptyArticles: true });
+      setCleanupOptions({ renumber: true, trimEmptyArticles: true, inferHierarchy: true });
       setImportSplitMode('auto');
       setImportDelimiter('');
       setImportRefineOptions(defaultImportRefineOptions());
     },
+    // 그사이 다른 사람이 마지막 자리를 가져갔다 — 자리를 다시 세어 버튼을 막는다(안내는 버튼 곁에 남는다)
+    onError: (err) => {
+      if (policyLimitFromError(err)) qc.invalidateQueries({ queryKey: ['policies', 'slots'] });
+    },
   });
+  const createFeedback = limitFeedback(createMutation.error, slotsFull);
+  // 창을 열 때 앞서 실패한 저장의 오류를 비운다 — 그사이 자리가 났는데 지난 상한 안내가 남지 않게.
+  // 이미 열려 있거나 저장 중이면 그대로 둔다(저장 중에 비우면 제출 버튼이 다시 열려 두 번 보낼 수 있다)
+  const openCreate = () => {
+    if (!showCreate && !createMutation.isPending) createMutation.reset();
+    setShowCreate(true);
+  };
 
   const deleteMutation = useMutation({
     mutationFn: policiesApi.delete,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['policies'] }),
+    // 다른 작업이 그 규정을 고치는 중이면 409(잠시 뒤 다시) — 말없이 넘어가면 지워진 줄 안다(T-131)
+    onError: (err) => toast(apiErrorMessage(err, '규정을 삭제하지 못했습니다.'), 'error'),
+  });
+
+  /**
+   * 시행중 ↔ 비활성 (T-15). 목록에서는 확인 없이 바로 바꾼다 —
+   * 되돌리기가 같은 버튼 한 번이고, 삭제와 달리 잃는 것이 없다.
+   * 무엇이 바뀌고 무엇이 안 바뀌는지에 대한 설명은 규정 상세의 확인 창에 있다.
+   */
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, next }: { id: string; next: boolean }) =>
+      policiesApi.update(id, { isActive: next }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policies'] }),
+    onError: (err) => toast(apiErrorMessage(err, '사용 상태를 바꾸지 못했습니다.'), 'error'),
   });
 
   const updateChapterField = (chapterIdx: number, field: 'number' | 'title', value: string) => {
@@ -287,6 +354,8 @@ export default function PoliciesPage() {
     return Array.from(values).sort((a, b) => a.localeCompare(b, 'ko'));
   }, [policies]);
 
+  // 색인 칸의 건수는 색인 자체를 빼고 센다(다른 칸이 0으로 보이면 안 된다)
+  const indexCounts = countByIndexKey(policies as any[], (p: any) => p.title);
   const filtered = policies.filter((p: any) => {
     const { department, category } = getPolicyMeta(p);
     const q = search.trim().toLowerCase();
@@ -299,8 +368,17 @@ export default function PoliciesPage() {
       category.toLowerCase().includes(q);
     const matchedDepartment = selectedDepartment === 'all' || department === selectedDepartment;
     const matchedCategory = selectedCategory === 'all' || category === selectedCategory;
-    return matchedSearch && matchedDepartment && matchedCategory;
+    const matchedIndex = !indexKey || indexKeyOf(p.title) === indexKey;
+    const matchedStatus =
+      selectedStatus === 'all' ||
+      (selectedStatus === 'active' ? p.isActive !== false : p.isActive === false);
+    return matchedSearch && matchedDepartment && matchedCategory && matchedIndex && matchedStatus;
   });
+
+  // 색인으로 훑을 때는 사전처럼 가나다 순이어야 읽힌다. 평소에는 기존 순서를 유지한다.
+  const visible = indexKey
+    ? [...filtered].sort((a: any, b: any) => compareKo(a.title, b.title))
+    : filtered;
 
   useEffect(() => {
     const key = `policy-import-profile:${user?.tenantId || 'default'}`;
@@ -339,14 +417,20 @@ export default function PoliciesPage() {
     if (search.trim()) next.set('q', search.trim());
     if (selectedDepartment !== 'all') next.set('department', selectedDepartment);
     if (selectedCategory !== 'all') next.set('category', selectedCategory);
+    if (selectedStatus !== 'all') next.set('status', selectedStatus);
     setSearchParams(next, { replace: true });
-  }, [search, selectedDepartment, selectedCategory, setSearchParams]);
+  }, [search, selectedDepartment, selectedCategory, selectedStatus, setSearchParams]);
 
   useEffect(() => {
     setParsedDraft(parsePolicyTextWithSplitMode(importRawText, importSplitMode, importDelimiter, parseProfile));
   }, [importRawText, importSplitMode, importDelimiter, parseProfile]);
 
   const parsedArticleCount = parsedDraft.chapters.reduce((acc, chapter) => acc + chapter.articles.length, 0);
+  // 미리보기: 항·목 자동 인식으로 몇 개가 만들어질지 미리 보여준다
+  const inferredHierarchyCounts = useMemo(
+    () => countInferredHierarchy(parsedDraft.chapters),
+    [parsedDraft.chapters],
+  );
   const importFallbackBlob =
     parsedDraft.chapters.length === 1 &&
     parsedDraft.chapters[0].title === '원문' &&
@@ -384,7 +468,7 @@ export default function PoliciesPage() {
         errors.push({ key: `ch-empty-${ci}`, message: `${chapter.number}장의 조문이 비어 있습니다.`, chapterIdx: ci });
       }
 
-      const articleNoSeen = new Map<number, number>();
+      const articleNoSeen = new Map<string, number>();
       chapter.articles.forEach((article, ai) => {
         if (!article.title.trim()) {
           warnings.push({
@@ -397,18 +481,20 @@ export default function PoliciesPage() {
         if (!article.content.trim()) {
           warnings.push({
             key: `a-body-${ci}-${ai}`,
-            message: `${chapter.number}장 제${article.number}조 본문이 비어 있습니다.`,
+            message: `${chapter.number}장 ${formatArticleJo(article.number, article.branch)} 본문이 비어 있습니다.`,
             chapterIdx: ci,
             articleIdx: ai,
           });
         }
-        articleNoSeen.set(article.number, (articleNoSeen.get(article.number) || 0) + 1);
+        // 제3조와 제3조의2는 다른 조다 — 번호만 세면 중복으로 잡힌다
+        const joLabel = formatArticleJo(article.number, article.branch);
+        articleNoSeen.set(joLabel, (articleNoSeen.get(joLabel) || 0) + 1);
       });
       for (const [no, count] of articleNoSeen.entries()) {
         if (count > 1) {
           errors.push({
             key: `a-dup-${ci}-${no}`,
-            message: `${chapter.number}장에 제${no}조가 ${count}개 중복되어 있습니다.`,
+            message: `${chapter.number}장에 ${no}가 ${count}개 중복되어 있습니다.`,
             chapterIdx: ci,
           });
         }
@@ -442,9 +528,32 @@ export default function PoliciesPage() {
         title={t('policies.title')}
         description={t('policies.subtitle', { n: policies.length })}
         actions={
-          <button type="button" onClick={() => setShowCreate(true)} className="btn-primary text-sm">
-            <Plus size={15} /> {t('policies.register')}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <div className="flex rounded border border-gray-300 overflow-hidden" role="tablist">
+              {([['list', '목록'], ['tree', '체계도']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === key}
+                  onClick={() => setView(key)}
+                  className={clsx(
+                    'px-3 py-1.5 text-sm transition-colors',
+                    view === key ? 'bg-navy-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* PDF는 서버 추출(조항 계층 인식)이 정확해 별도 화면으로 보낸다 */}
+            <Link to="/policies/import" className="btn-secondary text-sm">
+              <FileUp size={15} /> PDF 가져오기
+            </Link>
+            <button type="button" onClick={openCreate} className="btn-primary text-sm">
+              <Plus size={15} /> {t('policies.register')}
+            </button>
+          </div>
         }
       />
 
@@ -474,6 +583,17 @@ export default function PoliciesPage() {
         <div className="card overflow-hidden">
           <div className="section-card__head">{t('policies.createTitle')}</div>
           <div className="p-5">
+            {createFeedback.before && (
+              <div className="mb-3">
+                <PolicyLimitNotice limit={createFeedback.before} />
+              </div>
+            )}
+            <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border border-navy-200 bg-navy-50/60 px-3 py-2 text-xs text-navy-900">
+              <p className="flex-1 leading-relaxed">{t('policies.importPdfHint')}</p>
+              <Link to="/policies/import" className="btn-secondary text-xs py-1.5 shrink-0 inline-flex items-center gap-1">
+                <FileUp size={13} /> {t('policies.importPdfCta')}
+              </Link>
+            </div>
             <div className="mb-3 inline-flex rounded border border-gray-300 overflow-hidden text-xs">
               <button
                 type="button"
@@ -541,6 +661,24 @@ export default function PoliciesPage() {
                   onChange={(e) => setForm({ ...form, category: e.target.value })}
                 />
               </div>
+              {createMode === 'import' && user?.role === 'admin' && (
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5" htmlFor="text-import-effective">
+                    시행일 <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="text-import-effective"
+                    type="date"
+                    className="input md:w-56"
+                    value={importEffectiveDate}
+                    onChange={(e) => setImportEffectiveDate(e.target.value)}
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                    관리자가 가져오면 바로 시행됩니다. 가져오는 본문이 <b>실제로 시행된 날</b>을 넣으세요 — 최초 제정일이
+                    아니라 지금 이 본문이 시행된 날입니다.
+                  </p>
+                </div>
+              )}
               {createMode === 'import' && (
                 <div className="md:col-span-2 space-y-2">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">원문 업로드/붙여넣기</label>
@@ -705,7 +843,22 @@ export default function PoliciesPage() {
                           />
                           빈 조문 자동 정리
                         </label>
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={cleanupOptions.inferHierarchy}
+                            onChange={(e) => setCleanupOptions((prev) => ({ ...prev, inferHierarchy: e.target.checked }))}
+                          />
+                          항·목 자동 인식 (①②… / 1. 2. …)
+                        </label>
                       </div>
+                      {cleanupOptions.inferHierarchy && (
+                        <p className="text-[11px] text-gray-500">
+                          {inferredHierarchyCounts.clauses + inferredHierarchyCounts.items > 0
+                            ? `현재 원문에서 항 ${inferredHierarchyCounts.clauses}개 · 목 ${inferredHierarchyCounts.items}개를 인식했습니다. 등록 시 조·항·목 구조로 저장됩니다.`
+                            : '현재 원문에서는 항·목 패턴(①②… / 1. 2. …)이 감지되지 않았습니다. 조 단위로만 등록됩니다.'}
+                        </p>
+                      )}
                     </div>
                   )}
                   {(importValidation.errors.length > 0 || importValidation.warnings.length > 0) && (
@@ -874,11 +1027,12 @@ export default function PoliciesPage() {
                 </div>
               )}
             </div>
-            {createMutation.error && (
-              <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 p-2 rounded">
-                {(createMutation.error as any)?.response?.data?.message || t('policies.error')}
+            {createFeedback.atButton && (
+              <div className="mt-3">
+                <PolicyLimitNotice limit={createFeedback.atButton} />
               </div>
             )}
+            {createFeedback.otherError && <PolicySaveError error={createFeedback.otherError} fallback={t('policies.error')} />}
             <div className="flex gap-2 mt-4">
               <button
                 type="button"
@@ -889,14 +1043,17 @@ export default function PoliciesPage() {
                     rawText: importRawText,
                     splitMode: importSplitMode,
                     splitDelimiter: importDelimiter,
+                    effectiveDate: importEffectiveDate,
                   })
                 }
                 disabled={
+                  !!slotsFull ||
                   !form.code ||
                   !form.title ||
                   createMutation.isPending ||
                   (createMode === 'import' &&
-                    (((importRawText || '').trim().length === 0 && parsedArticleCount === 0) ||
+                    ((user?.role === 'admin' && !/^\d{4}-\d{2}-\d{2}$/.test(importEffectiveDate)) ||
+                      ((importRawText || '').trim().length === 0 && parsedArticleCount === 0) ||
                       importValidation.errors.length > 0 ||
                       (importSplitMode === 'delimiter' && !importDelimiter.trim())))
                 }
@@ -916,6 +1073,53 @@ export default function PoliciesPage() {
         </div>
       )}
 
+      {view === 'tree' && <PolicyHierarchyPanel canEdit={canEdit} />}
+
+      {view === 'list' && (
+        <>
+      <div className="card px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[11px] text-gray-500 mr-1">가나다 색인</span>
+          <button
+            type="button"
+            onClick={() => setIndexKey(null)}
+            className={clsx(
+              'px-2 py-1 text-xs rounded border',
+              indexKey === null
+                ? 'border-navy-600 bg-navy-700 text-white'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+            )}
+          >
+            전체
+          </button>
+          {INDEX_KEYS.map((key) => {
+            const n = indexCounts[key] || 0;
+            return (
+              <button
+                key={key}
+                type="button"
+                disabled={n === 0}
+                onClick={() => setIndexKey(key === indexKey ? null : key)}
+                title={n === 0 ? '해당 규정 없음' : `${n}건`}
+                className={clsx(
+                  'px-2 py-1 text-xs rounded border tabular-nums',
+                  indexKey === key
+                    ? 'border-navy-600 bg-navy-700 text-white'
+                    : n === 0
+                      ? 'border-gray-200 bg-white text-gray-300 cursor-not-allowed'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+                )}
+              >
+                {key}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 한 줄 배치. 각 select 에 w-auto 가 필요하다 — 공통 `.input` 클래스가
+          `w-full` 을 갖고 있어서, 빼면 select 하나가 한 행을 통째로 차지하고
+          flex-wrap 때문에 필터가 세 줄로 벌어진다. 좁은 화면에서는 그대로 접힌다. */}
       <div className="card px-4 py-3 flex flex-wrap items-center gap-3">
         <Search size={15} className="text-gray-400 flex-shrink-0" />
         <input
@@ -926,7 +1130,7 @@ export default function PoliciesPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
         <select
-          className="input text-xs min-w-[8rem]"
+          className="input w-auto text-xs min-w-[8rem]"
           value={selectedDepartment}
           onChange={(e) => setSelectedDepartment(e.target.value)}
         >
@@ -938,7 +1142,7 @@ export default function PoliciesPage() {
           ))}
         </select>
         <select
-          className="input text-xs min-w-[8rem]"
+          className="input w-auto text-xs min-w-[8rem]"
           value={selectedCategory}
           onChange={(e) => setSelectedCategory(e.target.value)}
         >
@@ -949,7 +1153,17 @@ export default function PoliciesPage() {
             </option>
           ))}
         </select>
-        {search && <span className="text-xs text-gray-500">{t('policies.countUnit', { n: filtered.length })}</span>}
+        <select
+          className="input w-auto text-xs min-w-[7rem]"
+          value={selectedStatus}
+          onChange={(e) => setSelectedStatus(e.target.value)}
+          aria-label="시행 상태"
+        >
+          <option value="all">전체 상태</option>
+          <option value="active">시행중</option>
+          <option value="inactive">비활성</option>
+        </select>
+        {search && <span className="text-xs text-gray-500">{t('policies.countUnit', { n: visible.length })}</span>}
       </div>
 
       <div className="section-card">
@@ -971,14 +1185,14 @@ export default function PoliciesPage() {
                 </td>
               </tr>
             )}
-            {!isLoading && filtered.length === 0 && (
+            {!isLoading && visible.length === 0 && (
               <tr>
                 <td colSpan={5}>
                   <EmptyState
                     icon={FileText}
                     title={t('policies.emptyList')}
                     action={
-                      <button type="button" className="btn-primary text-sm" onClick={() => setShowCreate(true)}>
+                      <button type="button" className="btn-primary text-sm" onClick={openCreate}>
                         <Plus size={14} /> {t('policies.register')}
                       </button>
                     }
@@ -988,14 +1202,17 @@ export default function PoliciesPage() {
               </tr>
             )}
             {!isLoading &&
-              filtered.map((policy: any, idx: number) => (
+              visible.map((policy: any, idx: number) => (
               <tr key={policy.id}>
                 <td className="text-center text-xs text-gray-400">{idx + 1}</td>
                 <td className="font-mono text-xs text-gray-500">{policy.code}</td>
                 <td>
-                  <Link to={'/policies/' + policy.id} className="text-navy-700 hover:underline font-medium text-sm">
-                    {policy.title}
-                  </Link>
+                  <span className="inline-flex items-center gap-1">
+                    <FavoriteButton policyId={policy.id} label={policy.title} />
+                    <Link to={'/policies/' + policy.id} className="text-navy-700 hover:underline font-medium text-sm">
+                      {policy.title}
+                    </Link>
+                  </span>
                   {policy.description && (
                     <div className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{policy.description}</div>
                   )}
@@ -1019,13 +1236,29 @@ export default function PoliciesPage() {
                   })()}
                 </td>
                 <td className="text-center">
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded border ${
-                      policy.isActive ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-gray-100 text-gray-500 border-gray-300'
-                    } inline-flex whitespace-nowrap`}
-                  >
-                    {policy.isActive ? t('policies.status.active') : t('policies.status.inactive')}
-                  </span>
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleActiveMutation.mutate({ id: policy.id, next: !policy.isActive })}
+                      disabled={toggleActiveMutation.isPending}
+                      title={policy.isActive ? '비활성으로 변경' : '시행중으로 변경'}
+                      className={`text-xs px-2 py-0.5 rounded border inline-flex whitespace-nowrap transition-colors disabled:opacity-50 ${
+                        policy.isActive
+                          ? 'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100'
+                          : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200'
+                      }`}
+                    >
+                      {policy.isActive ? t('policies.status.active') : t('policies.status.inactive')}
+                    </button>
+                  ) : (
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded border ${
+                        policy.isActive ? 'bg-blue-50 text-blue-700 border-blue-300' : 'bg-gray-100 text-gray-500 border-gray-300'
+                      } inline-flex whitespace-nowrap`}
+                    >
+                      {policy.isActive ? t('policies.status.active') : t('policies.status.inactive')}
+                    </span>
+                  )}
                 </td>
                 <td className="text-center">
                   <div className="flex items-center justify-center gap-2">
@@ -1067,6 +1300,8 @@ export default function PoliciesPage() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, Patch, Query, Request } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PlatformRoles } from '../common/guards/decorators';
 import { PlatformAdminService } from './platform-admin.service';
 import {
+  CreateTenantDto,
   TenantListQueryDto,
   UpdatePlatformBrandingDto,
   UpdatePlatformRoleDto,
@@ -20,6 +21,15 @@ export class PlatformAdminController {
     private readonly service: PlatformAdminService,
     private readonly platformBranding: PlatformBrandingService,
   ) {}
+
+  @Post('tenants')
+  @ApiOperation({
+    summary: '고객사 개설 + 마스터 계정 발급 (T-122)',
+    description: '임시 비밀번호는 응답에 한 번만 실린다. 마스터는 첫 로그인 때 비밀번호를 바꿔야 한다.',
+  })
+  createTenant(@Request() req: any, @Body() dto: CreateTenantDto) {
+    return this.service.createTenant(req.user.id, dto);
+  }
 
   @Get('tenants')
   @ApiOperation({ summary: '전체 테넌트 목록 조회' })

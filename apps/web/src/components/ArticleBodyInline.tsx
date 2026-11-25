@@ -24,7 +24,7 @@ export function ArticleBodyInline({ text, className }: { text: string; className
     last = m.index + m[0].length;
   }
   if (last < src.length) {
-    parts.push(<Fragment key={key++}>{src.slice(last)}</Fragment>);
+    parts.push(<Fragment key={key}>{src.slice(last)}</Fragment>);
   }
   return <span className={className}>{parts}</span>;
 }

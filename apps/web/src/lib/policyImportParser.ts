@@ -2,12 +2,16 @@ type ParsedArticle = {
   number: number;
   title: string;
   content: string;
+  /** "제3조의2"의 2. 가지 조문이 아니면 없다 */
+  branch?: number;
 };
 
 type ParsedChapter = {
   number: number;
   title: string;
   articles: ParsedArticle[];
+  /** 원문에 장 표기가 없어 파서가 임의로 만든 장. 등록 시 숨김 장으로 처리한다 */
+  auto?: boolean;
 };
 
 export type ParsedPolicyDraft = {
@@ -63,21 +67,27 @@ function preprocessPolicyImportText(input: string): string {
   s = s.replace(/\u3000/g, ' ');
   s = stripFormCoverLines(s);
 
-  // 한 줄에 "…제2장 … 제1조 …"처럼 붙는 경우
-  const beforeChapter = /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*장(?:\s|[\.\:：\-（(]|$))/gi;
-  const beforeArticle = /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*조(?:\s|[\.\:：\-（(]|$))/gi;
+  // 한 줄에 "…제2장 … 제1조(목적) …"처럼 붙는 경우.
+  // 조는 괄호 제목이 붙은 경우만 끊는다. "정관 제38조 제2항이 …", "제3조(정의)에 따라"처럼
+  // 다른 조를 인용하는 문장까지 끊으면 문장 하나가 조문 두 개로 쪼개진다.
+  const beforeChapter = /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*장(?!\s*제\s*\d)(?:\s|[.:：\-（(]|$))/gi;
+  const beforeArticle =
+    /([^\n])(?=\s*제\s*[0-9IVXLCDMivxlcdm]+\s*조(?:\s*의\s*\d+)?\s*[（(][^)）\n]{1,40}[)）](?![가-힣]))/gi;
   s = s.replace(beforeChapter, '$1\n');
   s = s.replace(beforeArticle, '$1\n');
 
   // "…Ⅱ . 정보보안 …" / "…I 총칙 …" 로마 장 표기
-  s = s.replace(/([^\n])(?=\s*(?:[IVXLCDM]{1,6}|[\u2160-\u216B]+)(?:\s*[\.．])?\s+[가-힣A-Za-z])/gi, '$1\n');
+  s = s.replace(/([^\n])(?=\s*(?:[IVXLCDM]{1,6}|[\u2160-\u216B]+)(?:\s*[.．])?\s+[가-힣A-Za-z])/gi, '$1\n');
 
-  // "총 칙 1 . 목 적" 처럼 장 제목 뒤에 조항이 붙은 경우
-  s = s.replace(/([가-힣])(?=\s+\d{1,2}(?:\s*[\.．]\s*\d+){0,4}(?:\s*[\.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g, '$1\n');
+  // "총 칙 1 . 목 적" 처럼 장 제목 뒤에 조항이 붙은 경우.
+  // "제 1 장 총 칙"의 "제"는 번호의 일부다 — 여기서 끊으면 "1 장 총 칙"이 조문이 된다.
+  s = s.replace(/([가-힣])(?=\s+\d{1,2}(?:\s*[.．]\s*\d+){0,4}(?:\s*[.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g, (m, ch: string) =>
+    ch === '제' ? m : `${ch}\n`,
+  );
 
   // "…문 4.1 / 7.2.1 …" 십진 항이 문장 중간에 붙은 경우 줄 분리
   s = s.replace(
-    /([^\n가-힣\s])(?=\s*\d{1,2}(?:\s*[\.．]\s*\d+){1,4}(?:\s*[\.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g,
+    /([^\n가-힣\s])(?=\s*\d{1,2}(?:\s*[.．]\s*\d+){1,4}(?:\s*[.．])?\s+[가-힣ㄱ-ㅎA-Za-z])/g,
     '$1\n',
   );
 
@@ -121,7 +131,7 @@ function stripEnumeratePrefix(line: string): string {
   let s = line.trim().replace(/^[\s\u200b\u200c]+/, '');
   for (let i = 0; i < 4; i += 1) {
     const candidate = s
-      .replace(/^\(?[0-9]+\)?[\.\)、:：\]]\s*/u, '')
+      .replace(/^\(?[0-9]+\)?[.)、:：\]]\s*/u, '')
       .replace(/^[（(]\s*[0-9]+\s*[）)]\s*/u, '')
       .replace(/^【\s*[0-9]+\s*】\s*/u, '')
       .trim();
@@ -133,9 +143,15 @@ function stripEnumeratePrefix(line: string): string {
   return s;
 }
 
+/** 자간을 벌려 쓴 제목("총 칙")을 붙여 쓴다. 일반 문장은 건드리지 않는다 */
+function collapseLetterSpacing(text: string): string {
+  const t = text.trim();
+  return /^[가-힣](?: [가-힣])+$/.test(t) ? t.replace(/ /g, '') : t;
+}
+
 function parseRomanChapterLine(s: string): { num: number | null; title: string } | null {
   const romanNorm = normalizeUnicodeRomanPrefix(s);
-  const rm = romanNorm.match(/^([IVXLCDM]+)(?:\s*[\.．])?\s+(.*)$/i);
+  const rm = romanNorm.match(/^([IVXLCDM]+)(?:\s*[.．])?\s+(.*)$/i);
   if (!rm) return null;
   const num = romanToInt(rm[1].toUpperCase());
   if (num === null || num < 1 || num > 99) return null;
@@ -151,7 +167,8 @@ function parseChapterHeader(line: string, profile: ParseProfile): { num: number 
 
   if (profile !== 'english') {
     const m1 = s.match(/^제\s*([0-9IVXLCDMivxlcdm]+)\s*장[\s.)-]*(.*)$/);
-    if (m1) return { num: tokenToInt(m1[1]), title: (m1[2] || '').trim() || '총칙' };
+    // 자간을 벌려 쓴 "총 칙"은 붙여 쓴다
+    if (m1) return { num: tokenToInt(m1[1]), title: collapseLetterSpacing(m1[2] || '') || '총칙' };
   }
 
   if (profile !== 'korean') {
@@ -168,7 +185,7 @@ function parseChapterHeader(line: string, profile: ParseProfile): { num: number 
 
 /** "1. 목적", "2.1 본 지침은 …", "1. Purpose" 등 회사 지침·규정 흔한 십진 목차 */
 function parseDecimalOutlineArticleHeader(line: string, _profile: ParseProfile): { num: number | null; title: string } | null {
-  const t0 = line.trim().replace(/\s*[\.．]\s*/g, '.');
+  const t0 = line.trim().replace(/\s*[.．]\s*/g, '.');
   const dec = t0.match(/^(\d+(?:\.\d+){0,4})(?:\.)?\s+(.+)$/);
   if (!dec) return null;
   const normalizedNo = dec[1].trim();
@@ -178,16 +195,42 @@ function parseDecimalOutlineArticleHeader(line: string, _profile: ParseProfile):
   return { num: null, title: `${normalizedNo}. ${body}` };
 }
 
-function parseArticleHeader(line: string, profile: ParseProfile): { num: number | null; title: string } | null {
+/** 조 제목 자리에 온 글이 제목이 아니라 본문 문장인지 */
+function looksLikeSentence(s: string): boolean {
+  return s.length > 30 || /[.。]$|다$|다[\s,]/.test(s);
+}
+
+type ArticleHeader = { num: number | null; title: string; body?: string; branch?: number };
+
+function parseArticleHeader(line: string, profile: ParseProfile): ArticleHeader | null {
   const dec = parseDecimalOutlineArticleHeader(line, profile);
   if (dec) return dec;
 
   const s = stripEnumeratePrefix(line);
   if (profile !== 'english') {
-    const m1 = s.match(/^제\s*([0-9IVXLCDMivxlcdm]+)\s*조(?:\s*\(([^)]*)\))?[\s:.)-]*(.*)$/);
+    // 조 번호 바로 뒤가 조사("제3조에 따라")면 다른 조를 인용하는 본문이다
+    const m1 = s.match(/^제\s*([0-9IVXLCDMivxlcdm]+)\s*조(?:\s*의\s*(\d+))?(?=[\s(（.:：)-]|$)(.*)$/);
     if (m1) {
-      const title = [m1[2], m1[3]].filter(Boolean).join(' ').trim();
-      return { num: tokenToInt(m1[1]), title: title || '조문' };
+      const rest = (m1[3] || '').replace(/^[\s.:：)-]+/, '');
+      // "제5조 제1항에 따라 …" 도 인용이다
+      if (/^제\s*\d+\s*(?:항|호|조)/.test(rest)) return null;
+      // "제1조(목적) 이 규정은 …" — 괄호 안이 제목, 그 뒤는 본문이다. 예전엔 본문까지 제목이 됐다.
+      let title = '';
+      let body = '';
+      const paren = rest.match(/^[(（]\s*([^)）]*?)\s*[)）]\s*(.*)$/);
+      if (paren) {
+        title = paren[1].trim();
+        body = paren[2].trim();
+      } else if (rest) {
+        if (looksLikeSentence(rest)) body = rest;
+        else title = rest;
+      }
+      return {
+        num: tokenToInt(m1[1]),
+        title: title || '조문',
+        body,
+        ...(m1[2] ? { branch: Number(m1[2]) } : {}),
+      };
     }
   }
 
@@ -211,10 +254,12 @@ export function parsePolicyTextToStructure(input: string, profile: ParseProfile 
   let chapterSeq = 1;
   let articleSeq = 1;
   let inPreamble = true;
+  /** 마지막으로 받은 조 번호. 번호가 거꾸로 가는 "제N조 …" 줄은 인용이 줄 첫머리로 넘어온 것이다 */
+  let lastNum = 0;
 
   const ensureChapter = () => {
     if (currentChapter) return currentChapter;
-    currentChapter = { number: chapterSeq, title: '총칙', articles: [] };
+    currentChapter = { number: chapterSeq, title: '총칙', articles: [], auto: true };
     chapterSeq += 1;
     chapters.push(currentChapter);
     articleSeq = 1;
@@ -258,14 +303,18 @@ export function parsePolicyTextToStructure(input: string, profile: ParseProfile 
     }
 
     const art = parseArticleHeader(compact, profile);
-    if (art) {
+    const goesBackward = art?.num != null && art.num !== 1 && art.num < lastNum && currentArticle;
+    if (art && !goesBackward) {
       flushArticle();
       ensureChapter();
       currentArticle = {
         number: art.num || articleSeq,
         title: art.title || '조문',
-        content: '',
+        // 같은 줄에 이어 쓴 본문(첫 항 "① …" 포함). 항·목은 등록 때 본문 줄에서 다시 읽어 낸다.
+        content: art.body ? `${art.body}\n` : '',
+        ...(art.branch ? { branch: art.branch } : {}),
       };
+      if (art.num != null) lastNum = art.num;
       articleSeq = Math.max(articleSeq, (currentArticle.number || articleSeq) + 1);
       inPreamble = false;
       continue;

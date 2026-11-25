@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsDateString, IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class UpdateTenantPlanDto {
   @ApiProperty({ enum: ['starter', 'pro', 'enterprise'] })
@@ -64,3 +65,46 @@ export class UpdatePlatformBrandingDto {
   lockupImageSrc?: string;
 }
 
+
+const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
+const lower = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : value;
+
+/**
+ * 고객사 개설 (T-122). 마스터 비밀번호는 받지 않는다 — 서버가 임시 비밀번호를 만들어 한 번만
+ * 돌려주고, 마스터는 첫 로그인 때 바꾼다. 아스트룸 담당자가 비밀번호를 고르면 약한 값을 쓰거나
+ * 여러 고객사에 같은 값을 쓰게 된다.
+ */
+export class CreateTenantDto {
+  @ApiProperty({ description: '회사명', maxLength: 100 })
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name: string;
+
+  @ApiProperty({ description: '조직 코드 — 로그인 화면의 "기관 코드". 영문 소문자·숫자·하이픈 2~40자', example: 'acme' })
+  @Transform(lower)
+  @IsString()
+  @Matches(/^[a-z0-9][a-z0-9-]{1,39}$/, {
+    message: '조직 코드는 영문 소문자·숫자·하이픈 2~40자이고 하이픈으로 시작할 수 없습니다.',
+  })
+  slug: string;
+
+  @ApiProperty({ enum: ['starter', 'pro', 'enterprise'], default: 'starter' })
+  @IsOptional()
+  @IsEnum(['starter', 'pro', 'enterprise'])
+  plan?: 'starter' | 'pro' | 'enterprise';
+
+  @ApiProperty({ description: '고객사 마스터(첫 관리자) 이메일 — 로그인 아이디' })
+  @Transform(lower)
+  @IsEmail()
+  masterEmail: string;
+
+  @ApiProperty({ description: '마스터 이름', maxLength: 100 })
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  masterName: string;
+}

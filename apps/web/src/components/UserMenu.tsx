@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { ChevronDown, LogOut, HelpCircle, CreditCard } from 'lucide-react';
+import { ChevronDown, LogOut, HelpCircle, CreditCard, UserCog } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { useI18n } from '../i18n/useI18n';
 
@@ -17,12 +17,13 @@ function isPlanTier(value: string): value is PlanTier {
 }
 
 type Props = {
+  onOpenProfile: () => void;
   onOpenPlan: () => void;
   onOpenTour: () => void;
   onLogout: () => void;
 };
 
-export default function UserMenu({ onOpenPlan, onOpenTour, onLogout }: Props) {
+export default function UserMenu({ onOpenProfile, onOpenPlan, onOpenTour, onLogout }: Props) {
   const { t, locale, setLocale } = useI18n();
   const { user } = useAuthStore();
   const [open, setOpen] = useState(false);
@@ -80,6 +81,19 @@ export default function UserMenu({ onOpenPlan, onOpenTour, onLogout }: Props) {
             <div className="text-xs text-gray-500 mt-0.5">{roleText}</div>
             <div className="text-xs text-gray-500 truncate">{user?.email}</div>
           </div>
+
+          <button
+            type="button"
+            role="menuitem"
+            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 text-gray-800 border-b border-gray-100"
+            onClick={() => {
+              setOpen(false);
+              onOpenProfile();
+            }}
+          >
+            <UserCog size={15} className="text-navy-600" />
+            {t('layout.helpMenu.profile')}
+          </button>
 
           <div className="px-3 py-2 border-b border-gray-100">
             <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1.5">{t('layout.langLabel')}</div>

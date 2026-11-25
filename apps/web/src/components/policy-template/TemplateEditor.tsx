@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { applyTokens, sanitizeCssLite, sanitizeHtmlLite } from './templateUtils';
+import { TEMPLATE_TOKENS, collectUnknownTokens } from './templateTokens';
 
 export default function TemplateEditor({
   html,
@@ -16,6 +17,8 @@ export default function TemplateEditor({
 }) {
   const previewHtml = useMemo(() => sanitizeHtmlLite(applyTokens(html, sampleData)), [html, sampleData]);
   const previewCss = useMemo(() => sanitizeCssLite(css), [css]);
+  // 미지원 토큰은 렌더 시 빈 문자열로 사라지므로 오타를 알아채기 어렵다 → 경고로 노출
+  const unknownTokens = useMemo(() => collectUnknownTokens(html), [html]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
@@ -38,10 +41,28 @@ export default function TemplateEditor({
             placeholder=".doc-title { font-size: 28px; }"
           />
         </div>
-        <p className="text-xs text-gray-500">
-          치환 토큰: {'{{policy.title}}'}, {'{{policy.code}}'}, {'{{tenant.name}}'}, {'{{today}}'},{' '}
-          <strong>{'{{content}}'}</strong>(장·조·항 구조 HTML), <strong>{'{{logo}}'}</strong>(브랜드 로고 이미지, 없으면 빈칸)
-        </p>
+        {unknownTokens.length > 0 && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            지원하지 않는 토큰이 있습니다(출력 시 빈칸으로 처리됩니다):{' '}
+            {unknownTokens.map((t) => `{{${t}}}`).join(', ')}
+          </p>
+        )}
+        <details className="text-xs text-gray-600 border border-gray-200 rounded bg-gray-50 px-3 py-2" open>
+          <summary className="cursor-pointer font-semibold text-gray-700">
+            사용 가능한 치환 토큰 ({TEMPLATE_TOKENS.length}종)
+          </summary>
+          <ul className="mt-2 space-y-1">
+            {TEMPLATE_TOKENS.map((t) => (
+              <li key={t.token} className="flex gap-2">
+                <code className="bg-white px-1 rounded border shrink-0">{`{{${t.token}}}`}</code>
+                <span className="text-gray-600">
+                  {t.label} — {t.description}
+                  {t.kind === 'html' && <span className="text-gray-400"> (HTML)</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
         <details className="text-xs text-gray-600 border border-gray-200 rounded bg-gray-50 px-3 py-2">
           <summary className="cursor-pointer font-semibold text-gray-700">Enterprise 자유 레이아웃 안내</summary>
           <ul className="mt-2 space-y-1.5 list-disc pl-4">
